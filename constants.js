@@ -9,11 +9,11 @@ module.exports = {
     "x-kc": '0bdf6de1-0a00-43e3-a632-c1af30b9484a',
     "x-operatingsystem": 'iOS 13.5',
     "x-platform": 'iOS',
-    "x-unityVersion": '2019.4.3f1',
+    "x-unity-version": '2019.4.3f1',
     "x-ai": "",
     "x-ma": "",
     "user-agent": 'pjsekai/18 CFNetwork/1126 Darwin/19.5.0',
-    accept: 'application/octet-stream',
+    Accept: 'application/octet-stream',
     "accept-encoding": 'gzip, deflate, br',
     "accept-language": 'zh-cn',
     // "content-type": 'application/octet-stream'
