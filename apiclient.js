@@ -163,31 +163,40 @@ async function refreshVersions() {
   }
 
   logger.debug("download assets list");
-  const { data: assetList } = await myAxios.get(`/version/${assetVersion}/os/ios`, {
-    baseURL: "https://assetbundle-info.sekai.colorfulpalette.org/api",
-    headers: {
-      "user-agent": initialHeader["user-agent"],
-      "x-unity-version": initialHeader["x-unity-version"],
-    },
-  });
-  await writeFile(path.join(masterDBDiffDir, 'assetList.json'), JSON.stringify(assetList, null, 2))
-  await git.add({ fs, dir: masterDBDiffDir, filepath: 'assetList.json' });
+  const { data: assetList } = await myAxios.get(
+    `/version/${assetVersion}/os/ios`,
+    {
+      baseURL: "https://assetbundle-info.sekai.colorfulpalette.org/api",
+      headers: {
+        "user-agent": initialHeader["user-agent"],
+        "x-unity-version": initialHeader["x-unity-version"],
+      },
+    }
+  );
+  await writeFile(
+    path.join(masterDBDiffDir, "assetList.json"),
+    JSON.stringify(assetList, null, 2)
+  );
+  await git.add({ fs, dir: masterDBDiffDir, filepath: "assetList.json" });
 
-  logger.debug("commit and push master db diff");
-  await git.commit({
-    fs,
-    dir: masterDBDiffDir,
-    message: `master version ${dataVersion} asset version ${assetVersion}`,
-    author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
-  });
-  await git.push({
-    fs,
-    http,
-    dir: masterDBDiffDir,
-    remote: "origin",
-    ref: "main",
-    onAuth: () => ({ username: GitHubToken }),
-  });
+  const files = await git.listFiles({ fs, dir: masterDBDiffDir });
+  if (files.length) {
+    logger.debug("commit and push master db diff");
+    await git.commit({
+      fs,
+      dir: masterDBDiffDir,
+      message: `master version ${dataVersion} asset version ${assetVersion}`,
+      author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
+    });
+    await git.push({
+      fs,
+      http,
+      dir: masterDBDiffDir,
+      remote: "origin",
+      ref: "main",
+      onAuth: () => ({ username: GitHubToken }),
+    });
+  }
 }
 
 async function bootstrap() {
@@ -247,7 +256,7 @@ async function bootstrap() {
     });
   }
 
-  logger.info('all finished, will try for new version every 30 minutes')
+  logger.info("all finished, will try for new version every 30 minutes");
   trySystemJob.start();
 }
 
