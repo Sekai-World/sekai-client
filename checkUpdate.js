@@ -31,8 +31,18 @@ if (!existsSync("./account.yaml")) {
 let account = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
 const masterDBDiffDir = path.join(__dirname, "sekai-master-db-diff");
 
-const trySystemJob = new CronJob("1/30 * * * *", () => {
-  callAPI("/system").catch((err) => refreshVersions());
+const trySystemJob = new CronJob("1/30 * * * *", async () => {
+  logger.info("check update triggered by cron job");
+  try {
+    await callAPI("/system");
+  } catch (e) {
+    await refreshVersions();
+  }
+  await saveInfoFromSuiteUser();
+  await commitMasterDiff({
+    dataVersion: initialHeader["x-data-version"],
+    assetVersion: initialHeader["x-asset-version"],
+  });
 });
 
 async function registerAccount() {
@@ -144,7 +154,7 @@ async function commitMasterDiff(versions) {
     if (
       (await git.status({ fs, dir: masterDBDiffDir, filepath })) === "*modified"
     ) {
-      await git.add({ fs, dir: masterDBDiffDir, filepath })
+      await git.add({ fs, dir: masterDBDiffDir, filepath });
       shouldCommit = true;
     }
   }
@@ -182,7 +192,12 @@ async function bootstrap() {
   }
 
   const { userId } = account;
-  const { appVersion, dataVersion, assetVersion, assetHash } = await refreshVersions();
+  const {
+    appVersion,
+    dataVersion,
+    assetVersion,
+    assetHash,
+  } = await refreshVersions();
 
   logger.info("simulate login process");
   logger.debug("get system");
