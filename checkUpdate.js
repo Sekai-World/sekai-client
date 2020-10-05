@@ -6,8 +6,8 @@ const { CronJob } = require("cron");
 const fs = require("fs");
 const { readFileSync, existsSync, writeFileSync } = fs;
 const { writeFile } = fs.promises;
-const axios = require('axios')
-const { callAPI, initialHeader } = require("./apiclient")
+const axios = require("axios");
+const { callAPI, initialHeader, decrypt } = require("./apiclient");
 
 const log4js = require("log4js");
 
@@ -47,7 +47,7 @@ async function registerAccount() {
 async function refreshVersions() {
   logger.info("refersh version info");
   logger.debug("do auth");
-  const { userId, credential, GitHubToken } = account;
+  const { userId, credential } = account;
   const {
     sessionToken,
     appVersion,
@@ -75,7 +75,7 @@ async function refreshVersions() {
       2
     )
   );
-  await git.add({ fs, dir: masterDBDiffDir, filepath: "versions.json" });
+  // await git.add({ fs, dir: masterDBDiffDir, filepath: "versions.json" });
 
   const master = await callAPI("/suite/master", "get");
   logger.debug("split master into smaller pieces, add them to git stage area");
@@ -84,7 +84,7 @@ async function refreshVersions() {
       path.join(masterDBDiffDir, `${key}.json`),
       JSON.stringify(master[key], null, 2)
     );
-    await git.add({ fs, dir: masterDBDiffDir, filepath: `${key}.json` });
+    // await git.add({ fs, dir: masterDBDiffDir, filepath: `${key}.json` });
   }
 
   logger.debug("download assets list");
@@ -96,21 +96,57 @@ async function refreshVersions() {
         "user-agent": initialHeader["user-agent"],
         "x-unity-version": initialHeader["x-unity-version"],
       },
+      responseType: "arraybuffer",
     }
   );
   await writeFile(
     path.join(masterDBDiffDir, "assetList.json"),
-    JSON.stringify(assetList, null, 2)
+    JSON.stringify(decrypt(Buffer.from(assetList)), null, 2)
   );
-  await git.add({ fs, dir: masterDBDiffDir, filepath: "assetList.json" });
+  // await git.add({ fs, dir: masterDBDiffDir, filepath: "assetList.json" });
 
+  return { appVersion, dataVersion, assetVersion, assetHash };
+}
+
+async function saveInfoFromSuiteUser() {
+  const { userId } = account;
+  logger.debug("get suite user");
+  const userInfo = await callAPI(`/suite/user/${userId}`);
+
+  const { userHomeBanners, userInformations } = userInfo;
+  logger.debug("write active homebanners");
+  await writeFile(
+    path.join(masterDBDiffDir, "userHomeBanners.json"),
+    JSON.stringify(userHomeBanners, null, 2)
+  );
+  // await git.add({ fs, dir: masterDBDiffDir, filepath: "userHomeBanners.json" });
+
+  logger.debug("write active informations");
+  await writeFile(
+    path.join(masterDBDiffDir, "userInformations.json"),
+    JSON.stringify(userInformations, null, 2)
+  );
+  // await git.add({
+  //   fs,
+  //   dir: masterDBDiffDir,
+  //   filepath: "userInformations.json",
+  // });
+
+  return userInfo;
+}
+
+async function commitMasterDiff(versions) {
+  const { GitHubToken } = account;
+  const { dataVersion, assetVersion } = versions;
   const files = await git.listFiles({ fs, dir: masterDBDiffDir });
   let shouldCommit = false;
   for (let filepath of files) {
     if (
       (await git.status({ fs, dir: masterDBDiffDir, filepath })) === "*modified"
-    )
+    ) {
+      await git.add({ fs, dir: masterDBDiffDir, filepath })
       shouldCommit = true;
+    }
   }
   if (shouldCommit) {
     logger.debug("commit and push master db diff");
@@ -129,6 +165,8 @@ async function refreshVersions() {
       onAuth: () => ({ username: GitHubToken }),
     });
   }
+
+  return true;
 }
 
 async function bootstrap() {
@@ -144,13 +182,12 @@ async function bootstrap() {
   }
 
   const { userId } = account;
-  await refreshVersions();
+  const { appVersion, dataVersion, assetVersion, assetHash } = await refreshVersions();
 
   logger.info("simulate login process");
   logger.debug("get system");
   await callAPI("/system");
-  logger.debug("get suite user");
-  const { userTutorial } = await callAPI(`/suite/user/${userId}`);
+  const { userTutorial } = await saveInfoFromSuiteUser();
   if (userTutorial.tutorialStatus === "start") {
     logger.warn("tutorial is at start, set username first");
     await callAPI(`/user/${userId}/tutorial`, "patch", {
@@ -187,6 +224,9 @@ async function bootstrap() {
       refreshableTypes: ["login_bonus"],
     });
   }
+
+  logger.info("try commit master db diff if any update");
+  await commitMasterDiff({ dataVersion, assetVersion });
 
   logger.info("all finished, will try for new version every 30 minutes");
   trySystemJob.start();

@@ -82,3 +82,6 @@ module.exports.callAPI = async function doReq(endpoint, method = "get", body) {
 }
 
 module.exports.initialHeader = initialHeader
+
+module.exports.decrypt = decrypt
+module.exports.encrypt = encrypt
