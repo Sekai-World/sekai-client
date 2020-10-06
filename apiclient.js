@@ -58,7 +58,7 @@ myAxios.interceptors.response.use(
     return res;
   },
   async (err) => {
-    logger.error(err);
+    logger.error(decrypt(Buffer.from(err.response.data)));
     const req = err.config;
     if (err.response.status === 429) {
       // hit rate limit, sleep for a while
