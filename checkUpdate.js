@@ -34,12 +34,21 @@ const masterDBDiffDir = path.join(__dirname, "sekai-master-db-diff");
 const trySystemJob = new CronJob("1/30 * * * *", async () => {
   logger.info("check update triggered by cron job");
   const { appVersions } = await callAPI("/system");
-  const currentVersion = appVersions[appVersions.length - 1];
+  const currentVersion = appVersions.find(
+    (appVer) =>
+      appVer.appVersion === initialHeader["x-app-version"] &&
+      appVer.appVersionStatus === "available"
+  );
   if (
+    !currentVersion ||
     initialHeader["x-data-version"] !== currentVersion.dataVersion ||
     initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
     initialHeader["x-app-version"] !== currentVersion.appVersion
   ) {
+    initialHeader["x-app-version"] = currentVersion.appVersion;
+    delete initialHeader["x-asset-version"];
+    delete initialHeader["x-data-version"];
+
     await refreshVersions();
   }
 
@@ -185,6 +194,17 @@ async function commitMasterDiff(versions) {
 }
 
 async function bootstrap() {
+  logger.info("ensure current version available")
+  const { appVersions } = await callAPI("/system");
+  const currentVersion = appVersions.find(
+    (appVer) =>
+      appVer.appVersion === initialHeader["x-app-version"] &&
+      appVer.appVersionStatus === "available"
+  );
+  if (!currentVersion) {
+    const availableVersions = appVersions.filter(appVer => appVer.appVersionStatus === "available")
+    initialHeader["x-app-version"] = availableVersions[availableVersions.length - 1].appVersion
+  }
   if (!account.credential) {
     const reg = await registerAccount();
 
