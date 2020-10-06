@@ -33,11 +33,16 @@ const masterDBDiffDir = path.join(__dirname, "sekai-master-db-diff");
 
 const trySystemJob = new CronJob("1/30 * * * *", async () => {
   logger.info("check update triggered by cron job");
-  try {
-    await callAPI("/system");
-  } catch (e) {
+  const { appVersions } = await callAPI("/system");
+  const currentVersion = appVersions[appVersions.length - 1];
+  if (
+    initialHeader["x-data-version"] !== currentVersion.dataVersion ||
+    initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
+    initialHeader["x-app-version"] !== currentVersion.appVersion
+  ) {
     await refreshVersions();
   }
+
   await saveInfoFromSuiteUser();
   await commitMasterDiff({
     dataVersion: initialHeader["x-data-version"],
