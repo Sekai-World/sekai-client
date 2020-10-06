@@ -176,7 +176,7 @@ async function commitMasterDiff(versions) {
       http,
       dir: masterDBDiffDir,
       remote: "origin",
-      ref: "main",
+      ref: "master",
       onAuth: () => ({ username: GitHubToken }),
     });
   }
