@@ -41,6 +41,12 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
   );
   if (
     !currentVersion ||
+    new Date().toLocaleString("en-DE", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Tokyo",
+    }) === "04:01" ||
     initialHeader["x-data-version"] !== currentVersion.dataVersion ||
     initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
     initialHeader["x-app-version"] !== currentVersion.appVersion
@@ -50,9 +56,11 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
     delete initialHeader["x-data-version"];
 
     await refreshVersions();
+    await saveInfoFromSuiteUser();
+  } else {
+    await refreshInformations();
   }
 
-  await saveInfoFromSuiteUser();
   await commitMasterDiff({
     dataVersion: initialHeader["x-data-version"],
     assetVersion: initialHeader["x-asset-version"],
@@ -159,6 +167,17 @@ async function saveInfoFromSuiteUser() {
   return userInfo;
 }
 
+async function refreshInformations() {
+  logger.debug("get suite user");
+  const { informations: userInformations } = await callAPI(`/information`);
+
+  logger.debug("write active informations");
+  await writeFile(
+    path.join(masterDBDiffDir, "userInformations.json"),
+    JSON.stringify(userInformations, null, 2)
+  );
+}
+
 async function commitMasterDiff(versions) {
   const { GitHubToken } = account;
   const { dataVersion, assetVersion } = versions;
@@ -194,7 +213,7 @@ async function commitMasterDiff(versions) {
 }
 
 async function bootstrap() {
-  logger.info("ensure current version available")
+  logger.info("ensure current version available");
   const { appVersions } = await callAPI("/system");
   const currentVersion = appVersions.find(
     (appVer) =>
@@ -202,8 +221,11 @@ async function bootstrap() {
       appVer.appVersionStatus === "available"
   );
   if (!currentVersion) {
-    const availableVersions = appVersions.filter(appVer => appVer.appVersionStatus === "available")
-    initialHeader["x-app-version"] = availableVersions[availableVersions.length - 1].appVersion
+    const availableVersions = appVersions.filter(
+      (appVer) => appVer.appVersionStatus === "available"
+    );
+    initialHeader["x-app-version"] =
+      availableVersions[availableVersions.length - 1].appVersion;
   }
   if (!account.credential) {
     const reg = await registerAccount();
