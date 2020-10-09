@@ -4,7 +4,7 @@ const git = require("isomorphic-git");
 const http = require("isomorphic-git/http/node");
 const { CronJob } = require("cron");
 const fs = require("fs");
-const { readFileSync, writeFileSync } = fs;
+const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, access, readFile } = fs.promises;
 const axios = require("axios");
 const { callAPI, initialHeader, decrypt } = require("./apiclient");
@@ -118,7 +118,7 @@ async function refreshVersions() {
         await access(masterKeyPath)
         const old = JSON.parse(await readFile(masterKeyPath, { encoding: 'utf8' }))
         if (Array.isArray(old)) {
-          master[key] = [...old, ...master[key]]
+          master[key] = [...old.filter(o => !master[key].find(m => m.id === o.id)), ...master[key]]
         }
       } catch (err) {
         logger.debug('old event file does not exist')
