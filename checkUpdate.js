@@ -4,8 +4,8 @@ const git = require("isomorphic-git");
 const http = require("isomorphic-git/http/node");
 const { CronJob } = require("cron");
 const fs = require("fs");
-const { readFileSync, existsSync, writeFileSync } = fs;
-const { writeFile } = fs.promises;
+const { readFileSync, writeFileSync } = fs;
+const { writeFile, access, readFile } = fs.promises;
 const axios = require("axios");
 const { callAPI, initialHeader, decrypt } = require("./apiclient");
 
@@ -112,8 +112,20 @@ async function refreshVersions() {
   const master = await callAPI("/suite/master", "get");
   logger.debug("split master into smaller pieces, add them to git stage area");
   for (let key in master) {
+    const masterKeyPath = path.join(masterDBDiffDir, `${key}.json`)
+    if (key.includes('event')) {
+      try {
+        await access(masterKeyPath)
+        const old = JSON.parse(await readFile(masterKeyPath, { encoding: 'utf8' }))
+        if (Array.isArray(old)) {
+          master[key] = [...old, ...master[key]]
+        }
+      } catch (err) {
+        logger.debug('old event file does not exist')
+      }
+    }
     await writeFile(
-      path.join(masterDBDiffDir, `${key}.json`),
+      masterKeyPath,
       JSON.stringify(master[key], null, 2)
     );
     // await git.add({ fs, dir: masterDBDiffDir, filepath: `${key}.json` });
