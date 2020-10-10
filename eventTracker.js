@@ -221,7 +221,7 @@ async function trackEventResult() {
 
 async function commitEventTrackResult() {
   // const files = await git.listFiles({ fs, dir: eventTrackerDir });
-  const files = await globby([eventTrackerDir])
+  const files = await globby([path.relative(__dirname, eventTrackerDir)])
   let shouldCommit = false;
   for (let filepath of files) {
     const fileStatus = await git.status({ fs, dir: eventTrackerDir, filepath })
