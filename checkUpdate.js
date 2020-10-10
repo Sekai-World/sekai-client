@@ -4,6 +4,7 @@ const git = require("isomorphic-git");
 const http = require("isomorphic-git/http/node");
 const { CronJob } = require("cron");
 const fs = require("fs");
+const globby = require("globby");
 const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, access, readFile } = fs.promises;
 const axios = require("axios");
@@ -193,7 +194,8 @@ async function refreshInformations() {
 async function commitMasterDiff(versions) {
   const { GitHubToken } = account;
   const { dataVersion, assetVersion } = versions;
-  const files = await git.listFiles({ fs, dir: masterDBDiffDir });
+  // const files = await git.listFiles({ fs, dir: masterDBDiffDir });
+  const files = await globby([masterDBDiffDir])
   let shouldCommit = false;
   for (let filepath of files) {
     if (
