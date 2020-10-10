@@ -4,7 +4,6 @@ const git = require("isomorphic-git");
 const http = require("isomorphic-git/http/node");
 const { CronJob } = require("cron");
 const fs = require("fs");
-const globby = require("globby");
 const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, readFile } = fs.promises;
 const { callAPI, initialHeader } = require("./apiclient");
@@ -220,13 +219,12 @@ async function trackEventResult() {
 }
 
 async function commitEventTrackResult() {
-  // const files = await git.listFiles({ fs, dir: eventTrackerDir });
-  const files = await globby([path.relative(__dirname, eventTrackerDir)])
+  const fileStatusMatrix = await git.statusMatrix({ fs, dir: eventTrackerDir });
   let shouldCommit = false;
-  for (let filepath of files) {
-    const fileStatus = await git.status({ fs, dir: eventTrackerDir, filepath })
+  for (let fileStatus of fileStatusMatrix) {
+    const [filepath, HEAD, WORKDIR, STAGE] = fileStatus
     if (
-      fileStatus === "*modified" || fileStatus === "*added" || fileStatus === "absent"
+      (HEAD === 0 && WORKDIR === 2 && STAGE === 0) || (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
     ) {
       await git.add({ fs, dir: eventTrackerDir, filepath });
       shouldCommit = true;
