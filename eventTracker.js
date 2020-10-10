@@ -226,7 +226,7 @@ async function commitEventTrackResult() {
   for (let filepath of files) {
     const fileStatus = await git.status({ fs, dir: eventTrackerDir, filepath })
     if (
-      fileStatus === "*modified" || fileStatus === "*added"
+      fileStatus === "*modified" || fileStatus === "*added" || fileStatus === "absent"
     ) {
       await git.add({ fs, dir: eventTrackerDir, filepath });
       shouldCommit = true;
