@@ -4,6 +4,7 @@ const git = require("isomorphic-git");
 const http = require("isomorphic-git/http/node");
 const { CronJob } = require("cron");
 const fs = require("fs");
+const globby = require("globby");
 const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, readFile } = fs.promises;
 const { callAPI, initialHeader } = require("./apiclient");
@@ -219,7 +220,8 @@ async function trackEventResult() {
 }
 
 async function commitEventTrackResult() {
-  const files = await git.listFiles({ fs, dir: eventTrackerDir });
+  // const files = await git.listFiles({ fs, dir: eventTrackerDir });
+  const files = await globby([eventTrackerDir])
   let shouldCommit = false;
   for (let filepath of files) {
     const fileStatus = await git.status({ fs, dir: eventTrackerDir, filepath })
