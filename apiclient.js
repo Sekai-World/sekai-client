@@ -19,7 +19,7 @@ function encrypt(body) {
     Buffer.from("6732666343305a637a4e394d544a3631", "hex"),
     Buffer.from("6d737833495630693958453575595a31", "hex")
   );
-  let encrypted = cipher.update(msgpack.encode(body));
+  let encrypted = cipher.update(body ? msgpack.encode(body) : body);
   encrypted = Buffer.concat([encrypted, cipher.final()]);
 
   return encrypted;
@@ -34,7 +34,7 @@ function decrypt(enc) {
   let decrypted = cipher.update(enc);
   decrypted = Buffer.concat([decrypted, cipher.final()]);
 
-  return msgpack.decode(decrypted);
+  return decrypted.length ? msgpack.decode(decrypted) : decrypted.toString('hex');
 }
 
 const myAxios = axios.default.create({
@@ -43,7 +43,7 @@ const myAxios = axios.default.create({
     (data, headers) => {
       headers["x-request-id"] = uuidV4();
       headers["content-type"] = "application/octet-stream";
-      return data ? encrypt(data) : data;
+      return data;
     },
   ],
   responseType: "arraybuffer",
@@ -54,11 +54,11 @@ myAxios.interceptors.response.use(
     if (initialHeader["x-session-token"] && res.headers["x-session-token"])
       initialHeader["x-session-token"] = res.headers["x-session-token"];
 
-    res.data = decrypt(Buffer.from(res.data));
+    if (res.data.length) res.data = decrypt(Buffer.from(res.data));
     return res;
   },
   async (err) => {
-    logger.error(decrypt(Buffer.from(err.response.data)));
+    logger.error(err.response.status, err.response.data.length ? decrypt(Buffer.from(err.response.data)) : '');
     const req = err.config;
     if (err.response.status === 429) {
       // hit rate limit, sleep for a while
@@ -75,7 +75,7 @@ module.exports.callAPI = async function doReq(endpoint, method = "get", body) {
     url: endpoint,
     method,
     headers: initialHeader,
-    data: ["post", "put", "patch"].includes(method) ? body : null,
+    data: ["post", "put", "patch"].includes(method) ? encrypt(body) : null,
   });
 
   return data;
