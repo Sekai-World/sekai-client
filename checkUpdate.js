@@ -195,7 +195,7 @@ async function commitMasterDiff(versions) {
   const { GitHubToken } = account;
   const { dataVersion, assetVersion } = versions;
   // const files = await git.listFiles({ fs, dir: masterDBDiffDir });
-  const files = await globby([masterDBDiffDir])
+  const files = await globby([path.relative(__dirname, masterDBDiffDir)])
   let shouldCommit = false;
   for (let filepath of files) {
     if (
