@@ -198,8 +198,9 @@ async function commitMasterDiff(versions) {
   const files = await globby([path.relative(__dirname, masterDBDiffDir)])
   let shouldCommit = false;
   for (let filepath of files) {
+    const fileStatus = await git.status({ fs, dir: masterDBDiffDir, filepath })
     if (
-      (await git.status({ fs, dir: masterDBDiffDir, filepath })) === "*modified"
+      fileStatus === "*modified" || fileStatus === "*added"
     ) {
       await git.add({ fs, dir: masterDBDiffDir, filepath });
       shouldCommit = true;
