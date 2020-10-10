@@ -10,7 +10,7 @@ const { callAPI, initialHeader } = require("./apiclient");
 
 const log4js = require("log4js");
 
-const logger = log4js.getLogger("check-update");
+const logger = log4js.getLogger("event-track");
 logger.level = "info";
 
 if (!existsSync("./account.yaml")) {
