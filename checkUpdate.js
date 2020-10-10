@@ -4,7 +4,6 @@ const git = require("isomorphic-git");
 const http = require("isomorphic-git/http/node");
 const { CronJob } = require("cron");
 const fs = require("fs");
-const globby = require("globby");
 const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, access, readFile } = fs.promises;
 const axios = require("axios");
@@ -194,13 +193,12 @@ async function refreshInformations() {
 async function commitMasterDiff(versions) {
   const { GitHubToken } = account;
   const { dataVersion, assetVersion } = versions;
-  // const files = await git.listFiles({ fs, dir: masterDBDiffDir });
-  const files = await globby([path.relative(__dirname, masterDBDiffDir)])
+  const fileStatusMatrix = await git.statusMatrix({ fs, dir: masterDBDiffDir });
   let shouldCommit = false;
-  for (let filepath of files) {
-    const fileStatus = await git.status({ fs, dir: masterDBDiffDir, filepath })
+  for (let fileStatus of fileStatusMatrix) {
+    const [filepath, HEAD, WORKDIR, STAGE] = fileStatus;
     if (
-      fileStatus === "*modified" || fileStatus === "*added" || fileStatus === "absent"
+      (HEAD === 0 && WORKDIR === 2 && STAGE === 0) || (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
     ) {
       await git.add({ fs, dir: masterDBDiffDir, filepath });
       shouldCommit = true;
