@@ -104,6 +104,7 @@ async function trackEventResult() {
   const currentTime = new Date().getTime();
   if (
     !eventData ||
+    currentTime < eventData.startAt ||
     currentTime > eventData.rankingAnnounceAt + 60 * 1000 ||
     (currentTime > eventData.closeAt &&
       currentTime < eventData.rankingAnnounceAt)
