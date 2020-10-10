@@ -179,15 +179,6 @@ async function trackEventResult() {
   );
 
   logger.debug("write track result");
-  let oldData;
-  if (existsSync(path.join(eventTrackerDir, `event${eventData.id}.json`)))
-    oldData = JSON.parse(
-      await readFile(
-        path.join(eventTrackerDir, `event${eventData.id}.json`),
-        "utf8"
-      )
-    );
-
   const newData = {
     time: new Date().getTime(),
     first10,
@@ -214,7 +205,7 @@ async function trackEventResult() {
   };
   await writeFile(
     path.join(eventTrackerDir, `event${eventData.id}.json`),
-    JSON.stringify(oldData ? [...oldData, newData] : [newData], null, 2)
+    JSON.stringify(newData, null, 2)
   );
 }
 
