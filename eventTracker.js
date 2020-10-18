@@ -37,7 +37,7 @@ let { eventTracker: account, GitHubToken } = yaml.safeLoad(
 let eventData;
 const eventTrackerDir = path.join(__dirname, "sekai-event-track");
 
-const eventTrackJob = new CronJob("58 4/5 * * * * *", async () => {
+const eventTrackJob = new CronJob("58 4/5 * * * *", async () => {
   logger.info("trace event score triggered by cron job");
   const { appVersions } = await callAPI("/system");
   const currentVersion = appVersions.find(
