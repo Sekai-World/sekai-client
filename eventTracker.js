@@ -37,7 +37,7 @@ let { eventTracker: account, GitHubToken } = yaml.safeLoad(
 let eventData;
 const eventTrackerDir = path.join(__dirname, "sekai-event-track");
 
-const eventTrackJob = new CronJob("0/5 * * * *", async () => {
+const eventTrackJob = new CronJob("58 4/5 * * * * *", async () => {
   logger.info("trace event score triggered by cron job");
   const { appVersions } = await callAPI("/system");
   const currentVersion = appVersions.find(
@@ -63,9 +63,9 @@ const eventTrackJob = new CronJob("0/5 * * * *", async () => {
 
     await refreshVersions();
     await callAPI(`/suite/user/${userId}`);
-  } else {
-    await trackEventResult();
   }
+
+  await trackEventResult();
 
   await commitEventTrackResult();
 });
@@ -106,7 +106,7 @@ async function trackEventResult() {
     !eventData ||
     currentTime < eventData.startAt ||
     currentTime > eventData.rankingAnnounceAt + 60 * 1000 ||
-    (currentTime > eventData.closeAt &&
+    (currentTime > eventData.aggregateAt &&
       currentTime < eventData.rankingAnnounceAt)
   )
     return;
@@ -214,9 +214,10 @@ async function commitEventTrackResult() {
   const fileStatusMatrix = await git.statusMatrix({ fs, dir: eventTrackerDir });
   let shouldCommit = false;
   for (let fileStatus of fileStatusMatrix) {
-    const [filepath, HEAD, WORKDIR, STAGE] = fileStatus
+    const [filepath, HEAD, WORKDIR, STAGE] = fileStatus;
     if (
-      (HEAD === 0 && WORKDIR === 2 && STAGE === 0) || (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
+      (HEAD === 0 && WORKDIR === 2 && STAGE === 0) ||
+      (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
     ) {
       await git.add({ fs, dir: eventTrackerDir, filepath });
       shouldCommit = true;

@@ -5,7 +5,7 @@ const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
 const log4js = require("log4js");
 
-const logger = log4js.getLogger('client');
+const logger = log4js.getLogger("client");
 logger.level = "info";
 
 function delay(ms) {
@@ -34,7 +34,9 @@ function decrypt(enc) {
   let decrypted = cipher.update(enc);
   decrypted = Buffer.concat([decrypted, cipher.final()]);
 
-  return decrypted.length ? msgpack.decode(decrypted) : decrypted.toString('hex');
+  return decrypted.length
+    ? msgpack.decode(decrypted)
+    : decrypted.toString("hex");
 }
 
 const myAxios = axios.default.create({
@@ -58,7 +60,10 @@ myAxios.interceptors.response.use(
     return res;
   },
   async (err) => {
-    logger.error(err.response.status, err.response.data.length ? decrypt(Buffer.from(err.response.data)) : '');
+    if (err.response.data.length) {
+      err.response.data = decrypt(Buffer.from(err.response.data));
+    }
+    logger.error(err.response.status, err.response.data);
     const req = err.config;
     if (err.response.status === 429) {
       // hit rate limit, sleep for a while
@@ -79,9 +84,9 @@ module.exports.callAPI = async function doReq(endpoint, method = "get", body) {
   });
 
   return data;
-}
+};
 
-module.exports.initialHeader = initialHeader
+module.exports.initialHeader = initialHeader;
 
-module.exports.decrypt = decrypt
-module.exports.encrypt = encrypt
+module.exports.decrypt = decrypt;
+module.exports.encrypt = encrypt;
