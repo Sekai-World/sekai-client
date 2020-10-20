@@ -24,6 +24,8 @@ if (!existsSync("./account.yaml")) {
       signature: null,
       credential: null,
       GitHubToken: null,
+      BitbucketUser: null,
+      BitbucketToken: null,
       event: {
         userId: null,
         credential: null,
@@ -31,13 +33,13 @@ if (!existsSync("./account.yaml")) {
     })
   );
 }
-let { eventTracker: account, GitHubToken } = yaml.safeLoad(
+let { eventTracker: account, BitbucketUser, BitbucketToken } = yaml.safeLoad(
   readFileSync("./account.yaml", "utf-8")
 );
 let eventData;
 const eventTrackerDir = path.join(__dirname, "sekai-event-track");
 
-const eventTrackJob = new CronJob("58 4/5 * * * *", async () => {
+const eventTrackJob = new CronJob("58 * * * * *", async () => {
   logger.info("trace event score triggered by cron job");
   const { appVersions } = await callAPI("/system");
   const currentVersion = appVersions.find(
@@ -237,7 +239,7 @@ async function commitEventTrackResult() {
       dir: eventTrackerDir,
       remote: "origin",
       ref: "main",
-      onAuth: () => ({ username: GitHubToken }),
+      onAuth: () => ({ username: BitbucketUser, password: BitbucketToken }),
     });
   }
 
@@ -307,7 +309,7 @@ async function bootstrap() {
 
   // await trackEventResult();
 
-  logger.info("all finished, will track event result every 5 minutes");
+  logger.info("all finished, will track event result every minute");
   eventTrackJob.start();
 }
 
