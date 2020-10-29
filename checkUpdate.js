@@ -66,6 +66,7 @@ async function checkVersions() {
 
 const trySystemJob = new CronJob("1/30 * * * *", async () => {
   logger.info("check update triggered by cron job");
+  const verRes = await checkVersions();
   if (verRes.isMaintenance) {
     logger.warn("server in maintenance");
     return;
