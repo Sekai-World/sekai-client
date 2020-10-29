@@ -67,7 +67,14 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
     await callAPI(`/suite/user/${userId}`);
   }
 
-  await trackEventResult();
+  try {
+    await trackEventResult();
+  } catch (e) {
+    // in case of 403 or other errors
+    await refreshVersions();
+    await callAPI(`/suite/user/${userId}`);
+    await trackEventResult();
+  }
 
   await commitEventTrackResult();
 });
