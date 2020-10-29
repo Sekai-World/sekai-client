@@ -31,30 +31,54 @@ if (!existsSync("./account.yaml")) {
 let account = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
 const masterDBDiffDir = path.join(__dirname, "sekai-master-db-diff");
 
-const trySystemJob = new CronJob("1/30 * * * *", async () => {
-  logger.info("check update triggered by cron job");
+async function checkVersions() {
+  const res = {
+    isMaintenance: false,
+    isNewVersion: false,
+  };
   const { appVersions } = await callAPI("/system");
-  const currentVersion = appVersions.find(
+  let currentVersion = appVersions.find(
     (appVer) =>
       appVer.appVersion === initialHeader["x-app-version"] &&
       appVer.appVersionStatus === "available"
   );
+
+  if (!currentVersion) {
+    // check latest version
+    currentVersion = appVersions[appVersions.length - 1];
+    if (currentVersion.appVersionStatus === "maintence") {
+      res.isMaintenance = true;
+    } else if (currentVersion.appVersionStatus === "available") {
+      res.isNewVersion = true;
+      initialHeader["x-app-version"] = currentVersion.appVersion;
+      delete initialHeader["x-asset-version"];
+      delete initialHeader["x-data-version"];
+    }
+  } else {
+    res.isNewVersion =
+      initialHeader["x-data-version"] !== currentVersion.dataVersion ||
+      initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
+      initialHeader["x-app-version"] !== currentVersion.appVersion;
+  }
+
+  return res;
+}
+
+const trySystemJob = new CronJob("1/30 * * * *", async () => {
+  logger.info("check update triggered by cron job");
+  if (verRes.isMaintenance) {
+    logger.warn("server in maintenance");
+    return;
+  }
   if (
-    !currentVersion ||
+    verRes.isNewVersion ||
     new Date().toLocaleString("en-DE", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
       timeZone: "Asia/Tokyo",
-    }) === "04:01" ||
-    initialHeader["x-data-version"] !== currentVersion.dataVersion ||
-    initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
-    initialHeader["x-app-version"] !== currentVersion.appVersion
+    }) === "04:00"
   ) {
-    initialHeader["x-app-version"] = currentVersion.appVersion;
-    delete initialHeader["x-asset-version"];
-    delete initialHeader["x-data-version"];
-
     await refreshVersions();
     await saveInfoFromSuiteUser();
   } else {
@@ -112,22 +136,24 @@ async function refreshVersions() {
   const master = await callAPI("/suite/master", "get");
   logger.debug("split master into smaller pieces, add them to git stage area");
   for (let key in master) {
-    const masterKeyPath = path.join(masterDBDiffDir, `${key}.json`)
-    if (key.includes('event')) {
+    const masterKeyPath = path.join(masterDBDiffDir, `${key}.json`);
+    if (key.includes("event")) {
       try {
-        await access(masterKeyPath)
-        const old = JSON.parse(await readFile(masterKeyPath, { encoding: 'utf8' }))
+        await access(masterKeyPath);
+        const old = JSON.parse(
+          await readFile(masterKeyPath, { encoding: "utf8" })
+        );
         if (Array.isArray(old)) {
-          master[key] = [...old.filter(o => !master[key].find(m => m.id === o.id)), ...master[key]]
+          master[key] = [
+            ...old.filter((o) => !master[key].find((m) => m.id === o.id)),
+            ...master[key],
+          ];
         }
       } catch (err) {
-        logger.debug('old event file does not exist')
+        logger.debug("old event file does not exist");
       }
     }
-    await writeFile(
-      masterKeyPath,
-      JSON.stringify(master[key], null, 2)
-    );
+    await writeFile(masterKeyPath, JSON.stringify(master[key], null, 2));
     // await git.add({ fs, dir: masterDBDiffDir, filepath: `${key}.json` });
   }
 
@@ -198,7 +224,8 @@ async function commitMasterDiff(versions) {
   for (let fileStatus of fileStatusMatrix) {
     const [filepath, HEAD, WORKDIR, STAGE] = fileStatus;
     if (
-      (HEAD === 0 && WORKDIR === 2 && STAGE === 0) || (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
+      (HEAD === 0 && WORKDIR === 2 && STAGE === 0) ||
+      (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
     ) {
       await git.add({ fs, dir: masterDBDiffDir, filepath });
       shouldCommit = true;
@@ -227,18 +254,12 @@ async function commitMasterDiff(versions) {
 
 async function bootstrap() {
   logger.info("ensure current version available");
-  const { appVersions } = await callAPI("/system");
-  const currentVersion = appVersions.find(
-    (appVer) =>
-      appVer.appVersion === initialHeader["x-app-version"] &&
-      appVer.appVersionStatus === "available"
-  );
-  if (!currentVersion) {
-    const availableVersions = appVersions.filter(
-      (appVer) => appVer.appVersionStatus === "available"
-    );
-    initialHeader["x-app-version"] =
-      availableVersions[availableVersions.length - 1].appVersion;
+  const verRes = await checkVersions();
+  if (verRes.isMaintenance) {
+    setTimeout(() => {
+      bootstrap();
+    }, 10 * 60 * 1000);
+    return;
   }
   if (!account.credential) {
     const reg = await registerAccount();

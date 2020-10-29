@@ -39,30 +39,55 @@ let { eventTracker: account, BitbucketUser, BitbucketToken } = yaml.safeLoad(
 let eventData;
 const eventTrackerDir = path.join(__dirname, "sekai-event-track");
 
-const eventTrackJob = new CronJob("58 * * * * *", async () => {
-  logger.info("trace event score triggered by cron job");
+async function checkVersions() {
+  const res = {
+    isMaintenance: false,
+    isNewVersion: false,
+  };
   const { appVersions } = await callAPI("/system");
-  const currentVersion = appVersions.find(
+  let currentVersion = appVersions.find(
     (appVer) =>
       appVer.appVersion === initialHeader["x-app-version"] &&
       appVer.appVersionStatus === "available"
   );
+
+  if (!currentVersion) {
+    // check latest version
+    currentVersion = appVersions[appVersions.length - 1];
+    if (currentVersion.appVersionStatus === "maintence") {
+      res.isMaintenance = true;
+    } else if (currentVersion.appVersionStatus === "available") {
+      res.isNewVersion = true;
+      initialHeader["x-app-version"] = currentVersion.appVersion;
+      delete initialHeader["x-asset-version"];
+      delete initialHeader["x-data-version"];
+    }
+  } else {
+    res.isNewVersion =
+      initialHeader["x-data-version"] !== currentVersion.dataVersion ||
+      initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
+      initialHeader["x-app-version"] !== currentVersion.appVersion;
+  }
+
+  return res;
+}
+
+const eventTrackJob = new CronJob("58 * * * * *", async () => {
+  logger.info("trace event score triggered by cron job");
+  const verRes = await checkVersions();
+  if (verRes.isMaintenance) {
+    logger.warn("server in maintenance");
+    return;
+  }
   if (
-    !currentVersion ||
+    verRes.isNewVersion ||
     new Date().toLocaleString("en-DE", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
       timeZone: "Asia/Tokyo",
-    }) === "04:00" ||
-    initialHeader["x-data-version"] !== currentVersion.dataVersion ||
-    initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
-    initialHeader["x-app-version"] !== currentVersion.appVersion
+    }) === "04:00"
   ) {
-    initialHeader["x-app-version"] = currentVersion.appVersion;
-    delete initialHeader["x-asset-version"];
-    delete initialHeader["x-data-version"];
-
     await refreshVersions();
     await callAPI(`/suite/user/${userId}`);
   }
@@ -255,18 +280,13 @@ async function commitEventTrackResult() {
 
 async function bootstrap() {
   logger.info("ensure current version available");
-  const { appVersions } = await callAPI("/system");
-  const currentVersion = appVersions.find(
-    (appVer) =>
-      appVer.appVersion === initialHeader["x-app-version"] &&
-      appVer.appVersionStatus === "available"
-  );
-  if (!currentVersion) {
-    const availableVersions = appVersions.filter(
-      (appVer) => appVer.appVersionStatus === "available"
-    );
-    initialHeader["x-app-version"] =
-      availableVersions[availableVersions.length - 1].appVersion;
+  const verRes = await checkVersions();
+  if (verRes.isMaintenance) {
+    logger.warn("server in maintenance");
+    setTimeout(() => {
+      bootstrap();
+    }, 10 * 60 * 1000);
+    return;
   }
 
   const { userId } = account;
