@@ -4,6 +4,7 @@ const git = require("isomorphic-git");
 const http = require("isomorphic-git/http/node");
 const { CronJob } = require("cron");
 const fs = require("fs");
+const axios = require("axios");
 const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, readFile } = fs.promises;
 const { callAPI, initialHeader } = require("./apiclient");
@@ -33,9 +34,12 @@ if (!existsSync("./account.yaml")) {
     })
   );
 }
-let { eventTracker: account, BitbucketUser, BitbucketToken } = yaml.safeLoad(
-  readFileSync("./account.yaml", "utf-8")
-);
+let {
+  eventTracker: account,
+  BitbucketUser,
+  BitbucketToken,
+  SekaiAPIKey,
+} = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
 let eventData;
 const eventTrackerDir = path.join(__dirname, "sekai-event-track");
 
@@ -241,6 +245,17 @@ async function trackEventResult() {
   await writeFile(
     path.join(eventTrackerDir, `event${eventData.id}.json`),
     JSON.stringify(newData, null, 2)
+  );
+
+  // post ranking to api
+  axios.default.post(
+    `https://sekai-api.dnaroma.eu/event/${eventData.id}/rankings`,
+    newData,
+    {
+      headers: {
+        "X-API-Key": SekaiAPIKey,
+      },
+    }
   );
 }
 
