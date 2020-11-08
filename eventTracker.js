@@ -248,7 +248,7 @@ async function trackEventResult() {
   );
 
   // post ranking to api
-  axios.default.post(
+  await axios.default.post(
     `https://sekai-api.dnaroma.eu/event/${eventData.id}/rankings`,
     newData,
     {
