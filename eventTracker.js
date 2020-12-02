@@ -93,6 +93,7 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
     }) === "04:00"
   ) {
     await refreshVersions();
+    const { userId } = account;
     await callAPI(`/suite/user/${userId}`);
   }
 
@@ -100,6 +101,7 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
     await trackEventResult();
   } catch (e) {
     // in case of 403 or other errors
+    const { userId } = account;
     await refreshVersions();
     await callAPI(`/suite/user/${userId}`);
     await trackEventResult();
