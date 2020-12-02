@@ -251,7 +251,7 @@ async function trackEventResult() {
 
   // post ranking to api
   await axios.default.post(
-    `https://sekai-api.dnaroma.eu/event/${eventData.id}/rankings`,
+    `https://api.sekai.best/event/${eventData.id}/rankings`,
     newData,
     {
       headers: {
