@@ -256,15 +256,19 @@ async function trackEventResult() {
   );
 
   // post ranking to api
-  await axios.default.post(
-    `https://api.sekai.best/event/${eventData.id}/rankings`,
-    newData,
-    {
-      headers: {
-        "X-API-Key": SekaiAPIKey,
-      },
-    }
-  );
+  try {
+    await axios.default.post(
+      `https://api.sekai.best/event/${eventData.id}/rankings`,
+      newData,
+      {
+        headers: {
+          "X-API-Key": SekaiAPIKey,
+        },
+      }
+    );
+  } catch (e) {
+    logger.error("post event ranking to api failed");
+  }
 }
 
 async function commitEventTrackResult() {
