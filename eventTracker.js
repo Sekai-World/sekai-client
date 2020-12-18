@@ -133,9 +133,10 @@ async function refreshVersions() {
   initialHeader["x-asset-version"] = assetVersion;
 
   const masterData = await callAPI("/suite/master", "get");
-  eventData = masterData.events.length
-    ? masterData.events[masterData.events.length - 1]
-    : null;
+  const events = masterData.events.filter(
+    (it) => it.startAt <= new Date().getTime() + 60 * 1000
+  );
+  eventData = events.length ? events[events.length - 1] : null;
 
   return { appVersion, dataVersion, assetVersion, assetHash };
 }
@@ -148,8 +149,13 @@ async function trackEventResult() {
     currentTime > eventData.rankingAnnounceAt + 6 * 60 * 1000 ||
     (currentTime > eventData.aggregateAt &&
       currentTime < eventData.rankingAnnounceAt)
-  )
+  ) {
+    logger.warn("No ongoing event, skipping...");
     return;
+  } else if (currentTime >= eventData.closedAt - 10 * 1000) {
+    logger.warn("current event will expire soon");
+    throw Error("current event will expire soon");
+  }
 
   const { userId } = account;
 
