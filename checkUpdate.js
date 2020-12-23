@@ -95,7 +95,10 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
     })
   ) {
     logger.info("update game content i18n files");
-    await commitI18nFiles(versions);
+    await commitI18nFiles({
+      dataVersion: initialHeader["x-data-version"],
+      assetVersion: initialHeader["x-asset-version"],
+    });
   }
 });
 
@@ -531,7 +534,7 @@ async function bootstrap() {
   logger.info("try commit master db diff if any update");
   if (await commitMasterDiff({ dataVersion, assetVersion })) {
     logger.info("update game content i18n files");
-    await commitI18nFiles(versions);
+    await commitI18nFiles({ dataVersion, assetVersion });
   }
 
   logger.info("all finished, will try for new version every 30 minutes");
