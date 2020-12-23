@@ -30,6 +30,7 @@ if (!existsSync("./account.yaml")) {
 }
 let account = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
 const masterDBDiffDir = path.join(__dirname, "sekai-master-db-diff");
+const i18nDir = path.join(__dirname, "sekai-i18n");
 
 async function checkVersions() {
   const res = {
@@ -37,6 +38,7 @@ async function checkVersions() {
     isNewVersion: false,
   };
   const { appVersions } = await callAPI("/system");
+  logger.debug(appVersions);
   let currentVersion = appVersions.find(
     (appVer) =>
       appVer.appVersion === initialHeader["x-app-version"] &&
@@ -86,10 +88,15 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
     await refreshInformations();
   }
 
-  await commitMasterDiff({
-    dataVersion: initialHeader["x-data-version"],
-    assetVersion: initialHeader["x-asset-version"],
-  });
+  if (
+    await commitMasterDiff({
+      dataVersion: initialHeader["x-data-version"],
+      assetVersion: initialHeader["x-asset-version"],
+    })
+  ) {
+    logger.info("update game content i18n files");
+    await commitI18nFiles(versions);
+  }
 });
 
 async function registerAccount() {
@@ -138,7 +145,7 @@ async function refreshVersions() {
   logger.debug("split master into smaller pieces, add them to git stage area");
   for (let key in master) {
     const masterKeyPath = path.join(masterDBDiffDir, `${key}.json`);
-    if (key.includes("event")) {
+    if (key.includes("event", "gacha", "virtualLives")) {
       try {
         await access(masterKeyPath);
         const old = JSON.parse(
@@ -217,11 +224,157 @@ async function refreshInformations() {
   );
 }
 
+async function updateI18nFile(filepath) {
+  if (filepath.includes('/') || !filepath.endsWith('.json')) return;
+  const datas = JSON.parse(
+    await readFile(path.join(masterDBDiffDir, filepath), {
+      encoding: "utf8",
+    })
+  );
+
+  switch (filepath) {
+    case "cards.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "jp", "card_prefix.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.prefix;
+            }, {}),
+            null,
+            2
+          )
+        );
+        await writeFile(
+          path.join(i18nDir, "jp", "card_skill_name.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.cardSkillName;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "cardEpisodes.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "jp", "card_episode_title.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.title] = elem.title;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "musics.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "jp", "music_titles.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.title;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "musicVocals.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "jp", "music_vocal.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.musicVocalType] = elem.caption;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "stamps.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "jp", "stamp_name.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.name
+                .replace(/\[.*\]/, "")
+                .replace(/^.*：/, "");
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "gachas.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "jp", "gacha_name.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.name;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "events.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "jp", "event_name.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.name;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+  }
+
+  return;
+}
+
 async function commitMasterDiff(versions) {
   const { GitHubToken } = account;
   const { dataVersion, assetVersion } = versions;
   const fileStatusMatrix = await git.statusMatrix({ fs, dir: masterDBDiffDir });
   let shouldCommit = false;
+  // await git.checkout({
+  //   fs,
+  //   dir: masterDBDiffDir,
+  //   remote: "origin",
+  //   ref: "master",
+  // });
+  await git.pull({
+    fs,
+    http,
+    dir: masterDBDiffDir,
+    remote: "origin",
+    ref: "master",
+    fastForwardOnly: true,
+    author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
+    onAuth: () => ({ username: GitHubToken }),
+  });
   for (let fileStatus of fileStatusMatrix) {
     const [filepath, HEAD, WORKDIR, STAGE] = fileStatus;
     if (
@@ -229,6 +382,7 @@ async function commitMasterDiff(versions) {
       (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
     ) {
       await git.add({ fs, dir: masterDBDiffDir, filepath });
+      await updateI18nFile(filepath);
       shouldCommit = true;
     }
   }
@@ -250,7 +404,59 @@ async function commitMasterDiff(versions) {
     });
   }
 
-  return true;
+  return shouldCommit;
+}
+
+async function commitI18nFiles(versions) {
+  const { GitHubToken } = account;
+  const { dataVersion } = versions;
+  const fileStatusMatrix = await git.statusMatrix({ fs, dir: i18nDir });
+  let shouldCommit = false;
+  // await git.checkout({
+  //   fs,
+  //   dir: i18nDir,
+  //   remote: "origin",
+  //   ref: "main",
+  // });
+  await git.pull({
+    fs,
+    http,
+    dir: i18nDir,
+    remote: "origin",
+    ref: "main",
+    fastForwardOnly: true,
+    author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
+    onAuth: () => ({ username: GitHubToken }),
+  });
+  for (let fileStatus of fileStatusMatrix) {
+    const [filepath, HEAD, WORKDIR, STAGE] = fileStatus;
+    if (
+      (HEAD === 0 && WORKDIR === 2 && STAGE === 0) ||
+      (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
+    ) {
+      await git.add({ fs, dir: i18nDir, filepath });
+      shouldCommit = true;
+    }
+  }
+  if (shouldCommit) {
+    logger.debug("commit and push i18n files");
+    await git.commit({
+      fs,
+      dir: i18nDir,
+      message: `i18n update for master version ${dataVersion}`,
+      author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
+    });
+    await git.push({
+      fs,
+      http,
+      dir: i18nDir,
+      remote: "origin",
+      ref: "main",
+      onAuth: () => ({ username: GitHubToken }),
+    });
+  }
+
+  return shouldCommit;
 }
 
 async function bootstrap() {
@@ -323,7 +529,10 @@ async function bootstrap() {
   }
 
   logger.info("try commit master db diff if any update");
-  await commitMasterDiff({ dataVersion, assetVersion });
+  if (await commitMasterDiff({ dataVersion, assetVersion })) {
+    logger.info("update game content i18n files");
+    await commitI18nFiles(versions);
+  }
 
   logger.info("all finished, will try for new version every 30 minutes");
   trySystemJob.start();
