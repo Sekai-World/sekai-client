@@ -228,7 +228,7 @@ async function refreshInformations() {
 }
 
 async function updateI18nFile(filepath) {
-  if (filepath.includes('/') || !filepath.endsWith('.json')) return;
+  if (filepath.includes("/") || !filepath.endsWith(".json")) return;
   const datas = JSON.parse(
     await readFile(path.join(masterDBDiffDir, filepath), {
       encoding: "utf8",
@@ -243,6 +243,7 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.prefix;
+              return sum;
             }, {}),
             null,
             2
@@ -253,6 +254,7 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.cardSkillName;
+              return sum;
             }, {}),
             null,
             2
@@ -268,6 +270,7 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.title] = elem.title;
+              return sum;
             }, {}),
             null,
             2
@@ -283,6 +286,7 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.title;
+              return sum;
             }, {}),
             null,
             2
@@ -298,6 +302,7 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.musicVocalType] = elem.caption;
+              return sum;
             }, {}),
             null,
             2
@@ -315,6 +320,7 @@ async function updateI18nFile(filepath) {
               sum[elem.id] = elem.name
                 .replace(/\[.*\]/, "")
                 .replace(/^.*：/, "");
+              return sum;
             }, {}),
             null,
             2
@@ -330,6 +336,7 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.name;
+              return sum;
             }, {}),
             null,
             2
@@ -345,6 +352,7 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.name;
+              return sum;
             }, {}),
             null,
             2
