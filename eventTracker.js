@@ -146,7 +146,8 @@ async function trackEventResult() {
   if (
     !eventData ||
     currentTime < eventData.startAt ||
-    currentTime > eventData.rankingAnnounceAt + 6 * 60 * 1000 ||
+    (currentTime > eventData.rankingAnnounceAt + 6 * 60 * 1000 &&
+      currentTime < eventData.closedAt - 10 * 1000) ||
     (currentTime > eventData.aggregateAt &&
       currentTime < eventData.rankingAnnounceAt)
   ) {
