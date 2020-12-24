@@ -239,7 +239,7 @@ async function updateI18nFile(filepath) {
     case "cards.json":
       {
         await writeFile(
-          path.join(i18nDir, "jp", "card_prefix.json"),
+          path.join(i18nDir, "ja", "card_prefix.json"),
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.prefix;
@@ -250,7 +250,7 @@ async function updateI18nFile(filepath) {
           )
         );
         await writeFile(
-          path.join(i18nDir, "jp", "card_skill_name.json"),
+          path.join(i18nDir, "ja", "card_skill_name.json"),
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.cardSkillName;
@@ -266,7 +266,7 @@ async function updateI18nFile(filepath) {
     case "cardEpisodes.json":
       {
         await writeFile(
-          path.join(i18nDir, "jp", "card_episode_title.json"),
+          path.join(i18nDir, "ja", "card_episode_title.json"),
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.title] = elem.title;
@@ -282,7 +282,7 @@ async function updateI18nFile(filepath) {
     case "musics.json":
       {
         await writeFile(
-          path.join(i18nDir, "jp", "music_titles.json"),
+          path.join(i18nDir, "ja", "music_titles.json"),
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.title;
@@ -298,7 +298,7 @@ async function updateI18nFile(filepath) {
     case "musicVocals.json":
       {
         await writeFile(
-          path.join(i18nDir, "jp", "music_vocal.json"),
+          path.join(i18nDir, "ja", "music_vocal.json"),
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.musicVocalType] = elem.caption;
@@ -314,7 +314,7 @@ async function updateI18nFile(filepath) {
     case "stamps.json":
       {
         await writeFile(
-          path.join(i18nDir, "jp", "stamp_name.json"),
+          path.join(i18nDir, "ja", "stamp_name.json"),
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.name
@@ -332,7 +332,7 @@ async function updateI18nFile(filepath) {
     case "gachas.json":
       {
         await writeFile(
-          path.join(i18nDir, "jp", "gacha_name.json"),
+          path.join(i18nDir, "ja", "gacha_name.json"),
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.name;
@@ -348,7 +348,7 @@ async function updateI18nFile(filepath) {
     case "events.json":
       {
         await writeFile(
-          path.join(i18nDir, "jp", "event_name.json"),
+          path.join(i18nDir, "ja", "event_name.json"),
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.name;
