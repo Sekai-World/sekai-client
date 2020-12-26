@@ -4,6 +4,7 @@ const { writeFile, access, readFile } = fs.promises;
 const crypto = require("crypto");
 const uuidV4 = require("uuid-v4");
 const jwt = require("jsonwebtoken");
+const { CronJob } = require("cron");
 
 const yaml = require("js-yaml");
 const log4js = require("log4js");
@@ -98,6 +99,14 @@ async function bootstrap() {
   logger.info("bootstrap finished!");
 }
 
+const reLoginJob = new CronJob(
+  "0 0 4 * * *",
+  bootstrap,
+  null,
+  false,
+  "Asia/Tokyo"
+);
+
 router.get("/health", async (ctx, next) => {
   const isHealth = apiClientPool.some((apiClient) => !!apiClient.account);
   ctx.body = {
@@ -181,4 +190,4 @@ router.post("/refresh", protectedRoute, async (ctx, next) => {
 
 app.use(router.routes()).use(router.allowedMethods());
 app.listen(process.env.PORT || 9393);
-bootstrap();
+bootstrap().then(() => reLoginJob.start());
