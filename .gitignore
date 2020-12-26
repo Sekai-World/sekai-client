@@ -124,6 +124,6 @@ dist
 # End of https://www.toptal.com/developers/gitignore/api/vscode,node
 
 sekai-master-db-diff/
-account.yaml
+*.yaml
 sekai-event-track/
 sekai-i18n/
