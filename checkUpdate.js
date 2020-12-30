@@ -360,6 +360,38 @@ async function updateI18nFile(filepath) {
         );
       }
       break;
+
+    case "honors.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "ja", "honor_name.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.name] = elem.name;
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "honorGroups.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "ja", "honorGroup_name.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.name;
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
   }
 
   return;
