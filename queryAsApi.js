@@ -40,6 +40,20 @@ function getClient() {
   return apiClient;
 }
 
+async function clientCall(apiClient, endpoint, method = "get", body) {
+  try {
+    return await apiClient.callAPI(endpoint, method, body);
+  } catch (error) {
+    if (error.response.status === 426) {
+      logger.warn("update api client version");
+      await bootstrap();
+      return await apiClient.callAPI(endpoint, method, body);
+    }
+
+    throw error;
+  }
+}
+
 if (!existsSync("./apiClientPool.yaml")) {
   logger.warn("no apiClientPool.yaml found, created empty one!");
   writeFileSync(
@@ -134,7 +148,10 @@ router.get("/user/:id/profile", protectedRoute, async (ctx, next) => {
   const apiClient = getClient();
 
   try {
-    const userData = await apiClient.getUserProfile(ctx.params.id);
+    const userData = await clientCall(
+      apiClient,
+      `/user/${ctx.params.id}/profile`
+    );
 
     ctx.body = {
       status: "success",
@@ -159,7 +176,8 @@ router.get(
     const apiClient = getClient();
 
     try {
-      const eventRanking = await apiClient.callAPI(
+      const eventRanking = await clientCall(
+        apiClient,
         `/user/${apiClient.account.userId}/event/${ctx.params.eventId}/ranking?targetUserId=${ctx.params.id}`
       );
 
