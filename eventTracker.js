@@ -83,6 +83,7 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
     logger.warn("server in maintenance");
     return;
   }
+  const currentTime = new Date().getTime();
   if (
     verRes.isNewVersion ||
     new Date().toLocaleString("en-DE", {
@@ -98,13 +99,13 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
   }
 
   try {
-    await trackEventResult();
+    await trackEventResult(currentTime);
   } catch (e) {
     // in case of 403 or other errors
     const { userId } = account;
     await refreshVersions();
     await callAPI(`/suite/user/${userId}`);
-    await trackEventResult();
+    await trackEventResult(currentTime);
   }
 
   await commitEventTrackResult();
@@ -141,8 +142,7 @@ async function refreshVersions() {
   return { appVersion, dataVersion, assetVersion, assetHash };
 }
 
-async function trackEventResult() {
-  const currentTime = new Date().getTime();
+async function trackEventResult(currentTime) {
   if (
     !eventData ||
     currentTime < eventData.startAt ||
@@ -228,7 +228,7 @@ async function trackEventResult() {
 
   logger.debug("write track result");
   const newData = {
-    time: new Date().getTime(),
+    time: currentTime,
     first10,
     rank20,
     rank30,
