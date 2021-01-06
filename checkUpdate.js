@@ -148,7 +148,7 @@ async function refreshVersions() {
   logger.debug("split master into smaller pieces, add them to git stage area");
   for (let key in master) {
     const masterKeyPath = path.join(masterDBDiffDir, `${key}.json`);
-    if (key.includes("event", "gacha", "virtualLives")) {
+    if (key.includes("event", "gacha", "virtual")) {
       try {
         await access(masterKeyPath);
         const old = JSON.parse(
@@ -381,6 +381,22 @@ async function updateI18nFile(filepath) {
       {
         await writeFile(
           path.join(i18nDir, "ja", "honorGroup_name.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.name;
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "virtualLives.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "ja", "virtualLive_name.json"),
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.name;
