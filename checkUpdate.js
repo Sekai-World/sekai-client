@@ -430,7 +430,7 @@ async function commitMasterDiff(versions) {
     dir: masterDBDiffDir,
     remote: "origin",
     ref: "master",
-    fastForwardOnly: true,
+    // fastForwardOnly: true,
     author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
     onAuth: () => ({ username: GitHubToken }),
   });
@@ -483,7 +483,7 @@ async function commitI18nFiles(versions) {
     dir: i18nDir,
     remote: "origin",
     ref: "main",
-    fastForwardOnly: true,
+    // fastForwardOnly: true,
     author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
     onAuth: () => ({ username: GitHubToken }),
   });
