@@ -73,6 +73,7 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
     logger.warn("server in maintenance");
     return;
   }
+
   if (
     verRes.isNewVersion ||
     new Date().toLocaleString("en-DE", {
@@ -113,6 +114,29 @@ async function registerAccount() {
 
 async function refreshVersions() {
   logger.info("refersh version info");
+
+    // pull before changes are made
+  await git.pull({
+    fs,
+    http,
+    dir: masterDBDiffDir,
+    remote: "origin",
+    ref: "master",
+    // fastForwardOnly: true,
+    author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
+    onAuth: () => ({ username: GitHubToken }),
+  });
+  await git.pull({
+    fs,
+    http,
+    dir: i18nDir,
+    remote: "origin",
+    ref: "main",
+    // fastForwardOnly: true,
+    author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
+    onAuth: () => ({ username: GitHubToken }),
+  });
+
   logger.debug("do auth");
   const { userId, credential } = account;
   const {
@@ -418,22 +442,7 @@ async function commitMasterDiff(versions) {
   const { dataVersion, assetVersion } = versions;
   const fileStatusMatrix = await git.statusMatrix({ fs, dir: masterDBDiffDir });
   let shouldCommit = false;
-  // await git.checkout({
-  //   fs,
-  //   dir: masterDBDiffDir,
-  //   remote: "origin",
-  //   ref: "master",
-  // });
-  await git.pull({
-    fs,
-    http,
-    dir: masterDBDiffDir,
-    remote: "origin",
-    ref: "master",
-    // fastForwardOnly: true,
-    author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
-    onAuth: () => ({ username: GitHubToken }),
-  });
+
   for (let fileStatus of fileStatusMatrix) {
     const [filepath, HEAD, WORKDIR, STAGE] = fileStatus;
     if (
@@ -471,22 +480,7 @@ async function commitI18nFiles(versions) {
   const { dataVersion } = versions;
   const fileStatusMatrix = await git.statusMatrix({ fs, dir: i18nDir });
   let shouldCommit = false;
-  // await git.checkout({
-  //   fs,
-  //   dir: i18nDir,
-  //   remote: "origin",
-  //   ref: "main",
-  // });
-  await git.pull({
-    fs,
-    http,
-    dir: i18nDir,
-    remote: "origin",
-    ref: "main",
-    // fastForwardOnly: true,
-    author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
-    onAuth: () => ({ username: GitHubToken }),
-  });
+
   for (let fileStatus of fileStatusMatrix) {
     const [filepath, HEAD, WORKDIR, STAGE] = fileStatus;
     if (
