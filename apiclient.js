@@ -126,6 +126,8 @@ module.exports.APIClient = class APIClient {
         if (err.response.data.length) {
           err.response.data = decrypt(Buffer.from(err.response.data));
         }
+        if (res.headers["x-session-token"])
+          this.headers["x-session-token"] = res.headers["x-session-token"];
         this.logger.error(err.response.status, err.response.data);
         // const req = err.config;
         if (err.response.status === 429) {
@@ -134,9 +136,9 @@ module.exports.APIClient = class APIClient {
           this.isRateLimited = true;
           await delay(60000);
           this.isRateLimited = false;
-        } else if (err.response.status === 426) {
-          this.logger.warn("should update version");
-          await this.checkVersions();
+        // } else if (err.response.status === 426) {
+        //   this.logger.warn("should update version");
+        //   await this.checkVersions();
         }
 
         // console.log(err.request)

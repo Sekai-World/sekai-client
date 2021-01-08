@@ -48,6 +48,8 @@ async function clientCall(apiClient, endpoint, method = "get", body) {
       logger.warn("update api client version");
       await bootstrap();
       return await apiClient.callAPI(endpoint, method, body);
+    } else if (error.response.status === 403 && error.response.data.errorCode === "session_error") {
+      await apiClient.login();
     }
 
     throw error;
