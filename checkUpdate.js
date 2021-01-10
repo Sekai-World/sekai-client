@@ -385,6 +385,24 @@ async function updateI18nFile(filepath) {
       }
       break;
 
+    case "eventStories.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "ja", "event_story_episode_title.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              elem.eventStoryEpisodes.forEach((episode) => {
+                sum[`${episode.eventStoryId}-${episode.episodeNo}`] = episode.title;
+              });
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
     case "honors.json":
       {
         await writeFile(
