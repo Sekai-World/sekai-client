@@ -44,11 +44,15 @@ async function clientCall(apiClient, endpoint, method = "get", body) {
   try {
     return await apiClient.callAPI(endpoint, method, body);
   } catch (error) {
+    logger.error(error.response);
     if (error.response.status === 426) {
       logger.warn("update api client version");
       await apiClient.login();
       return await apiClient.callAPI(endpoint, method, body);
-    } else if (error.response.status === 403 && error.response.data.errorCode === "session_error") {
+    } else if (
+      error.response.status === 403 &&
+      error.response.data.errorCode === "session_error"
+    ) {
       await apiClient.login();
     }
 
@@ -160,7 +164,7 @@ router.get("/user/:id/profile", protectedRoute, async (ctx, next) => {
       data: userData,
     };
   } catch (error) {
-    // console.log(error.response.data);
+    logger.error(error.response);
     ctx.body = {
       status: "error",
       message: "check your input.",
@@ -188,6 +192,7 @@ router.get(
         data: eventRanking,
       };
     } catch (error) {
+      logger.error(error.response);
       ctx.body = {
         status: "error",
         message: "check your input.",
