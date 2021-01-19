@@ -187,6 +187,9 @@ module.exports.APIClient = class APIClient {
   async login() {
     this.logger.info("simulate login process");
     this.logger.debug("do auth");
+    delete this.headers["x-session-token"];
+    delete this.headers["x-data-version"];
+    delete this.headers["x-asset-version"];
     const { userId, credential } = this._account;
     const {
       sessionToken,
