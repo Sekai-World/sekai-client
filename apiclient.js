@@ -71,7 +71,8 @@ myAxios.interceptors.response.use(
       await delay(30000);
     }
 
-    return Promise.reject(err);
+    // return Promise.reject(err);
+    throw err;
   }
 );
 
@@ -136,14 +137,17 @@ module.exports.APIClient = class APIClient {
           this.isRateLimited = true;
           await delay(60000);
           this.isRateLimited = false;
-        // } else if (err.response.status === 426) {
-        //   this.logger.warn("should update version");
-        //   await this.checkVersions();
+        } else if (err.response.status === 426) {
+          this.logger.warn("should update version");
+          await this.login();
+        } else if (err.response.status === 403) {
+          this.logger.warn("unknown error.");
+          await this.login();
         }
 
         // console.log(err.request)
 
-        throw err;
+        throw { err };
       }
     );
   }
