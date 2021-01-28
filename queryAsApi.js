@@ -44,17 +44,17 @@ async function clientCall(apiClient, endpoint, method = "get", body) {
   try {
     return await apiClient.callAPI(endpoint, method, body);
   } catch (error) {
-    logger.error(error.response);
-    if (error.response.status === 426) {
-      logger.warn("update api client version");
-      await apiClient.login();
-      return await apiClient.callAPI(endpoint, method, body);
-    } else if (
-      error.response.status === 403 &&
-      error.response.data.errorCode === "session_error"
-    ) {
-      await apiClient.login();
-    }
+    logger.error(error);
+    // if (error.response.status === 426) {
+    //   logger.warn("update api client version");
+    //   await apiClient.login();
+    //   return await apiClient.callAPI(endpoint, method, body);
+    // } else if (
+    //   error.response.status === 403 &&
+    //   error.response.data.errorCode === "session_error"
+    // ) {
+    //   await apiClient.login();
+    // }
 
     throw error;
   }
