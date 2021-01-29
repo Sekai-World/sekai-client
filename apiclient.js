@@ -127,8 +127,8 @@ module.exports.APIClient = class APIClient {
         if (err.response.data.length) {
           err.response.data = decrypt(Buffer.from(err.response.data));
         }
-        if (res.headers["x-session-token"])
-          this.headers["x-session-token"] = res.headers["x-session-token"];
+        if (err.response.headers["x-session-token"])
+          this.headers["x-session-token"] = err.response.headers["x-session-token"];
         this.logger.error(err.response.status, err.response.data);
         // const req = err.config;
         if (err.response.status === 429) {
@@ -145,9 +145,9 @@ module.exports.APIClient = class APIClient {
           await this.login();
         }
 
-        // console.log(err.request)
+        // console.log(err.response)
 
-        throw { err };
+        throw err;
       }
     );
   }
