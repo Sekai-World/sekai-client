@@ -1,6 +1,6 @@
 const axios = require("axios");
 const msgpack = require("@msgpack/msgpack");
-const { initialHeader, baseURL } = require("./constants.js");
+const { initialHeader, baseURL, proxy } = require("./constants.js");
 const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
 const log4js = require("log4js");
@@ -49,6 +49,7 @@ const myAxios = axios.default.create({
     },
   ],
   responseType: "arraybuffer",
+  proxy,
 });
 
 myAxios.interceptors.response.use(
@@ -107,6 +108,7 @@ module.exports.APIClient = class APIClient {
         },
       ],
       responseType: "arraybuffer",
+      proxy,
     });
 
     this.headers = Object.assign({}, initialHeader);

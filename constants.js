@@ -19,5 +19,9 @@ module.exports = {
     "accept-language": 'zh-cn',
     // "content-type": 'application/octet-stream'
   },
-  baseURL: 'https://production-game-api.sekai.colorfulpalette.org/api'
+  baseURL: 'https://production-game-api.sekai.colorfulpalette.org/api',
+  proxy: {
+    host: process.env.PROXY_HOST || 'localhost',
+    port: process.env.PROXY_PORT || 8080
+  }
 }
