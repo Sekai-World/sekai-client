@@ -48,7 +48,14 @@ async function checkVersions() {
     isMaintenance: false,
     isNewVersion: false,
   };
-  const { appVersions } = await callAPI("/system");
+  let appVersions;
+  try {
+    appVersions = (await callAPI("/system")).appVersions;
+  } catch (error) {
+    return {
+      isMaintenance: true,
+    };
+  }
   let currentVersion = appVersions.find(
     (appVer) =>
       appVer.appVersion === initialHeader["x-app-version"] &&
@@ -310,7 +317,7 @@ async function bootstrap() {
   logger.info("ensure current version available");
   const verRes = await checkVersions();
   if (verRes.isMaintenance) {
-    logger.warn("server in maintenance");
+    logger.warn("bootstrap: server in maintenance");
     setTimeout(() => {
       bootstrap();
     }, 10 * 60 * 1000);
