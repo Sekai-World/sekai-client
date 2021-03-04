@@ -37,7 +37,14 @@ async function checkVersions() {
     isMaintenance: false,
     isNewVersion: false,
   };
-  const { appVersions } = await callAPI("/system");
+  let appVersions;
+  try {
+    appVersions = (await callAPI("/system")).appVersions;
+  } catch (error) {
+    return {
+      isMaintenance: true,
+    };
+  }
   logger.debug(appVersions);
   let currentVersion = appVersions.find(
     (appVer) =>
@@ -115,7 +122,7 @@ async function registerAccount() {
 async function refreshVersions() {
   logger.info("refersh version info");
 
-    // pull before changes are made
+  // pull before changes are made
   await git.pull({
     fs,
     http,
@@ -392,7 +399,8 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               elem.eventStoryEpisodes.forEach((episode) => {
-                sum[`${episode.eventStoryId}-${episode.episodeNo}`] = episode.title;
+                sum[`${episode.eventStoryId}-${episode.episodeNo}`] =
+                  episode.title;
               });
               return sum;
             }, {}),
@@ -534,6 +542,7 @@ async function bootstrap() {
   logger.info("ensure current version available");
   const verRes = await checkVersions();
   if (verRes.isMaintenance) {
+    logger.warn("bootstrap: server in maintenance");
     setTimeout(() => {
       bootstrap();
     }, 10 * 60 * 1000);
