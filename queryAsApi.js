@@ -18,7 +18,7 @@ logger.level = "info";
 const app = new Koa();
 const router = new Router();
 
-const max_accounts = process.env.MAX_ALLOW_ACCOUNTS || 5;
+const max_accounts = process.env.MAX_ALLOW_ACCOUNTS || 2;
 
 const apiClientPool = Array.from({ length: max_accounts }).map(
   () => new APIClient(logger)
