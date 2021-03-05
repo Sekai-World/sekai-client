@@ -141,12 +141,12 @@ const myClient = got.extend({
  * @param {string} method
  * @param {object} body
  */
-module.exports.callAPI = async function doReq(endpoint, method = "get", body) {
+module.exports.callAPI = async function doReq(endpoint, method = "get", data) {
   if (endpoint.startsWith("/")) endpoint = endpoint.slice(1);
   const { body } = await myClient(endpoint, {
     method,
     headers: initialHeader,
-    body: ["post", "put", "patch"].includes(method) ? encrypt(body) : undefined,
+    body: ["post", "put", "patch"].includes(method) ? encrypt(data) : undefined,
   });
 
   return body;
