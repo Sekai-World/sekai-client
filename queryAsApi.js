@@ -77,7 +77,7 @@ if (!existsSync("./apiClientPool.yaml")) {
     )
   );
 }
-let accounts = yaml.safeLoad(readFileSync("./apiClientPool.yaml", "utf-8"));
+let accounts = yaml.safeLoad(readFileSync("./apiClientPool.yaml", "utf-8")).slice(0, max_accounts);
 let currentPoolIdx = 0;
 
 async function bootstrap() {
