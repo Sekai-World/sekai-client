@@ -4,9 +4,15 @@ const { initialHeader, baseURL, proxy } = require("./constants.js");
 const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
 const log4js = require("log4js");
+const SocksProxyAgent = require('socks-proxy-agent');
 
 const logger = log4js.getLogger("client");
 logger.level = "info";
+
+// the full socks5 address
+const proxyOptions = `socks5://${proxy.user}:${proxy.pass}@${proxy.host}:${proxy.port}`;
+// create the socksAgent for axios
+const httpsAgent = new SocksProxyAgent(proxyOptions);
 
 function delay(ms) {
   logger.debug(`promise delay for ${ms} ms`);
@@ -49,7 +55,7 @@ const myAxios = axios.default.create({
     },
   ],
   responseType: "arraybuffer",
-  proxy,
+  httpsAgent,
 });
 
 myAxios.interceptors.response.use(
@@ -108,7 +114,7 @@ module.exports.APIClient = class APIClient {
         },
       ],
       responseType: "arraybuffer",
-      proxy,
+      httpsAgent,
     });
 
     this.headers = Object.assign({}, initialHeader);
