@@ -11,9 +11,13 @@ const logger = log4js.getLogger("client");
 logger.level = "info";
 
 // the full socks5 address
-const proxyOptions = `socks5://${proxy.user}:${proxy.pass}@${proxy.host}:${proxy.port}`;
+// const proxyOptions = `socks5://${proxy.user}:${proxy.pass}@${proxy.host}:${proxy.port}`;
 // create the socksAgent for axios
-const httpsAgent = new SocksProxyAgent(proxyOptions);
+const httpsAgent = new SocksProxyAgent({
+  host: proxy.host,
+  port: proxy.port,
+  auth: `${proxy.user}:${proxy.pass}`
+});
 
 const rateLimited = false;
 
@@ -91,7 +95,7 @@ const myClient = got.extend({
             initialHeader["x-session-token"] &&
             response.headers["x-session-token"]
           )
-            initialHeader["x-session-token"] = res.headers["x-session-token"];
+            initialHeader["x-session-token"] = response.headers["x-session-token"];
 
           if (response.body.length) response.body = decrypt(response.body);
 
@@ -131,14 +135,21 @@ const myClient = got.extend({
 //   }
 // );
 
+/**
+ *
+ * @param {string} endpoint
+ * @param {string} method
+ * @param {object} body
+ */
 module.exports.callAPI = async function doReq(endpoint, method = "get", body) {
-  const { data } = await myClient(endpoint, {
+  if (endpoint.startsWith("/")) endpoint = endpoint.slice(1);
+  const { body } = await myClient(endpoint, {
     method,
     headers: initialHeader,
-    body: ["post", "put", "patch"].includes(method) ? encrypt(body) : null,
+    body: ["post", "put", "patch"].includes(method) ? encrypt(body) : undefined,
   });
 
-  return data;
+  return body;
 };
 
 module.exports.initialHeader = initialHeader;
