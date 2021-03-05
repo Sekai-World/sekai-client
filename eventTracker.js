@@ -52,6 +52,7 @@ async function checkVersions() {
   try {
     appVersions = (await callAPI("/system")).appVersions;
   } catch (error) {
+    logger.error(error);
     return {
       isMaintenance: true,
     };
