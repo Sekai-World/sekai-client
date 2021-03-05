@@ -1,10 +1,11 @@
 const axios = require("axios");
+const got = require("got").default;
 const msgpack = require("@msgpack/msgpack");
 const { initialHeader, baseURL, proxy } = require("./constants.js");
 const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
 const log4js = require("log4js");
-const SocksProxyAgent = require('socks-proxy-agent');
+const SocksProxyAgent = require("socks-proxy-agent");
 
 const logger = log4js.getLogger("client");
 logger.level = "info";
@@ -13,6 +14,8 @@ logger.level = "info";
 const proxyOptions = `socks5://${proxy.user}:${proxy.pass}@${proxy.host}:${proxy.port}`;
 // create the socksAgent for axios
 const httpsAgent = new SocksProxyAgent(proxyOptions);
+
+const rateLimited = false;
 
 function delay(ms) {
   logger.debug(`promise delay for ${ms} ms`);
@@ -45,50 +48,94 @@ function decrypt(enc) {
     : decrypted.toString("hex");
 }
 
-const myAxios = axios.default.create({
-  baseURL,
-  transformRequest: [
-    (data, headers) => {
-      headers["x-request-id"] = uuidV4();
-      headers["content-type"] = "application/octet-stream";
-      return data;
-    },
-  ],
-  responseType: "arraybuffer",
-  httpsAgent,
+// const myAxios = axios.default.create({
+//   baseURL,
+//   transformRequest: [
+//     (data, headers) => {
+//       headers["x-request-id"] = uuidV4();
+//       headers["content-type"] = "application/octet-stream";
+//       return data;
+//     },
+//   ],
+//   responseType: "arraybuffer",
+//   httpsAgent,
+// });
+
+const myClient = got.extend({
+  prefixUrl: baseURL,
+  responseType: "buffer",
+  agent: {
+    https: httpsAgent,
+  },
+  // http2: true,
+  hooks: {
+    beforeRequest: [
+      (options) => {
+        options.headers["x-request-id"] = uuidV4();
+        options.headers["content-type"] = "application/octet-stream";
+      },
+    ],
+    afterResponse: [
+      (response, retryWithMergedOptions) => {
+        if (response.statusCode === 429) {
+          // hit rate limit, sleep for a while
+          logger.warn("rate limit hit, sleep for 30s");
+          rateLimited = true;
+          setTimeout(() => {
+            rateLimited = false;
+          }, 30000);
+
+          return response;
+        } else {
+          if (
+            initialHeader["x-session-token"] &&
+            response.headers["x-session-token"]
+          )
+            initialHeader["x-session-token"] = res.headers["x-session-token"];
+
+          if (response.body.length) response.body = decrypt(response.body);
+
+          return response;
+        }
+      },
+    ],
+  },
+  dnsLookupIpVersion: "ipv6",
 });
 
-myAxios.interceptors.response.use(
-  (res) => {
-    if (initialHeader["x-session-token"] && res.headers["x-session-token"])
-      initialHeader["x-session-token"] = res.headers["x-session-token"];
+// myAxios.interceptors.response.use(
+//   (res) => {
+//     if (initialHeader["x-session-token"] && res.headers["x-session-token"])
+//       initialHeader["x-session-token"] = res.headers["x-session-token"];
 
-    if (res.data.length) res.data = decrypt(Buffer.from(res.data));
-    return res;
-  },
-  async (err) => {
-    if (err.response.data.length) {
-      err.response.data = decrypt(Buffer.from(err.response.data));
-    }
-    logger.error(err.response.status, err.response.data);
-    const req = err.config;
-    if (err.response.status === 429) {
-      // hit rate limit, sleep for a while
-      logger.warn("rate limit hit, sleep for 30s");
-      await delay(30000);
-    }
+//     if (res.data.length) res.data = decrypt(Buffer.from(res.data));
+//     return res;
+//   },
+//   async (err) => {
+//     if (err.response.data.length) {
+//       err.response.data = decrypt(Buffer.from(err.response.data));
+//     }
+//     logger.error(err.response.status, err.response.data);
+//     const req = err.config;
+//     if (err.response.status === 429) {
+//       // hit rate limit, sleep for a while
+//       logger.warn("rate limit hit, sleep for 30s");
+//       rateLimited = true;
+//       setTimeout(() => {
+//         rateLimited = false;
+//       }, 30000);
+//     }
 
-    // return Promise.reject(err);
-    throw err;
-  }
-);
+//     // return Promise.reject(err);
+//     throw err;
+//   }
+// );
 
 module.exports.callAPI = async function doReq(endpoint, method = "get", body) {
-  const { data } = await myAxios({
-    url: endpoint,
+  const { data } = await myClient(endpoint, {
     method,
     headers: initialHeader,
-    data: ["post", "put", "patch"].includes(method) ? encrypt(body) : null,
+    body: ["post", "put", "patch"].includes(method) ? encrypt(body) : null,
   });
 
   return data;
@@ -136,7 +183,8 @@ module.exports.APIClient = class APIClient {
           err.response.data = decrypt(Buffer.from(err.response.data));
         }
         if (err.response.headers["x-session-token"])
-          this.headers["x-session-token"] = err.response.headers["x-session-token"];
+          this.headers["x-session-token"] =
+            err.response.headers["x-session-token"];
         this.logger.error(err.response.status, err.response.data);
         // const req = err.config;
         if (err.response.status === 429) {
