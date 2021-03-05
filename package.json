@@ -20,13 +20,14 @@
   "dependencies": {
     "@koa/router": "^10.0.0",
     "@msgpack/msgpack": "^2.3.0",
-    "axios": "^0.20.0",
+    "axios": "^0.21.1",
     "cron": "^1.8.2",
     "isomorphic-git": "^1.8.0",
     "js-yaml": "^3.14.1",
     "jsonwebtoken": "^8.5.1",
     "koa": "^2.13.0",
     "log4js": "^6.3.0",
+    "socks-proxy-agent": "^5.0.0",
     "uuid-v4": "^0.1.0"
   },
   "devDependencies": {
