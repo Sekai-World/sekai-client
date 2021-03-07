@@ -24,7 +24,7 @@ const httpsAgent = proxy.type === "socks5" ? new SocksProxyAgent({
   port: proxy.port,
   auth: proxy.user ? `${proxy.user}:${proxy.pass}` : undefined,
   type: 4
-}) : proxy.type === "socks5" ? new HttpsProxyAgent({
+}) : proxy.type === "http" ? new HttpsProxyAgent({
   proxy: `http://${proxy.host}:${proxy.port}`
 }) : undefined;
 
