@@ -17,7 +17,13 @@ logger.level = "info";
 const httpsAgent = proxy.type === "socks5" ? new SocksProxyAgent({
   host: proxy.host,
   port: proxy.port,
-  auth: `${proxy.user}:${proxy.pass}`
+  auth: `${proxy.user}:${proxy.pass}`,
+  type: 5
+}) : proxy.type === "socks4" ? new SocksProxyAgent({
+  host: proxy.host,
+  port: proxy.port,
+  auth: `${proxy.user}:${proxy.pass}`,
+  type: 4
 }) : proxy.type === "socks5" ? new HttpsProxyAgent({
   proxy: `http://${proxy.host}:${proxy.port}`
 }) : undefined;
