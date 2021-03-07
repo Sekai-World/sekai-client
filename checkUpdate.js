@@ -6,8 +6,8 @@ const { CronJob } = require("cron");
 const fs = require("fs");
 const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, access, readFile } = fs.promises;
-const axios = require("axios");
-const { callAPI, initialHeader, decrypt } = require("./apiclient");
+// const axios = require("axios");
+const { callAPI, initialHeader, decrypt, assetClient } = require("./apiclient");
 
 const log4js = require("log4js");
 
@@ -200,15 +200,13 @@ async function refreshVersions() {
   }
 
   logger.debug("download assets list");
-  const { data: assetList } = await axios.get(
+  const { body: assetList } = await assetClient(
     `/version/${assetVersion}/os/ios`,
     {
-      baseURL: "https://assetbundle-info.sekai.colorfulpalette.org/api",
       headers: {
         "user-agent": initialHeader["user-agent"],
         "x-unity-version": initialHeader["x-unity-version"],
       },
-      responseType: "arraybuffer",
     }
   );
   await writeFile(
