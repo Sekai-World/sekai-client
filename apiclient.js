@@ -6,6 +6,7 @@ const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
 const log4js = require("log4js");
 const SocksProxyAgent = require("socks-proxy-agent");
+const { HttpsProxyAgent } = require("hpagent");
 
 const logger = log4js.getLogger("client");
 logger.level = "info";
@@ -13,11 +14,13 @@ logger.level = "info";
 // the full socks5 address
 // const proxyOptions = `socks5://${proxy.user}:${proxy.pass}@${proxy.host}:${proxy.port}`;
 // create the socksAgent for axios
-const httpsAgent = new SocksProxyAgent({
+const httpsAgent = proxy.type === "socks5" ? new SocksProxyAgent({
   host: proxy.host,
   port: proxy.port,
   auth: `${proxy.user}:${proxy.pass}`
-});
+}) : proxy.type === "socks5" ? new HttpsProxyAgent({
+  proxy: `http://${proxy.host}:${proxy.port}`
+}) : undefined;
 
 const rateLimited = false;
 

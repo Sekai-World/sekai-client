@@ -21,6 +21,7 @@ module.exports = {
   },
   baseURL: "https://production-game-api.sekai.colorfulpalette.org/api",
   proxy: {
+    type: process.env.PROXY_TYPE || "http",
     host: process.env.PROXY_HOST || "localhost",
     port: process.env.PROXY_PORT || 8080,
     user: process.env.PROXY_USER || "",
