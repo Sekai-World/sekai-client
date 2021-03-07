@@ -201,7 +201,7 @@ async function refreshVersions() {
 
   logger.debug("download assets list");
   const { body: assetList } = await assetClient(
-    `/version/${assetVersion}/os/ios`,
+    `version/${assetVersion}/os/ios`,
     {
       headers: {
         "user-agent": initialHeader["user-agent"],
