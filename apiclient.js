@@ -1,7 +1,7 @@
 const axios = require("axios");
 const got = require("got").default;
 const msgpack = require("@msgpack/msgpack");
-const { initialHeader, baseURL, proxy } = require("./constants.js");
+const { initialHeader, baseURL, proxy, assetBaseURL } = require("./constants.js");
 const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
 const log4js = require("log4js");
@@ -154,6 +154,16 @@ module.exports.callAPI = async function doReq(endpoint, method = "get", data) {
 
   return body;
 };
+
+module.exports.assetClient = got.extend({
+  prefixUrl: assetBaseURL,
+  responseType: "buffer",
+  agent: {
+    https: httpsAgent,
+  },
+  // http2: true,
+  dnsLookupIpVersion: "ipv6",
+});
 
 module.exports.initialHeader = initialHeader;
 

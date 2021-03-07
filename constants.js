@@ -27,4 +27,5 @@ module.exports = {
     user: process.env.PROXY_USER || "",
     pass: process.env.PROXY_PASS || "",
   },
+  assetBaseURL: "https://assetbundle-info.sekai.colorfulpalette.org/api",
 };
