@@ -289,6 +289,17 @@ async function updateI18nFile(filepath) {
             2
           )
         );
+        await writeFile(
+          path.join(i18nDir, "ja", "card_gacha_phrase.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              if (elem.gachaPhrase !== "-") sum[elem.id] = elem.gachaPhrase;
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
       }
       break;
 
@@ -448,6 +459,54 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.name;
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "beginnerMissions.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "ja", "beginner_mission.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.sentence;
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "honorMissions.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "ja", "honor_mission.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.sentence;
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "normalMissions.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "ja", "normal_mission.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.sentence;
               return sum;
             }, {}),
             null,
