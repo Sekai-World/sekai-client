@@ -66,7 +66,7 @@ async function checkVersions() {
   if (!currentVersion) {
     // check latest version
     currentVersion = appVersions[appVersions.length - 1];
-    if (currentVersion.appVersionStatus === "maintence") {
+    if (currentVersion.appVersionStatus === "maintenance") {
       res.isMaintenance = true;
     } else if (currentVersion.appVersionStatus === "available") {
       res.isNewVersion = true;
