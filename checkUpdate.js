@@ -152,6 +152,8 @@ async function refreshVersions() {
     dataVersion,
     assetVersion,
     assetHash,
+    appHash,
+    multiPlayVersion,
   } = await callAPI(`/user/${userId}/auth`, "put", {
     credential,
   });
@@ -168,7 +170,14 @@ async function refreshVersions() {
   await writeFile(
     path.join(masterDBDiffDir, "versions.json"),
     JSON.stringify(
-      { appVersion, dataVersion, assetVersion, assetHash },
+      {
+        appVersion,
+        dataVersion,
+        assetVersion,
+        assetHash,
+        appHash,
+        multiPlayVersion,
+      },
       null,
       2
     )
