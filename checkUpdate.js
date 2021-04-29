@@ -188,7 +188,7 @@ async function refreshVersions() {
   logger.debug("split master into smaller pieces, add them to git stage area");
   for (let key in master) {
     const masterKeyPath = path.join(masterDBDiffDir, `${key}.json`);
-    if (key.includes("event", "gacha", "virtual")) {
+    if (key.includes("event", "gacha", "virtual", "cheerfulCarnival")) {
       try {
         await access(masterKeyPath);
         const old = JSON.parse(
@@ -516,6 +516,38 @@ async function updateI18nFile(filepath) {
           JSON.stringify(
             datas.reduce((sum, elem) => {
               sum[elem.id] = elem.sentence;
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "cheerfulCarnivalSummaries.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "ja", "cheerful_carnival_themes.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.theme;
+              return sum;
+            }, {}),
+            null,
+            2
+          )
+        );
+      }
+      break;
+
+    case "cheerfulCarnivalTeams.json":
+      {
+        await writeFile(
+          path.join(i18nDir, "ja", "cheerful_carnival_teams.json"),
+          JSON.stringify(
+            datas.reduce((sum, elem) => {
+              sum[elem.id] = elem.teamName;
               return sum;
             }, {}),
             null,
