@@ -10,6 +10,7 @@ const { writeFile, access, readFile } = fs.promises;
 const { callAPI, initialHeader, decrypt, assetClient } = require("./apiclient");
 
 const log4js = require("log4js");
+const { default: axios } = require("axios");
 
 const logger = log4js.getLogger("check-update");
 logger.level = "info";
@@ -31,6 +32,8 @@ if (!existsSync("./account.yaml")) {
 let account = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
 const masterDBDiffDir = path.join(__dirname, "sekai-master-db-diff");
 const i18nDir = path.join(__dirname, "sekai-i18n");
+const strapiBaseUrl = process.env.STRAPI_BASE_URL;
+const strapiToken = process.env.STRAPI_TOKEN;
 
 async function checkVersions() {
   const res = {
@@ -309,6 +312,9 @@ async function updateI18nFile(filepath) {
             2
           )
         );
+
+        // extra work for updating strapi database
+        await axios.post(`${strapiBaseUrl}/cards/fromDB?token=${strapiToken}`, datas.map(elem => elem.id));
       }
       break;
 
@@ -341,6 +347,9 @@ async function updateI18nFile(filepath) {
             2
           )
         );
+
+        // extra work for updating strapi database
+        await axios.post(`${strapiBaseUrl}/musics/fromDB?token=${strapiToken}`, datas.map(elem => elem.id));
       }
       break;
 
@@ -407,6 +416,9 @@ async function updateI18nFile(filepath) {
             2
           )
         );
+
+        // extra work for updating strapi database
+        await axios.post(`${strapiBaseUrl}/events/fromDB?token=${strapiToken}`, datas.map(elem => elem.id));
       }
       break;
 
@@ -474,6 +486,9 @@ async function updateI18nFile(filepath) {
             2
           )
         );
+
+        // extra work for updating strapi database
+        await axios.post(`${strapiBaseUrl}/virtual-lives/fromDB?token=${strapiToken}`, datas.map(elem => elem.id));
       }
       break;
 
