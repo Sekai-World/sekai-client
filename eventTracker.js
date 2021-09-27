@@ -8,6 +8,7 @@ const axios = require("axios");
 const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, readFile } = fs.promises;
 const { callAPI, initialHeader } = require("./apiclient");
+const { sendEmail } = require("./utils");
 
 const log4js = require("log4js");
 
@@ -45,6 +46,7 @@ const eventTrackerDir = path.join(__dirname, "sekai-event-track");
 
 async function checkVersions() {
   const res = {
+    isError: false,
     isMaintenance: false,
     isNewVersion: false,
   };
@@ -54,7 +56,7 @@ async function checkVersions() {
   } catch (error) {
     logger.error(error);
     return {
-      isMaintenance: true,
+      isError: true,
     };
   }
   let currentVersion = appVersions.find(
@@ -90,7 +92,17 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
   if (verRes.isMaintenance) {
     logger.warn("server in maintenance");
     return;
+  } else if (verRes.isError) {
+    logger.error("update: failed to connect server");
+    try {
+      await sendEmail();
+      logger.info("update: warning email sent");
+    } catch (error) {
+      logger.debug("update: skipped email sent");
+    }
+    return;
   }
+
   const currentTime = new Date().getTime();
   if (
     verRes.isNewVersion ||
@@ -123,15 +135,10 @@ async function refreshVersions() {
   logger.info("refersh version info");
   logger.debug("do auth");
   const { userId, credential } = account;
-  const {
-    sessionToken,
-    appVersion,
-    dataVersion,
-    assetVersion,
-    assetHash,
-  } = await callAPI(`/user/${userId}/auth`, "put", {
-    credential,
-  });
+  const { sessionToken, appVersion, dataVersion, assetVersion, assetHash } =
+    await callAPI(`/user/${userId}/auth`, "put", {
+      credential,
+    });
   logger.info(
     `appVersion ${appVersion} dataVersion ${dataVersion} assetVersion ${assetVersion} assetHash ${assetHash}`
   );
@@ -322,6 +329,18 @@ async function bootstrap() {
     setTimeout(() => {
       bootstrap();
     }, 10 * 60 * 1000);
+    return;
+  } else if (verRes.isError) {
+    logger.error("bootstrap: failed to connect server");
+    setTimeout(() => {
+      bootstrap();
+    }, 10 * 60 * 1000);
+    try {
+      await sendEmail();
+      logger.info("update: warning email sent");
+    } catch (error) {
+      logger.debug("update: skipped email sent");
+    }
     return;
   }
 

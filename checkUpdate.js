@@ -8,6 +8,7 @@ const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, access, readFile } = fs.promises;
 // const axios = require("axios");
 const { callAPI, initialHeader, decrypt, assetClient } = require("./apiclient");
+const { sendEmail } = require("./utils");
 
 const log4js = require("log4js");
 const { default: axios } = require("axios");
@@ -37,6 +38,7 @@ const strapiToken = process.env.STRAPI_TOKEN;
 
 async function checkVersions() {
   const res = {
+    isError: false,
     isMaintenance: false,
     isNewVersion: false,
   };
@@ -45,7 +47,7 @@ async function checkVersions() {
     appVersions = (await callAPI("/system")).appVersions;
   } catch (error) {
     return {
-      isMaintenance: true,
+      isError: true,
     };
   }
   logger.debug(appVersions);
@@ -80,7 +82,16 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
   logger.info("check update triggered by cron job");
   const verRes = await checkVersions();
   if (verRes.isMaintenance) {
-    logger.warn("server in maintenance");
+    logger.warn("update: server in maintenance");
+    return;
+  } else if (verRes.isError) {
+    logger.error("update: failed to connect server");
+    try {
+      await sendEmail();
+      logger.info("update: warning email sent");
+    } catch (error) {
+      logger.debug("update: skipped email sent");
+    }
     return;
   }
 
@@ -314,7 +325,10 @@ async function updateI18nFile(filepath) {
         );
 
         // extra work for updating strapi database
-        await axios.post(`${strapiBaseUrl}/cards/fromDB?token=${strapiToken}`, datas.map(elem => elem.id));
+        await axios.post(
+          `${strapiBaseUrl}/cards/fromDB?token=${strapiToken}`,
+          datas.map((elem) => elem.id)
+        );
       }
       break;
 
@@ -349,7 +363,10 @@ async function updateI18nFile(filepath) {
         );
 
         // extra work for updating strapi database
-        await axios.post(`${strapiBaseUrl}/musics/fromDB?token=${strapiToken}`, datas.map(elem => elem.id));
+        await axios.post(
+          `${strapiBaseUrl}/musics/fromDB?token=${strapiToken}`,
+          datas.map((elem) => elem.id)
+        );
       }
       break;
 
@@ -418,7 +435,10 @@ async function updateI18nFile(filepath) {
         );
 
         // extra work for updating strapi database
-        await axios.post(`${strapiBaseUrl}/events/fromDB?token=${strapiToken}`, datas.map(elem => elem.id));
+        await axios.post(
+          `${strapiBaseUrl}/events/fromDB?token=${strapiToken}`,
+          datas.map((elem) => elem.id)
+        );
       }
       break;
 
@@ -488,7 +508,10 @@ async function updateI18nFile(filepath) {
         );
 
         // extra work for updating strapi database
-        await axios.post(`${strapiBaseUrl}/virtual-lives/fromDB?token=${strapiToken}`, datas.map(elem => elem.id));
+        await axios.post(
+          `${strapiBaseUrl}/virtual-lives/fromDB?token=${strapiToken}`,
+          datas.map((elem) => elem.id)
+        );
       }
       break;
 
@@ -660,7 +683,20 @@ async function bootstrap() {
       bootstrap();
     }, 10 * 60 * 1000);
     return;
+  } else if (verRes.isError) {
+    logger.error("bootstrap: failed to connect server");
+    setTimeout(() => {
+      bootstrap();
+    }, 10 * 60 * 1000);
+    try {
+      await sendEmail();
+      logger.info("update: warning email sent");
+    } catch (error) {
+      logger.debug("update: skipped email sent");
+    }
+    return;
   }
+
   if (!account.credential) {
     const reg = await registerAccount();
 
@@ -673,12 +709,8 @@ async function bootstrap() {
   }
 
   const { userId } = account;
-  const {
-    appVersion,
-    dataVersion,
-    assetVersion,
-    assetHash,
-  } = await refreshVersions();
+  const { appVersion, dataVersion, assetVersion, assetHash } =
+    await refreshVersions();
 
   logger.info("simulate login process");
   logger.debug("get system");
