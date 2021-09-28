@@ -91,7 +91,7 @@ const eventTrackerDir = path.join(__dirname, "sekai-event-track");
 
 const eventTrackJob = new CronJob("58 * * * * *", async () => {
   logger.info("trace event score triggered by cron job");
-  const verRes = await checkVersions();
+  const verRes = await apiClient.checkVersions();
   if (verRes.isMaintenance) {
     logger.warn("server in maintenance");
     return;
