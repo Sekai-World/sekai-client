@@ -1,9 +1,9 @@
 const nodemailer = require("nodemailer");
 
-const lastEmailSent = 0;
+let lastEmailSent = 0;
 
 module.exports.sendEmail = async function () {
-  if (new Date().getTime() - lastEmailSent > 30 * 60 * 1000) {
+  if (new Date().getTime() - lastEmailSent < 30 * 60 * 1000) {
     throw new Error("send email too frequent");
   }
 
@@ -26,4 +26,6 @@ module.exports.sendEmail = async function () {
       text: "The connection to project sekai server failed, please reboot proxy!!!",
     });
   }
+
+  lastEmailSent = new Date().getTime();
 };
