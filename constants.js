@@ -28,4 +28,5 @@ module.exports = {
     pass: process.env.PROXY_PASS || "",
   },
   assetBaseURL: "https://assetbundle-info.sekai.colorfulpalette.org/api",
+  isIPv6: process.env.ENABLE_IPV6 || false,
 };

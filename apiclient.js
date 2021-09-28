@@ -1,7 +1,7 @@
 const axios = require("axios");
 const got = require("got").default;
 const msgpack = require("@msgpack/msgpack");
-const { initialHeader, baseURL, proxy, assetBaseURL } = require("./constants.js");
+const { initialHeader, baseURL, proxy, assetBaseURL, isIPv6 } = require("./constants.js");
 const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
 const log4js = require("log4js");
@@ -113,7 +113,7 @@ const myClient = got.extend({
       },
     ],
   },
-  dnsLookupIpVersion: "ipv6",
+  dnsLookupIpVersion: isIPv6 ? "ipv6" : "auto",
 });
 
 // myAxios.interceptors.response.use(
@@ -168,7 +168,7 @@ module.exports.assetClient = got.extend({
     https: httpsAgent,
   },
   // http2: true,
-  dnsLookupIpVersion: "ipv6",
+  dnsLookupIpVersion: isIPv6 ? "ipv6" : "auto",
 });
 
 module.exports.initialHeader = initialHeader;
