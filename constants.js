@@ -1,7 +1,7 @@
 module.exports = {
   initialHeader: {
     "x-devicemodel": "iPad6,11",
-    "x-app-version": "1.0",
+    "x-app-version": process.env.APP_VER || "1.10.0",
     // "x-asset-version": '1.0.0',
     // "x-data-version": '1.0.4',
     "x-if": "AB5D5811-551F-4590-A671-093BEB2381E2",
