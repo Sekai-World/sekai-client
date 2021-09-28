@@ -7,7 +7,7 @@ const fs = require("fs");
 const { readFileSync, writeFileSync, existsSync } = fs;
 const { writeFile, access, readFile } = fs.promises;
 // const axios = require("axios");
-const { callAPI, initialHeader, decrypt, assetClient } = require("./apiclient");
+const { APIClient, decrypt, assetClient } = require("./apiclient");
 const { sendEmail } = require("./utils");
 
 const log4js = require("log4js");
@@ -15,6 +15,8 @@ const { default: axios } = require("axios");
 
 const logger = log4js.getLogger("check-update");
 logger.level = "info";
+
+const apiClient = new APIClient(logger);
 
 if (!existsSync("./account.yaml")) {
   logger.warn(
@@ -31,52 +33,53 @@ if (!existsSync("./account.yaml")) {
   );
 }
 let account = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
+apiClient.account = account;
 const masterDBDiffDir = path.join(__dirname, "sekai-master-db-diff");
 const i18nDir = path.join(__dirname, "sekai-i18n");
 const strapiBaseUrl = process.env.STRAPI_BASE_URL;
 const strapiToken = process.env.STRAPI_TOKEN;
 
-async function checkVersions() {
-  const res = {
-    isError: false,
-    isMaintenance: false,
-    isNewVersion: false,
-  };
-  let appVersions;
-  try {
-    appVersions = (await callAPI("/system")).appVersions;
-  } catch (error) {
-    return {
-      isError: true,
-    };
-  }
-  logger.debug(appVersions);
-  let currentVersion = appVersions.find(
-    (appVer) =>
-      appVer.appVersion === initialHeader["x-app-version"] &&
-      appVer.appVersionStatus === "available"
-  );
+// async function checkVersions() {
+//   const res = {
+//     isError: false,
+//     isMaintenance: false,
+//     isNewVersion: false,
+//   };
+//   let appVersions;
+//   try {
+//     appVersions = (await apiClient.callAPI("/system")).appVersions;
+//   } catch (error) {
+//     return {
+//       isError: true,
+//     };
+//   }
+//   logger.debug(appVersions);
+//   let currentVersion = appVersions.find(
+//     (appVer) =>
+//       appVer.appVersion === initialHeader["x-app-version"] &&
+//       appVer.appVersionStatus === "available"
+//   );
 
-  if (!currentVersion) {
-    // check latest version
-    currentVersion = appVersions[appVersions.length - 1];
-    if (currentVersion.appVersionStatus === "maintenance") {
-      res.isMaintenance = true;
-    } else if (currentVersion.appVersionStatus === "available") {
-      res.isNewVersion = true;
-      initialHeader["x-app-version"] = currentVersion.appVersion;
-      delete initialHeader["x-asset-version"];
-      delete initialHeader["x-data-version"];
-    }
-  } else {
-    res.isNewVersion =
-      initialHeader["x-data-version"] !== currentVersion.dataVersion ||
-      initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
-      initialHeader["x-app-version"] !== currentVersion.appVersion;
-  }
+//   if (!currentVersion) {
+//     // check latest version
+//     currentVersion = appVersions[appVersions.length - 1];
+//     if (currentVersion.appVersionStatus === "maintenance") {
+//       res.isMaintenance = true;
+//     } else if (currentVersion.appVersionStatus === "available") {
+//       res.isNewVersion = true;
+//       initialHeader["x-app-version"] = currentVersion.appVersion;
+//       delete initialHeader["x-asset-version"];
+//       delete initialHeader["x-data-version"];
+//     }
+//   } else {
+//     res.isNewVersion =
+//       initialHeader["x-data-version"] !== currentVersion.dataVersion ||
+//       initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
+//       initialHeader["x-app-version"] !== currentVersion.appVersion;
+//   }
 
-  return res;
-}
+//   return res;
+// }
 
 const trySystemJob = new CronJob("1/30 * * * *", async () => {
   logger.info("check update triggered by cron job");
@@ -124,15 +127,6 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
   }
 });
 
-async function registerAccount() {
-  logger.info("create a new account");
-  return await callAPI("/user", "post", {
-    platform: "iOS",
-    deviceModel: "iPad6,11",
-    operatingSystem: "iOS 13.5",
-  });
-}
-
 async function refreshVersions() {
   logger.info("refersh version info");
 
@@ -158,47 +152,26 @@ async function refreshVersions() {
     onAuth: () => ({ username: GitHubToken }),
   });
 
-  logger.debug("do auth");
-  const { userId, credential } = account;
-  const {
-    sessionToken,
-    appVersion,
-    dataVersion,
-    assetVersion,
-    assetHash,
-    appHash,
-    multiPlayVersion,
-  } = await callAPI(`/user/${userId}/auth`, "put", {
-    credential,
-  });
-  logger.info(
-    `appVersion ${appVersion} dataVersion ${dataVersion} assetVersion ${assetVersion} assetHash ${assetHash}`
-  );
-
-  initialHeader["x-session-token"] = sessionToken;
-  initialHeader["x-app-version"] = appVersion;
-  initialHeader["x-data-version"] = dataVersion;
-  initialHeader["x-asset-version"] = assetVersion;
-
   logger.debug("write versions to file and add it to git stage area");
   await writeFile(
     path.join(masterDBDiffDir, "versions.json"),
     JSON.stringify(
-      {
-        appVersion,
-        dataVersion,
-        assetVersion,
-        assetHash,
-        appHash,
-        multiPlayVersion,
-      },
+      // {
+      //   appVersion,
+      //   dataVersion,
+      //   assetVersion,
+      //   assetHash,
+      //   appHash,
+      //   multiPlayVersion,
+      // },
+      apiClient.versionInfo,
       null,
       2
     )
   );
   // await git.add({ fs, dir: masterDBDiffDir, filepath: "versions.json" });
 
-  const master = await callAPI("/suite/master", "get");
+  const master = await apiClient.callAPI("/suite/master", "get");
   logger.debug("split master into smaller pieces, add them to git stage area");
   for (let key in master) {
     const masterKeyPath = path.join(masterDBDiffDir, `${key}.json`);
@@ -238,13 +211,13 @@ async function refreshVersions() {
   );
   // await git.add({ fs, dir: masterDBDiffDir, filepath: "assetList.json" });
 
-  return { appVersion, dataVersion, assetVersion, assetHash };
+  return apiClient.versionInfo;
 }
 
 async function saveInfoFromSuiteUser() {
-  const { userId } = account;
-  logger.debug("get suite user");
-  const userInfo = await callAPI(`/suite/user/${userId}`);
+  // const { userId } = account;
+  // logger.debug("get suite user");
+  const userInfo = await apiClient.login();
 
   const { userHomeBanners, userInformations } = userInfo;
   logger.debug("write active homebanners");
@@ -270,7 +243,7 @@ async function saveInfoFromSuiteUser() {
 
 async function refreshInformations() {
   logger.debug("get suite user");
-  const { informations: userInformations } = await callAPI(`/information`);
+  const { informations: userInformations } = await apiClient.callAPI(`/information`);
 
   logger.debug("write active informations");
   await writeFile(
@@ -676,15 +649,17 @@ async function commitI18nFiles(versions) {
 
 async function bootstrap() {
   logger.info("ensure current version available");
-  const verRes = await checkVersions();
-  if (verRes.isMaintenance) {
-    logger.warn("bootstrap: server in maintenance");
-    setTimeout(() => {
-      bootstrap();
-    }, 10 * 60 * 1000);
-    return;
-  } else if (verRes.isError) {
-    logger.error("bootstrap: failed to connect server");
+  try {
+    const verRes = await apiClient.checkVersions();
+    if (verRes.isMaintenance) {
+      logger.warn("bootstrap: server in maintenance");
+      setTimeout(() => {
+        bootstrap();
+      }, 10 * 60 * 1000);
+      return;
+    }
+  } catch (error) {
+    logger.error("bootstrap: failed to connect server", error);
     setTimeout(() => {
       bootstrap();
     }, 10 * 60 * 1000);
@@ -698,7 +673,7 @@ async function bootstrap() {
   }
 
   if (!account.credential) {
-    const reg = await registerAccount();
+    const reg = await apiClient.registerAccount();
 
     account.userId = reg.userRegistration.userId;
     account.signature = reg.userRegistration.signature;
@@ -706,53 +681,56 @@ async function bootstrap() {
 
     logger.debug("store new account information");
     await writeFile("account.yaml", yaml.safeDump(account));
+
+    apiClient.account = account;
   }
 
-  const { userId } = account;
-  const { appVersion, dataVersion, assetVersion, assetHash } =
-    await refreshVersions();
+  // const { userId } = account;
+  await saveInfoFromSuiteUser();
+  await refreshVersions();
 
-  logger.info("simulate login process");
-  logger.debug("get system");
-  await callAPI("/system");
-  const { userTutorial } = await saveInfoFromSuiteUser();
-  if (userTutorial.tutorialStatus === "start") {
-    logger.warn("tutorial is at start, set username first");
-    await callAPI(`/user/${userId}/tutorial`, "patch", {
-      tutorialStatus: "opening_1",
-    });
-    await callAPI(`/user/${userId}`, "patch", {
-      userGamedata: {
-        name: "\u30bb\u30ab\u30a4\u306e\u4f4f\u4eba",
-      },
-    });
-    userTutorial.tutorialStatus = "opening_1";
-  }
-  if (userTutorial.tutorialStatus !== "end") {
-    logger.debug("rolling tutorial");
-    const steps = [
-      "opening_1",
-      "gameplay",
-      "opening_2",
-      "unit_select",
-      "idol_opening",
-      "summary",
-      "end",
-    ];
-    for (let status of steps.slice(
-      steps.indexOf(userTutorial.tutorialStatus) + 1
-    )) {
-      await callAPI(`/user/${userId}/tutorial`, "patch", {
-        tutorialStatus: status,
-      });
-    }
+  // logger.info("simulate login process");
+  // logger.debug("get system");
+  // await callAPI("/system");
+  // const { userTutorial } = await saveInfoFromSuiteUser();
+  // if (userTutorial.tutorialStatus === "start") {
+  //   logger.warn("tutorial is at start, set username first");
+  //   await callAPI(`/user/${userId}/tutorial`, "patch", {
+  //     tutorialStatus: "opening_1",
+  //   });
+  //   await callAPI(`/user/${userId}`, "patch", {
+  //     userGamedata: {
+  //       name: "\u30bb\u30ab\u30a4\u306e\u4f4f\u4eba",
+  //     },
+  //   });
+  //   userTutorial.tutorialStatus = "opening_1";
+  // }
+  // if (userTutorial.tutorialStatus !== "end") {
+  //   logger.debug("rolling tutorial");
+  //   const steps = [
+  //     "opening_1",
+  //     "gameplay",
+  //     "opening_2",
+  //     "unit_select",
+  //     "idol_opening",
+  //     "summary",
+  //     "end",
+  //   ];
+  //   for (let status of steps.slice(
+  //     steps.indexOf(userTutorial.tutorialStatus) + 1
+  //   )) {
+  //     await callAPI(`/user/${userId}/tutorial`, "patch", {
+  //       tutorialStatus: status,
+  //     });
+  //   }
 
-    logger.debug("refresh home login_bonus");
-    await callAPI(`/user/${userId}/home/refresh`, "put", {
-      refreshableTypes: ["login_bonus"],
-    });
-  }
+  //   logger.debug("refresh home login_bonus");
+  //   await callAPI(`/user/${userId}/home/refresh`, "put", {
+  //     refreshableTypes: ["login_bonus"],
+  //   });
+  // }
 
+  const { dataVersion, assetVersion } = apiClient.versionInfo;
   logger.info("try commit master db diff if any update");
   if (await commitMasterDiff({ dataVersion, assetVersion })) {
     logger.info("update game content i18n files");

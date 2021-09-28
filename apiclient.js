@@ -1,7 +1,13 @@
 const axios = require("axios");
 const got = require("got").default;
 const msgpack = require("@msgpack/msgpack");
-const { initialHeader, baseURL, proxy, assetBaseURL, isIPv6 } = require("./constants.js");
+const {
+  initialHeader,
+  baseURL,
+  proxy,
+  assetBaseURL,
+  isIPv6,
+} = require("./constants.js");
 const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
 const log4js = require("log4js");
@@ -14,19 +20,26 @@ logger.level = "info";
 // the full socks5 address
 // const proxyOptions = `socks5://${proxy.user}:${proxy.pass}@${proxy.host}:${proxy.port}`;
 // create the socksAgent for axios
-const httpsAgent = proxy.type === "socks5" ? new SocksProxyAgent({
-  host: proxy.host,
-  port: proxy.port,
-  auth: proxy.user ? `${proxy.user}:${proxy.pass}` : undefined,
-  protocol: "socks:"
-}) : proxy.type === "socks4" ? new SocksProxyAgent({
-  host: proxy.host,
-  port: proxy.port,
-  auth: proxy.user ? `${proxy.user}:${proxy.pass}` : undefined,
-  protocol: "socks4:"
-}) : proxy.type === "http" ? new HttpsProxyAgent({
-  proxy: `http://${proxy.host}:${proxy.port}`
-}) : undefined;
+const httpsAgent =
+  proxy.type === "socks5"
+    ? new SocksProxyAgent({
+        host: proxy.host,
+        port: proxy.port,
+        auth: proxy.user ? `${proxy.user}:${proxy.pass}` : undefined,
+        protocol: "socks:",
+      })
+    : proxy.type === "socks4"
+    ? new SocksProxyAgent({
+        host: proxy.host,
+        port: proxy.port,
+        auth: proxy.user ? `${proxy.user}:${proxy.pass}` : undefined,
+        protocol: "socks4:",
+      })
+    : proxy.type === "http"
+    ? new HttpsProxyAgent({
+        proxy: `http://${proxy.host}:${proxy.port}`,
+      })
+    : undefined;
 
 const rateLimited = false;
 
@@ -61,105 +74,64 @@ function decrypt(enc) {
     : decrypted.toString("hex");
 }
 
-// const myAxios = axios.default.create({
-//   baseURL,
-//   transformRequest: [
-//     (data, headers) => {
-//       headers["x-request-id"] = uuidV4();
-//       headers["content-type"] = "application/octet-stream";
-//       return data;
-//     },
-//   ],
-//   responseType: "arraybuffer",
-//   httpsAgent,
+// const myClient = got.extend({
+//   prefixUrl: baseURL,
+//   responseType: "buffer",
+//   agent: {
+//     https: httpsAgent,
+//   },
+//   // http2: true,
+//   hooks: {
+//     beforeRequest: [
+//       (options) => {
+//         options.headers["x-request-id"] = uuidV4();
+//         options.headers["content-type"] = "application/octet-stream";
+//       },
+//     ],
+//     afterResponse: [
+//       (response, retryWithMergedOptions) => {
+//         if (response.statusCode === 429) {
+//           // hit rate limit, sleep for a while
+//           logger.warn("rate limit hit, sleep for 30s");
+//           rateLimited = true;
+//           setTimeout(() => {
+//             rateLimited = false;
+//           }, 30000);
+
+//           return response;
+//         } else {
+//           if (
+//             initialHeader["x-session-token"] &&
+//             response.headers["x-session-token"]
+//           )
+//             initialHeader["x-session-token"] = response.headers["x-session-token"];
+
+//           if (response.body.length) response.body = decrypt(response.body);
+
+//           return response;
+//         }
+//       },
+//     ],
+//   },
+//   dnsLookupIpVersion: isIPv6 ? "ipv6" : "auto",
 // });
 
-const myClient = got.extend({
-  prefixUrl: baseURL,
-  responseType: "buffer",
-  agent: {
-    https: httpsAgent,
-  },
-  // http2: true,
-  hooks: {
-    beforeRequest: [
-      (options) => {
-        options.headers["x-request-id"] = uuidV4();
-        options.headers["content-type"] = "application/octet-stream";
-      },
-    ],
-    afterResponse: [
-      (response, retryWithMergedOptions) => {
-        if (response.statusCode === 429) {
-          // hit rate limit, sleep for a while
-          logger.warn("rate limit hit, sleep for 30s");
-          rateLimited = true;
-          setTimeout(() => {
-            rateLimited = false;
-          }, 30000);
+// /**
+//  *
+//  * @param {string} endpoint
+//  * @param {string} method
+//  * @param {object} body
+//  */
+// module.exports.callAPI = async function doReq(endpoint, method = "get", data) {
+//   if (endpoint.startsWith("/")) endpoint = endpoint.slice(1);
+//   const { body } = await myClient(endpoint, {
+//     method,
+//     headers: initialHeader,
+//     body: ["post", "put", "patch"].includes(method) ? encrypt(data) : undefined,
+//   });
 
-          return response;
-        } else {
-          if (
-            initialHeader["x-session-token"] &&
-            response.headers["x-session-token"]
-          )
-            initialHeader["x-session-token"] = response.headers["x-session-token"];
-
-          if (response.body.length) response.body = decrypt(response.body);
-
-          return response;
-        }
-      },
-    ],
-  },
-  dnsLookupIpVersion: isIPv6 ? "ipv6" : "auto",
-});
-
-// myAxios.interceptors.response.use(
-//   (res) => {
-//     if (initialHeader["x-session-token"] && res.headers["x-session-token"])
-//       initialHeader["x-session-token"] = res.headers["x-session-token"];
-
-//     if (res.data.length) res.data = decrypt(Buffer.from(res.data));
-//     return res;
-//   },
-//   async (err) => {
-//     if (err.response.data.length) {
-//       err.response.data = decrypt(Buffer.from(err.response.data));
-//     }
-//     logger.error(err.response.status, err.response.data);
-//     const req = err.config;
-//     if (err.response.status === 429) {
-//       // hit rate limit, sleep for a while
-//       logger.warn("rate limit hit, sleep for 30s");
-//       rateLimited = true;
-//       setTimeout(() => {
-//         rateLimited = false;
-//       }, 30000);
-//     }
-
-//     // return Promise.reject(err);
-//     throw err;
-//   }
-// );
-
-/**
- *
- * @param {string} endpoint
- * @param {string} method
- * @param {object} body
- */
-module.exports.callAPI = async function doReq(endpoint, method = "get", data) {
-  if (endpoint.startsWith("/")) endpoint = endpoint.slice(1);
-  const { body } = await myClient(endpoint, {
-    method,
-    headers: initialHeader,
-    body: ["post", "put", "patch"].includes(method) ? encrypt(data) : undefined,
-  });
-
-  return body;
-};
+//   return body;
+// };
 
 module.exports.assetClient = got.extend({
   prefixUrl: assetBaseURL,
@@ -196,6 +168,7 @@ module.exports.APIClient = class APIClient {
 
     this.headers = Object.assign({}, initialHeader);
     this.logger = logger;
+    this.versionInfo = {};
 
     this.isRateLimited = false;
 
@@ -247,6 +220,10 @@ module.exports.APIClient = class APIClient {
     return this._account;
   }
 
+  set userInfo(data) {
+    this._userInfo = data;
+  }
+
   get userInfo() {
     return this._userInfo;
   }
@@ -286,6 +263,9 @@ module.exports.APIClient = class APIClient {
       appVersion,
       dataVersion,
       assetVersion,
+      assetHash,
+      appHash,
+      multiPlayVersion,
     } = await this.callAPI(
       `/user/${userId}/auth?refreshUpdatedResources=False`,
       "put",
@@ -293,6 +273,14 @@ module.exports.APIClient = class APIClient {
         credential,
       }
     );
+    // this.versionInfo = {
+    //   appVersion,
+    //   dataVersion,
+    //   assetVersion,
+    //   assetHash,
+    //   appHash,
+    //   multiPlayVersion,
+    // };
     // this.logger.info(`user ${userId} logged in`);
     this.headers["x-session-token"] = sessionToken;
     this.headers["x-app-version"] = appVersion;
@@ -363,7 +351,6 @@ module.exports.APIClient = class APIClient {
       isNewVersion: false,
     };
     const { appVersions } = await this.callAPI("/system");
-    this.logger.debug(appVersions);
     let currentVersion = appVersions.find(
       (appVer) =>
         appVer.appVersion === this.headers["x-app-version"] &&
@@ -391,6 +378,7 @@ module.exports.APIClient = class APIClient {
       this.logger.info(
         `get new version, app version ${currentVersion.appVersion} master version ${currentVersion.dataVersion} asset version ${currentVersion.assetVersion}`
       );
+      this.versionInfo = currentVersion;
     }
 
     return res;
