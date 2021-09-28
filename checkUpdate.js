@@ -115,14 +115,14 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
 
   if (
     await commitMasterDiff({
-      dataVersion: initialHeader["x-data-version"],
-      assetVersion: initialHeader["x-asset-version"],
+      dataVersion: apiClient.versionInfo.dataVersion,
+      assetVersion: apiClient.versionInfo.assetVersion,
     })
   ) {
     logger.info("update game content i18n files");
     await commitI18nFiles({
-      dataVersion: initialHeader["x-data-version"],
-      assetVersion: initialHeader["x-asset-version"],
+      dataVersion: apiClient.versionInfo.dataVersion,
+      assetVersion: apiClient.versionInfo.assetVersion,
     });
   }
 });
@@ -156,14 +156,6 @@ async function refreshVersions() {
   await writeFile(
     path.join(masterDBDiffDir, "versions.json"),
     JSON.stringify(
-      // {
-      //   appVersion,
-      //   dataVersion,
-      //   assetVersion,
-      //   assetHash,
-      //   appHash,
-      //   multiPlayVersion,
-      // },
       apiClient.versionInfo,
       null,
       2
@@ -196,12 +188,13 @@ async function refreshVersions() {
   }
 
   logger.debug("download assets list");
+  const { assetVersion } = apiClient.versionInfo;
   const { body: assetList } = await assetClient(
     `version/${assetVersion}/os/ios`,
     {
       headers: {
-        "user-agent": initialHeader["user-agent"],
-        "x-unity-version": initialHeader["x-unity-version"],
+        "user-agent": apiClient.headers["user-agent"],
+        "x-unity-version": apiClient.headers["x-unity-version"],
       },
     }
   );
