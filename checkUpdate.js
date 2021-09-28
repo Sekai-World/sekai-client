@@ -187,21 +187,21 @@ async function refreshVersions() {
     // await git.add({ fs, dir: masterDBDiffDir, filepath: `${key}.json` });
   }
 
-  logger.debug("download assets list");
-  const { assetVersion } = apiClient.versionInfo;
-  const { body: assetList } = await assetClient(
-    `version/${assetVersion}/os/ios`,
-    {
-      headers: {
-        "user-agent": apiClient.headers["user-agent"],
-        "x-unity-version": apiClient.headers["x-unity-version"],
-      },
-    }
-  );
-  await writeFile(
-    path.join(masterDBDiffDir, "assetList.json"),
-    JSON.stringify(decrypt(Buffer.from(assetList)), null, 2)
-  );
+  // logger.debug("download assets list");
+  // const { assetVersion } = apiClient.versionInfo;
+  // const { body: assetList } = await assetClient(
+  //   `version/${assetVersion}/os/ios`,
+  //   {
+  //     headers: {
+  //       "user-agent": apiClient.headers["user-agent"],
+  //       "x-unity-version": apiClient.headers["x-unity-version"],
+  //     },
+  //   }
+  // );
+  // await writeFile(
+  //   path.join(masterDBDiffDir, "assetList.json"),
+  //   JSON.stringify(decrypt(Buffer.from(assetList)), null, 2)
+  // );
   // await git.add({ fs, dir: masterDBDiffDir, filepath: "assetList.json" });
 
   return apiClient.versionInfo;
