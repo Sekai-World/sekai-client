@@ -353,7 +353,7 @@ module.exports.APIClient = class APIClient {
     };
     let appVersions;
     try {
-      appVersions = (await apiClient.callAPI("/system")).appVersions;
+      appVersions = (await this.callAPI("/system")).appVersions;
     } catch (error) {
       logger.error(error);
       res.isError = true;
