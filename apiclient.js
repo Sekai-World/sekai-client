@@ -386,8 +386,8 @@ module.exports.APIClient = class APIClient {
       this.logger.info(
         `get new version, app version ${currentVersion.appVersion} master version ${currentVersion.dataVersion} asset version ${currentVersion.assetVersion}`
       );
-      this.versionInfo = currentVersion;
     }
+    this.versionInfo = currentVersion;
 
     return res;
   }
