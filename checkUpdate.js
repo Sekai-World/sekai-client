@@ -83,7 +83,7 @@ const strapiToken = process.env.STRAPI_TOKEN;
 
 const trySystemJob = new CronJob("1/30 * * * *", async () => {
   logger.info("check update triggered by cron job");
-  const verRes = await checkVersions();
+  const verRes = await apiClient.checkVersions();
   if (verRes.isMaintenance) {
     logger.warn("update: server in maintenance");
     return;

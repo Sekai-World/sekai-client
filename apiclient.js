@@ -347,10 +347,18 @@ module.exports.APIClient = class APIClient {
 
   async checkVersions() {
     const res = {
+      isError: false,
       isMaintenance: false,
       isNewVersion: false,
     };
-    const { appVersions } = await this.callAPI("/system");
+    let appVersions;
+    try {
+      appVersions = (await apiClient.callAPI("/system")).appVersions;
+    } catch (error) {
+      logger.error(error);
+      res.isError = true;
+      return res;
+    }
     let currentVersion = appVersions.find(
       (appVer) =>
         appVer.appVersion === this.headers["x-app-version"] &&
