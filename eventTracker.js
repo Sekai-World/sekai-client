@@ -5,7 +5,7 @@ const http = require("isomorphic-git/http/node");
 const { CronJob } = require("cron");
 const fs = require("fs");
 const axios = require("axios");
-const { readFileSync, writeFileSync, existsSync } = fs;
+const { readFileSync, copyFileSync, existsSync } = fs;
 const { writeFile, readFile } = fs.promises;
 const { APIClient } = require("./apiclient");
 const { sendEmail } = require("./utils");
@@ -21,21 +21,7 @@ if (!existsSync("./account.yaml")) {
   logger.warn(
     "no account.yaml found, created empty one, remember to fill GitHubToken!"
   );
-  writeFileSync(
-    "./account.yaml",
-    yaml.safeDump({
-      userId: null,
-      signature: null,
-      credential: null,
-      GitHubToken: null,
-      BitbucketUser: null,
-      BitbucketToken: null,
-      event: {
-        userId: null,
-        credential: null,
-      },
-    })
-  );
+  copyFileSync(path.join(__dirname, 'account.example.yaml'), path.join(__dirname, 'account.yaml'));
 }
 let {
   eventTracker: account,

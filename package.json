@@ -35,6 +35,7 @@
     "uuid-v4": "^0.1.0"
   },
   "devDependencies": {
+    "dotenv": "^10.0.0",
     "eslint": "^7.16.0",
     "eslint-config-prettier": "^6.15.0"
   }

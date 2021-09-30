@@ -19,7 +19,17 @@ module.exports = {
     "accept-language": "zh-cn",
     // "content-type": 'application/octet-stream'
   },
-  baseURL: "https://production-game-api.sekai.colorfulpalette.org/api",
+  pjsk: {
+    baseURL:
+      process.env.SEKAI_API_BASE_URL ||
+      "https://production-game-api.sekai.colorfulpalette.org/api",
+    assetBaseURL:
+      process.env.SEKAI_ASSET_BASE_URL ||
+      "https://assetbundle-info.sekai.colorfulpalette.org/api",
+    updateMaster: Boolean(process.env.ENABLE_SEKAI_UPDATE_MASTER) || true,
+    updateUserInfo: Boolean(process.env.ENABLE_SEKAI_UPDATE_USER_INFO) || false,
+    updateI18n: Boolean(process.env.ENABLE_SEKAI_UPDATE_I18N) || false,
+  },
   proxy: {
     type: process.env.PROXY_TYPE || "http",
     host: process.env.PROXY_HOST || "localhost",
@@ -27,6 +37,16 @@ module.exports = {
     user: process.env.PROXY_USER || "",
     pass: process.env.PROXY_PASS || "",
   },
-  assetBaseURL: "https://assetbundle-info.sekai.colorfulpalette.org/api",
-  isIPv6: Boolean(process.env.ENABLE_IPV6) || false,
+  forceIPv6: Boolean(process.env.ENABLE_IPV6) || false,
+  folders: {
+    eventTracker: process.env.SEKAI_EVENT_TRACKER || "sekai-event-tracker",
+    i18n: process.env.SEKAI_I18N || "sekai-i18n",
+    masterDBDiff: process.env.SEKAI_MASTER_DB_DIFF || "sekai-master-db-diff",
+  },
+  remoteGitBase:
+    process.env.REMOTE_GIT_BASE_URL || "https://github.com/Sekai-World",
+  strapi: {
+    baseURL: process.env.STRAPI_BASE_URL,
+    token: process.env.STRAPI_TOKEN,
+  },
 };
