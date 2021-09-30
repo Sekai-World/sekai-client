@@ -4,11 +4,12 @@ const git = require("isomorphic-git");
 const http = require("isomorphic-git/http/node");
 const { CronJob } = require("cron");
 const fs = require("fs");
-const { readFileSync, writeFileSync, existsSync } = fs;
+const { readFileSync, existsSync, copyFileSync } = fs;
 const { writeFile, access, readFile } = fs.promises;
 // const axios = require("axios");
 const { APIClient, decrypt, assetClient } = require("./apiclient");
-const { sendEmail } = require("./utils");
+const { sendEmail, checkGitFolder } = require("./utils");
+const { folders, remoteGitBase, strapi, pjsk } = require("./constants");
 
 const log4js = require("log4js");
 const { default: axios } = require("axios");
@@ -22,64 +23,18 @@ if (!existsSync("./account.yaml")) {
   logger.warn(
     "no account.yaml found, created empty one, remember to fill GitHubToken!"
   );
-  writeFileSync(
-    "./account.yaml",
-    yaml.safeDump({
-      userId: null,
-      signature: null,
-      credential: null,
-      GitHubToken: null,
-    })
+  copyFileSync(
+    path.join(__dirname, "account.example.yaml"),
+    path.join(__dirname, "account.yaml")
   );
 }
 let account = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
 apiClient.account = account;
-const masterDBDiffDir = path.join(__dirname, "sekai-master-db-diff");
-const i18nDir = path.join(__dirname, "sekai-i18n");
-const strapiBaseUrl = process.env.STRAPI_BASE_URL;
-const strapiToken = process.env.STRAPI_TOKEN;
 
-// async function checkVersions() {
-//   const res = {
-//     isError: false,
-//     isMaintenance: false,
-//     isNewVersion: false,
-//   };
-//   let appVersions;
-//   try {
-//     appVersions = (await apiClient.callAPI("/system")).appVersions;
-//   } catch (error) {
-//     return {
-//       isError: true,
-//     };
-//   }
-//   logger.debug(appVersions);
-//   let currentVersion = appVersions.find(
-//     (appVer) =>
-//       appVer.appVersion === initialHeader["x-app-version"] &&
-//       appVer.appVersionStatus === "available"
-//   );
-
-//   if (!currentVersion) {
-//     // check latest version
-//     currentVersion = appVersions[appVersions.length - 1];
-//     if (currentVersion.appVersionStatus === "maintenance") {
-//       res.isMaintenance = true;
-//     } else if (currentVersion.appVersionStatus === "available") {
-//       res.isNewVersion = true;
-//       initialHeader["x-app-version"] = currentVersion.appVersion;
-//       delete initialHeader["x-asset-version"];
-//       delete initialHeader["x-data-version"];
-//     }
-//   } else {
-//     res.isNewVersion =
-//       initialHeader["x-data-version"] !== currentVersion.dataVersion ||
-//       initialHeader["x-asset-version"] !== currentVersion.assetVersion ||
-//       initialHeader["x-app-version"] !== currentVersion.appVersion;
-//   }
-
-//   return res;
-// }
+const masterDBDiffDir = path.join(__dirname, folders.masterDBDiff);
+const i18nDir = path.join(__dirname, folders.i18n);
+const strapiBaseUrl = strapi.baseURL;
+const strapiToken = strapi.token;
 
 const trySystemJob = new CronJob("1/30 * * * *", async () => {
   logger.info("check update triggered by cron job");
@@ -98,18 +53,23 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
     return;
   }
 
+  if (verRes.isNewVersion && pjsk.updateMaster) {
+    await refreshVersions();
+  }
+
   if (
-    verRes.isNewVersion ||
     new Date().toLocaleString("en-DE", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
       timeZone: "Asia/Tokyo",
-    }) === "04:00"
+    }) === "04:00" &&
+    pjsk.updateUserInfo
   ) {
-    await refreshVersions();
     await saveInfoFromSuiteUser();
-  } else {
+  }
+
+  if (pjsk.updateUserInfo) {
     await refreshInformations();
   }
 
@@ -120,10 +80,11 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
     })
   ) {
     logger.info("update game content i18n files");
-    await commitI18nFiles({
-      dataVersion: apiClient.versionInfo.dataVersion,
-      assetVersion: apiClient.versionInfo.assetVersion,
-    });
+    if (pjsk.updateI18n)
+      await commitI18nFiles({
+        dataVersion: apiClient.versionInfo.dataVersion,
+        assetVersion: apiClient.versionInfo.assetVersion,
+      });
   }
 });
 
@@ -136,30 +97,27 @@ async function refreshVersions() {
     http,
     dir: masterDBDiffDir,
     remote: "origin",
-    ref: "master",
-    // fastForwardOnly: true,
-    author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
-    onAuth: () => ({ username: GitHubToken }),
-  });
-  await git.pull({
-    fs,
-    http,
-    dir: i18nDir,
-    remote: "origin",
     ref: "main",
     // fastForwardOnly: true,
     author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
-    onAuth: () => ({ username: GitHubToken }),
+    // onAuth: () => ({ username: GitHubToken }),
   });
+  if (pjsk.updateI18n)
+    await git.pull({
+      fs,
+      http,
+      dir: i18nDir,
+      remote: "origin",
+      ref: "main",
+      // fastForwardOnly: true,
+      author: { name: "master-db-diff-bot", email: "anonymous@example.com" },
+      // onAuth: () => ({ username: GitHubToken }),
+    });
 
   logger.debug("write versions to file and add it to git stage area");
   await writeFile(
     path.join(masterDBDiffDir, "versions.json"),
-    JSON.stringify(
-      apiClient.versionInfo,
-      null,
-      2
-    )
+    JSON.stringify(apiClient.versionInfo, null, 2)
   );
   // await git.add({ fs, dir: masterDBDiffDir, filepath: "versions.json" });
 
@@ -236,7 +194,9 @@ async function saveInfoFromSuiteUser() {
 
 async function refreshInformations() {
   logger.debug("get suite user");
-  const { informations: userInformations } = await apiClient.callAPI(`/information`);
+  const { informations: userInformations } = await apiClient.callAPI(
+    `/information`
+  );
 
   logger.debug("write active informations");
   await writeFile(
@@ -291,10 +251,11 @@ async function updateI18nFile(filepath) {
         );
 
         // extra work for updating strapi database
-        await axios.post(
-          `${strapiBaseUrl}/cards/fromDB?token=${strapiToken}`,
-          datas.map((elem) => elem.id)
-        );
+        if (strapiBaseUrl)
+          await axios.post(
+            `${strapiBaseUrl}/cards/fromDB?token=${strapiToken}`,
+            datas.map((elem) => elem.id)
+          );
       }
       break;
 
@@ -329,10 +290,11 @@ async function updateI18nFile(filepath) {
         );
 
         // extra work for updating strapi database
-        await axios.post(
-          `${strapiBaseUrl}/musics/fromDB?token=${strapiToken}`,
-          datas.map((elem) => elem.id)
-        );
+        if (strapiBaseUrl)
+          await axios.post(
+            `${strapiBaseUrl}/musics/fromDB?token=${strapiToken}`,
+            datas.map((elem) => elem.id)
+          );
       }
       break;
 
@@ -401,10 +363,11 @@ async function updateI18nFile(filepath) {
         );
 
         // extra work for updating strapi database
-        await axios.post(
-          `${strapiBaseUrl}/events/fromDB?token=${strapiToken}`,
-          datas.map((elem) => elem.id)
-        );
+        if (strapiBaseUrl)
+          await axios.post(
+            `${strapiBaseUrl}/events/fromDB?token=${strapiToken}`,
+            datas.map((elem) => elem.id)
+          );
       }
       break;
 
@@ -474,10 +437,11 @@ async function updateI18nFile(filepath) {
         );
 
         // extra work for updating strapi database
-        await axios.post(
-          `${strapiBaseUrl}/virtual-lives/fromDB?token=${strapiToken}`,
-          datas.map((elem) => elem.id)
-        );
+        if (strapiBaseUrl)
+          await axios.post(
+            `${strapiBaseUrl}/virtual-lives/fromDB?token=${strapiToken}`,
+            datas.map((elem) => elem.id)
+          );
       }
       break;
 
@@ -578,7 +542,7 @@ async function commitMasterDiff(versions) {
       (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
     ) {
       await git.add({ fs, dir: masterDBDiffDir, filepath });
-      await updateI18nFile(filepath);
+      if (pjsk.updateI18n) await updateI18nFile(filepath);
       shouldCommit = true;
     }
   }
@@ -595,7 +559,7 @@ async function commitMasterDiff(versions) {
       http,
       dir: masterDBDiffDir,
       remote: "origin",
-      ref: "master",
+      ref: "main",
       onAuth: () => ({ username: GitHubToken }),
     });
   }
@@ -641,6 +605,10 @@ async function commitI18nFiles(versions) {
 }
 
 async function bootstrap() {
+  logger.info("check git folders");
+  await checkGitFolder(masterDBDiffDir, remoteGitBase);
+  if (pjsk.updateI18n) await checkGitFolder(i18nDir, remoteGitBase);
+
   logger.info("ensure current version available");
   try {
     const verRes = await apiClient.checkVersions();
@@ -665,69 +633,32 @@ async function bootstrap() {
     return;
   }
 
-  if (!account.credential) {
-    const reg = await apiClient.registerAccount();
+  if (pjsk.updateUserInfo) {
+    if (!account.credential) {
+      const reg = await apiClient.registerAccount();
 
-    account.userId = reg.userRegistration.userId;
-    account.signature = reg.userRegistration.signature;
-    account.credential = reg.credential;
+      account.userId = reg.userRegistration.userId;
+      account.signature = reg.userRegistration.signature;
+      account.credential = reg.credential;
 
-    logger.debug("store new account information");
-    await writeFile("account.yaml", yaml.safeDump(account));
+      logger.debug("store new account information");
+      await writeFile("account.yaml", yaml.safeDump(account));
 
-    apiClient.account = account;
+      apiClient.account = account;
+    }
+
+    await saveInfoFromSuiteUser();
   }
 
-  // const { userId } = account;
-  await saveInfoFromSuiteUser();
-  await refreshVersions();
-
-  // logger.info("simulate login process");
-  // logger.debug("get system");
-  // await callAPI("/system");
-  // const { userTutorial } = await saveInfoFromSuiteUser();
-  // if (userTutorial.tutorialStatus === "start") {
-  //   logger.warn("tutorial is at start, set username first");
-  //   await callAPI(`/user/${userId}/tutorial`, "patch", {
-  //     tutorialStatus: "opening_1",
-  //   });
-  //   await callAPI(`/user/${userId}`, "patch", {
-  //     userGamedata: {
-  //       name: "\u30bb\u30ab\u30a4\u306e\u4f4f\u4eba",
-  //     },
-  //   });
-  //   userTutorial.tutorialStatus = "opening_1";
-  // }
-  // if (userTutorial.tutorialStatus !== "end") {
-  //   logger.debug("rolling tutorial");
-  //   const steps = [
-  //     "opening_1",
-  //     "gameplay",
-  //     "opening_2",
-  //     "unit_select",
-  //     "idol_opening",
-  //     "summary",
-  //     "end",
-  //   ];
-  //   for (let status of steps.slice(
-  //     steps.indexOf(userTutorial.tutorialStatus) + 1
-  //   )) {
-  //     await callAPI(`/user/${userId}/tutorial`, "patch", {
-  //       tutorialStatus: status,
-  //     });
-  //   }
-
-  //   logger.debug("refresh home login_bonus");
-  //   await callAPI(`/user/${userId}/home/refresh`, "put", {
-  //     refreshableTypes: ["login_bonus"],
-  //   });
-  // }
+  if (pjsk.updateMaster) {
+    await refreshVersions();
+  }
 
   const { dataVersion, assetVersion } = apiClient.versionInfo;
   logger.info("try commit master db diff if any update");
   if (await commitMasterDiff({ dataVersion, assetVersion })) {
     logger.info("update game content i18n files");
-    await commitI18nFiles({ dataVersion, assetVersion });
+    if (pjsk.updateI18n) await commitI18nFiles({ dataVersion, assetVersion });
   }
 
   logger.info("all finished, will try for new version every 30 minutes");

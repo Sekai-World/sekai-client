@@ -1,4 +1,9 @@
 const nodemailer = require("nodemailer");
+const fs = require("fs");
+const fsp = require("fs/promises");
+const git = require("isomorphic-git");
+const http = require("isomorphic-git/http/node");
+const path = require("path");
 
 let lastEmailSent = 0;
 
@@ -28,4 +33,24 @@ module.exports.sendEmail = async function () {
   }
 
   lastEmailSent = new Date().getTime();
+};
+
+module.exports.checkGitFolder = async function (folderPath, remoteGitBase) {
+  try {
+    await fsp.stat(folderPath);
+  } catch (e) {
+    if (e.code === "ENOENT") {
+      await git.clone({
+        fs,
+        http,
+        dir: folderPath,
+        url: remoteGitBase + '/' + path.basename(folderPath),
+      });
+      await git.checkout({
+        fs,
+        dir: folderPath,
+        ref: 'main'
+      })
+    }
+  }
 };

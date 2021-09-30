@@ -3,10 +3,9 @@ const got = require("got").default;
 const msgpack = require("@msgpack/msgpack");
 const {
   initialHeader,
-  baseURL,
+  pjsk,
   proxy,
-  assetBaseURL,
-  isIPv6,
+  forceIPv6,
 } = require("./constants.js");
 const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
@@ -41,7 +40,7 @@ const httpsAgent =
       })
     : undefined;
 
-const rateLimited = false;
+// const rateLimited = false;
 
 function delay(ms) {
   logger.debug(`promise delay for ${ms} ms`);
@@ -113,7 +112,7 @@ function decrypt(enc) {
 //       },
 //     ],
 //   },
-//   dnsLookupIpVersion: isIPv6 ? "ipv6" : "auto",
+//   dnsLookupIpVersion: forceIPv6 ? "ipv6" : "auto",
 // });
 
 // /**
@@ -134,13 +133,13 @@ function decrypt(enc) {
 // };
 
 module.exports.assetClient = got.extend({
-  prefixUrl: assetBaseURL,
+  prefixUrl: pjsk.assetBaseURL,
   responseType: "buffer",
   agent: {
     https: httpsAgent,
   },
   // http2: true,
-  dnsLookupIpVersion: isIPv6 ? "ipv6" : "auto",
+  dnsLookupIpVersion: forceIPv6 ? "ipv6" : "auto",
 });
 
 module.exports.initialHeader = initialHeader;
@@ -154,7 +153,7 @@ module.exports.APIClient = class APIClient {
       throw new Error("logger is missing.");
     }
     this.axios = axios.default.create({
-      baseURL,
+      baseURL: pjsk.baseURL,
       transformRequest: [
         (data, headers) => {
           headers["x-request-id"] = uuidV4();
@@ -181,7 +180,7 @@ module.exports.APIClient = class APIClient {
         return res;
       },
       async (err) => {
-        // console.log(err);
+        console.log(err);
         if (err.response.data.length) {
           err.response.data = decrypt(Buffer.from(err.response.data));
         }

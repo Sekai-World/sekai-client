@@ -1,0 +1,10 @@
+userId: ~
+signature: ~
+credential: ~
+GitHubToken: ~
+BitbucketUser: ~
+BitbucketToken: ~
+SekaiAPIKey: ~
+eventTracker:
+  userId: ~
+  credential: ~
