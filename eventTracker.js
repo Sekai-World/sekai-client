@@ -167,7 +167,7 @@ async function trackEventResult(currentTime) {
     throw Error("current event will expire soon");
   }
 
-  const { userId } = account;
+  const { userId } = apiClient.account;
 
   logger.debug("track first ten");
   const { rankings: first10 } = await apiClient.callAPI(
