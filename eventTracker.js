@@ -129,16 +129,16 @@ async function refreshVersions() {
   logger.info("refersh version info");
 
   // pull before changes are made
-  await git.pull({
-    fs,
-    http,
-    dir: eventTrackerDir,
-    remote: "origin",
-    ref: "main",
-    // fastForwardOnly: true,
-    author,
-    // onAuth: () => ({ username: GitHubToken }),
-  });
+  // await git.pull({
+  //   fs,
+  //   http,
+  //   dir: eventTrackerDir,
+  //   remote: "origin",
+  //   ref: "main",
+  //   // fastForwardOnly: true,
+  //   author,
+  //   // onAuth: () => ({ username: GitHubToken }),
+  // });
 
   await apiClient.login();
 
