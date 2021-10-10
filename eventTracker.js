@@ -9,13 +9,14 @@ const { readFileSync, copyFileSync, existsSync } = fs;
 const { writeFile, readFile } = fs.promises;
 const { APIClient } = require("./apiclient");
 const { sendEmail } = require("./utils");
+const { folders, remoteGitBase, strapi, pjsk, region } = require("./constants");
 
 const log4js = require("log4js");
 
 const logger = log4js.getLogger("event-track");
 logger.level = "info";
 
-const apiClient = new APIClient(logger);
+const apiClient = new APIClient(logger, region);
 
 if (!existsSync("./account.yaml")) {
   logger.warn(

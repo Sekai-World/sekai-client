@@ -6,12 +6,14 @@ const {
   pjsk,
   proxy,
   forceIPv6,
+  twSDK,
 } = require("./constants.js");
 const uuidV4 = require("uuid-v4");
 const crypto = require("crypto");
 const log4js = require("log4js");
 const SocksProxyAgent = require("socks-proxy-agent");
 const { HttpsProxyAgent } = require("hpagent");
+const { URLSearchParams } = require("url");
 
 const logger = log4js.getLogger("client");
 logger.level = "info";
@@ -73,47 +75,48 @@ function decrypt(enc) {
     : decrypted.toString("hex");
 }
 
-// const myClient = got.extend({
-//   prefixUrl: baseURL,
-//   responseType: "buffer",
-//   agent: {
-//     https: httpsAgent,
-//   },
-//   // http2: true,
-//   hooks: {
-//     beforeRequest: [
-//       (options) => {
-//         options.headers["x-request-id"] = uuidV4();
-//         options.headers["content-type"] = "application/octet-stream";
-//       },
-//     ],
-//     afterResponse: [
-//       (response, retryWithMergedOptions) => {
-//         if (response.statusCode === 429) {
-//           // hit rate limit, sleep for a while
-//           logger.warn("rate limit hit, sleep for 30s");
-//           rateLimited = true;
-//           setTimeout(() => {
-//             rateLimited = false;
-//           }, 30000);
+const myClient = got.extend({
+  prefixUrl: pjsk.baseURL,
+  responseType: "buffer",
+  agent: {
+    https: httpsAgent,
+  },
+  // http2: true,
+  hooks: {
+    beforeRequest: [
+      (options) => {
+        options.headers["x-request-id"] = uuidV4();
+        options.headers["content-type"] = "application/octet-stream";
+      },
+    ],
+    afterResponse: [
+      (response, retryWithMergedOptions) => {
+        if (response.statusCode === 429) {
+          // hit rate limit, sleep for a while
+          logger.warn("rate limit hit, sleep for 30s");
+          rateLimited = true;
+          setTimeout(() => {
+            rateLimited = false;
+          }, 30000);
 
-//           return response;
-//         } else {
-//           if (
-//             initialHeader["x-session-token"] &&
-//             response.headers["x-session-token"]
-//           )
-//             initialHeader["x-session-token"] = response.headers["x-session-token"];
+          return response;
+        } else {
+          if (
+            initialHeader["x-session-token"] &&
+            response.headers["x-session-token"]
+          )
+            initialHeader["x-session-token"] =
+              response.headers["x-session-token"];
 
-//           if (response.body.length) response.body = decrypt(response.body);
+          if (response.body.length) response.body = decrypt(response.body);
 
-//           return response;
-//         }
-//       },
-//     ],
-//   },
-//   dnsLookupIpVersion: forceIPv6 ? "ipv6" : "auto",
-// });
+          return response;
+        }
+      },
+    ],
+  },
+  dnsLookupIpVersion: forceIPv6 ? "ipv6" : "auto",
+});
 
 // /**
 //  *
@@ -121,16 +124,16 @@ function decrypt(enc) {
 //  * @param {string} method
 //  * @param {object} body
 //  */
-// module.exports.callAPI = async function doReq(endpoint, method = "get", data) {
-//   if (endpoint.startsWith("/")) endpoint = endpoint.slice(1);
-//   const { body } = await myClient(endpoint, {
-//     method,
-//     headers: initialHeader,
-//     body: ["post", "put", "patch"].includes(method) ? encrypt(data) : undefined,
-//   });
+module.exports.callAPI = async function doReq(endpoint, method = "get", data) {
+  if (endpoint.startsWith("/")) endpoint = endpoint.slice(1);
+  const { body } = await myClient(endpoint, {
+    method,
+    headers: initialHeader,
+    body: ["post", "put", "patch"].includes(method) ? encrypt(data) : undefined,
+  });
 
-//   return body;
-// };
+  return body;
+};
 
 module.exports.assetClient = got.extend({
   prefixUrl: pjsk.assetBaseURL,
@@ -148,7 +151,7 @@ module.exports.decrypt = decrypt;
 module.exports.encrypt = encrypt;
 
 module.exports.APIClient = class APIClient {
-  constructor(logger) {
+  constructor(logger, region = "jp") {
     if (!logger) {
       throw new Error("logger is missing.");
     }
@@ -165,9 +168,10 @@ module.exports.APIClient = class APIClient {
       httpsAgent,
     });
 
-    this.headers = Object.assign({}, initialHeader);
+    this.headers = Object.assign({}, initialHeader[region]);
     this.logger = logger;
     this.versionInfo = {};
+    this.region = region;
 
     this.isRateLimited = false;
 
@@ -250,49 +254,107 @@ module.exports.APIClient = class APIClient {
     });
   }
 
+  async twSDKLogin() {
+    const { params, data } = twSDK;
+    const registerData = data.registration;
+    const loginData = data.login;
+
+    // get token
+    const registerRes = await axios.default.post(
+      twSDK.url.registration,
+      new URLSearchParams(registerData).toString(),
+      {
+        params,
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        responseType: "json",
+      }
+    );
+    logger.info(registerRes.data);
+    const { user_id, token } = registerRes.data.data;
+
+    // get accessToken
+    const useLoginData = Object.assign({}, loginData);
+    useLoginData.data.token = token;
+    useLoginData.data.user_id = String(user_id);
+    useLoginData.data = JSON.stringify(useLoginData.data);
+    useLoginData.login_id = uuidV4();
+    const loginRes = await axios.default.post(
+      twSDK.url.login,
+      new URLSearchParams(useLoginData).toString(),
+      {
+        params,
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        responseType: "json",
+      }
+    );
+    logger.info(new URLSearchParams(useLoginData).toString(), loginRes.data);
+    const { access_token, sdk_open_id } = loginRes.data.data;
+
+    return {accessToken: access_token, userId: sdk_open_id};
+  }
+
   async login() {
     this.logger.info("simulate login process");
     this.logger.debug("do auth");
     delete this.headers["x-session-token"];
     delete this.headers["x-data-version"];
     delete this.headers["x-asset-version"];
-    const { userId, credential } = this._account;
-    const {
-      sessionToken,
-      appVersion,
-      dataVersion,
-      assetVersion,
-      assetHash,
-      appHash,
-      multiPlayVersion,
-    } = await this.callAPI(
-      `/user/${userId}/auth?refreshUpdatedResources=False`,
-      "put",
-      {
-        credential,
+    if (this.region === "jp") {
+      const { userId, credential } = this._account;
+      const {
+        sessionToken,
+        appVersion,
+        dataVersion,
+        assetVersion,
+        assetHash,
+        appHash,
+        multiPlayVersion,
+      } = await this.callAPI(
+        `/user/${userId}/auth?refreshUpdatedResources=False`,
+        "put",
+        {
+          credential,
+        }
+      );
+
+      this.headers["x-session-token"] = sessionToken;
+      this.headers["x-app-version"] = appVersion;
+      this.headers["x-data-version"] = dataVersion;
+      this.headers["x-asset-version"] = assetVersion;
+      this.logger.info(
+        `login app version ${appVersion} master version ${dataVersion} asset version ${assetVersion}`
+      );
+    } else if (this.region === "tw") {
+      const {accessToken, userId} = await this.twSDKLogin();
+      const {
+        sessionToken,
+        appVersion,
+        dataVersion,
+        assetVersion,
+        assetHash,
+        appHash,
+        multiPlayVersion,
+      } = await this.callAPI("/user/auth", "post", {
+        userID: 0,
+        accessToken,
+      });
+      this._account = {
+        userId
       }
-    );
-    // this.versionInfo = {
-    //   appVersion,
-    //   dataVersion,
-    //   assetVersion,
-    //   assetHash,
-    //   appHash,
-    //   multiPlayVersion,
-    // };
-    // this.logger.info(`user ${userId} logged in`);
-    this.headers["x-session-token"] = sessionToken;
-    this.headers["x-app-version"] = appVersion;
-    this.headers["x-data-version"] = dataVersion;
-    this.headers["x-asset-version"] = assetVersion;
-    this.logger.info(
-      `login app version ${appVersion} master version ${dataVersion} asset version ${assetVersion}`
-    );
+
+      this.headers["x-session-token"] = sessionToken;
+      this.headers["x-app-version"] = appVersion;
+      this.headers["x-data-version"] = dataVersion;
+      this.headers["x-asset-version"] = assetVersion;
+      this.logger.info(
+        `login app version ${appVersion} master version ${dataVersion} asset version ${assetVersion}`
+      );
+    }
 
     this.logger.debug("get system");
     await this.callAPI("/system");
 
-    // const { userId } = this.account;
+    const { userId } = this._account;
     this.logger.debug("get suite user");
     const userInfo = await this.callAPI(`/suite/user/${userId}`);
 

@@ -9,7 +9,7 @@ const { writeFile, access, readFile } = fs.promises;
 // const axios = require("axios");
 const { APIClient, decrypt, assetClient } = require("./apiclient");
 const { sendEmail, checkGitFolder } = require("./utils");
-const { folders, remoteGitBase, strapi, pjsk } = require("./constants");
+const { folders, remoteGitBase, strapi, pjsk, region } = require("./constants");
 
 const log4js = require("log4js");
 const { default: axios } = require("axios");
@@ -17,7 +17,7 @@ const { default: axios } = require("axios");
 const logger = log4js.getLogger("check-update");
 logger.level = "info";
 
-const apiClient = new APIClient(logger);
+const apiClient = new APIClient(logger, region);
 
 if (!existsSync("./account.yaml")) {
   logger.warn(
