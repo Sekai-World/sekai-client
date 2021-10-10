@@ -8,7 +8,7 @@ const axios = require("axios");
 const { readFileSync, copyFileSync, existsSync } = fs;
 const { writeFile, readFile } = fs.promises;
 const { APIClient } = require("./apiclient");
-const { sendEmail } = require("./utils");
+const { sendEmail, checkGitFolder } = require("./utils");
 const { folders, remoteGitBase, strapi, pjsk, region } = require("./constants");
 
 const log4js = require("log4js");
@@ -22,7 +22,10 @@ if (!existsSync("./account.yaml")) {
   logger.warn(
     "no account.yaml found, created empty one, remember to fill GitHubToken!"
   );
-  copyFileSync(path.join(__dirname, 'account.example.yaml'), path.join(__dirname, 'account.yaml'));
+  copyFileSync(
+    path.join(__dirname, "account.example.yaml"),
+    path.join(__dirname, "account.yaml")
+  );
 }
 let {
   eventTracker: account,
@@ -32,7 +35,8 @@ let {
 } = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
 apiClient.account = account;
 let eventData;
-const eventTrackerDir = path.join(__dirname, "sekai-event-track");
+const eventTrackerDir = path.join(__dirname, folders.eventTracker);
+const author = { name: "event-track-bot", email: "anonymous@example.com" };
 
 // async function checkVersions() {
 //   const res = {
@@ -123,6 +127,19 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
 
 async function refreshVersions() {
   logger.info("refersh version info");
+
+  // pull before changes are made
+  await git.pull({
+    fs,
+    http,
+    dir: eventTrackerDir,
+    remote: "origin",
+    ref: "main",
+    // fastForwardOnly: true,
+    author,
+    // onAuth: () => ({ username: GitHubToken }),
+  });
+
   await apiClient.login();
 
   const masterData = await apiClient.callAPI("/suite/master", "get");
@@ -257,6 +274,9 @@ async function trackEventResult(currentTime) {
         headers: {
           "X-API-Key": SekaiAPIKey,
         },
+        params: {
+          region
+        }
       }
     );
   } catch (e) {
@@ -283,7 +303,7 @@ async function commitEventTrackResult() {
       fs,
       dir: eventTrackerDir,
       message: `event track for id ${eventData.id} at ${new Date().getTime()}`,
-      author: { name: "event-track-bot", email: "anonymous@example.com" },
+      author,
     });
     await git.push({
       fs,
@@ -300,6 +320,7 @@ async function commitEventTrackResult() {
 
 async function bootstrap() {
   logger.info("ensure current version available");
+  await checkGitFolder(eventTrackerDir, remoteGitBase);
   try {
     const verRes = await apiClient.checkVersions();
     if (verRes.isMaintenance) {
@@ -323,52 +344,7 @@ async function bootstrap() {
     return;
   }
 
-  // const { userId } = account;
   await refreshVersions();
-
-  // logger.info("simulate login process");
-  // logger.debug("get system");
-  // await apiClient.callAPI("/system");
-  // logger.debug("get suite user");
-  // const { userTutorial } = await apiClient.callAPI(`/suite/user/${userId}`);
-  // if (userTutorial.tutorialStatus === "start") {
-  //   logger.warn("tutorial is at start, set username first");
-  //   await apiClient.callAPI(`/user/${userId}/tutorial`, "patch", {
-  //     tutorialStatus: "opening_1",
-  //   });
-  //   await apiClient.callAPI(`/user/${userId}`, "patch", {
-  //     userGamedata: {
-  //       name: "\u30bb\u30ab\u30a4\u306e\u4f4f\u4eba",
-  //     },
-  //   });
-  //   userTutorial.tutorialStatus = "opening_1";
-  // }
-  // if (userTutorial.tutorialStatus !== "end") {
-  //   logger.debug("rolling tutorial");
-  //   const steps = [
-  //     "opening_1",
-  //     "gameplay",
-  //     "opening_2",
-  //     "unit_select",
-  //     "idol_opening",
-  //     "summary",
-  //     "end",
-  //   ];
-  //   for (let status of steps.slice(
-  //     steps.indexOf(userTutorial.tutorialStatus) + 1
-  //   )) {
-  //     await apiClient.callAPI(`/user/${userId}/tutorial`, "patch", {
-  //       tutorialStatus: status,
-  //     });
-  //   }
-
-  //   logger.debug("refresh home login_bonus");
-  //   await apiClient.callAPI(`/user/${userId}/home/refresh`, "put", {
-  //     refreshableTypes: ["login_bonus"],
-  //   });
-  // }
-
-  // await trackEventResult();
 
   logger.info("all finished, will track event result every minute");
   eventTrackJob.start();
