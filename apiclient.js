@@ -269,7 +269,7 @@ module.exports.APIClient = class APIClient {
         responseType: "json",
       }
     );
-    logger.info(registerRes.data);
+    // logger.info(registerRes.data);
     const { user_id, token } = registerRes.data.data;
 
     // get accessToken
@@ -287,7 +287,7 @@ module.exports.APIClient = class APIClient {
         responseType: "json",
       }
     );
-    logger.info(new URLSearchParams(useLoginData).toString(), loginRes.data);
+    // logger.info(new URLSearchParams(useLoginData).toString(), loginRes.data);
     const { access_token, sdk_open_id } = loginRes.data.data;
 
     return {accessToken: access_token, userId: sdk_open_id};
