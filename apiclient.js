@@ -184,7 +184,7 @@ module.exports.APIClient = class APIClient {
         return res;
       },
       async (err) => {
-        console.log(err);
+        this.logger.error(err);
         if (err.response.data.length) {
           err.response.data = decrypt(Buffer.from(err.response.data));
         }
@@ -201,6 +201,7 @@ module.exports.APIClient = class APIClient {
           this.isRateLimited = false;
         } else if (err.response.status === 426) {
           this.logger.warn("should update version");
+          await this.refreshVersion();
           await this.login();
         } else if (err.response.status === 403) {
           this.logger.warn("unknown error.");
@@ -427,12 +428,24 @@ module.exports.APIClient = class APIClient {
     );
 
     if (!currentVersion) {
-      // check latest version
-      currentVersion = appVersions[appVersions.length - 1];
-      if (currentVersion.appVersionStatus === "maintenance") {
-        res.isMaintenance = true;
-      } else if (currentVersion.appVersionStatus === "available") {
+      // check latest available version
+      currentVersion = appVersions.find(
+        (appVer) =>
+          appVer.appVersionStatus === "available"
+      );
+      if (!!currentVersion) {
         res.isNewVersion = true;
+      } else {
+        currentVersion = appVersions.find(
+          (appVer) =>
+            appVer.appVersionStatus === "maintenance"
+        );
+        if (!!currentVersion) {
+          res.isMaintenance = true;
+        } else {
+          // error
+          res.isError = true;
+        }
       }
     } else {
       res.isNewVersion =
