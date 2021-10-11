@@ -114,7 +114,7 @@ module.exports = {
   },
   forceIPv6: Boolean(process.env.ENABLE_IPV6) || false,
   folders: {
-    eventTracker: process.env.SEKAI_EVENT_TRACKER || "sekai-event-tracker",
+    eventTracker: process.env.SEKAI_EVENT_TRACKER || "sekai-event-track",
     i18n: process.env.SEKAI_I18N || "sekai-i18n",
     masterDBDiff: process.env.SEKAI_MASTER_DB_DIFF || "sekai-master-db-diff",
   },
