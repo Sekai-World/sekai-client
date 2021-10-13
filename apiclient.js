@@ -201,8 +201,12 @@ module.exports.APIClient = class APIClient {
           this.isRateLimited = false;
         } else if (err.response.status === 426) {
           this.logger.warn("should update version");
-          await this.refreshVersion();
-          await this.login();
+          const result = await this.checkVersions();
+          if (result.isError) {
+            this.logger.error("failed to update version");
+          } else {
+            await this.login();
+          }
         } else if (err.response.status === 403) {
           this.logger.warn("unknown error.");
           await this.login();
@@ -291,7 +295,7 @@ module.exports.APIClient = class APIClient {
     // logger.info(new URLSearchParams(useLoginData).toString(), loginRes.data);
     const { access_token, sdk_open_id } = loginRes.data.data;
 
-    return {accessToken: access_token, userId: sdk_open_id};
+    return { accessToken: access_token, userId: sdk_open_id };
   }
 
   async login() {
@@ -326,7 +330,7 @@ module.exports.APIClient = class APIClient {
         `login app version ${appVersion} master version ${dataVersion} asset version ${assetVersion}`
       );
     } else if (this.region === "tw") {
-      const {accessToken, userId} = await this.twSDKLogin();
+      const { accessToken, userId } = await this.twSDKLogin();
       const {
         sessionToken,
         appVersion,
@@ -340,8 +344,8 @@ module.exports.APIClient = class APIClient {
         accessToken,
       });
       this._account = {
-        userId
-      }
+        userId,
+      };
 
       this.headers["x-session-token"] = sessionToken;
       this.headers["x-app-version"] = appVersion;
@@ -430,15 +434,13 @@ module.exports.APIClient = class APIClient {
     if (!currentVersion) {
       // check latest available version
       currentVersion = appVersions.find(
-        (appVer) =>
-          appVer.appVersionStatus === "available"
+        (appVer) => appVer.appVersionStatus === "available"
       );
       if (!!currentVersion) {
         res.isNewVersion = true;
       } else {
         currentVersion = appVersions.find(
-          (appVer) =>
-            appVer.appVersionStatus === "maintenance"
+          (appVer) => appVer.appVersionStatus === "maintenance"
         );
         if (!!currentVersion) {
           res.isMaintenance = true;
