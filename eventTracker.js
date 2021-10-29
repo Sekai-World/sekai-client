@@ -344,7 +344,20 @@ async function bootstrap() {
     return;
   }
 
-  await refreshVersions();
+  try {
+    await refreshVersions();
+  } catch (error) {
+    logger.error("bootstrap: failed to login onto server", error);
+    setTimeout(() => {
+      bootstrap();
+    }, 60 * 60 * 1000);
+    try {
+      await sendEmail(`Event Tracker: The login onto project sekai server ${region} failed, please check parameters!!!`);
+      logger.info("update: warning email sent");
+    } catch (error) {
+      logger.debug("update: skipped email sent");
+    }
+  }
 
   logger.info("all finished, will track event result every minute");
   eventTrackJob.start();

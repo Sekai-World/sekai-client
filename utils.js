@@ -7,7 +7,7 @@ const path = require("path");
 
 let lastEmailSent = 0;
 
-module.exports.sendEmail = async function () {
+module.exports.sendEmail = async function (text) {
   if (new Date().getTime() - lastEmailSent < 30 * 60 * 1000) {
     throw new Error("send email too frequent");
   }
@@ -28,7 +28,7 @@ module.exports.sendEmail = async function () {
       from: `"Sekai Viewer Warn System" <${process.env.MAIL_ADDR_SEND_WARN}>`,
       to,
       subject: "Failed to connect to pjsk server",
-      text: "The connection to project sekai server failed, please reboot proxy!!!",
+      text,
     });
   }
 
