@@ -330,7 +330,10 @@ module.exports.APIClient = class APIClient {
         `login app version ${appVersion} master version ${dataVersion} asset version ${assetVersion}`
       );
     } else if (this.region === "tw") {
-      const { accessToken, userId } = await this.twSDKLogin();
+      // const { accessToken, userId } = await this.twSDKLogin();
+      const accessToken = process.env.SEKAI_TW_ACCESS_TOKEN;
+      const userId = process.env.SEKAI_TW_USER_ID;
+      // console.log(accessToken, userId);
       const {
         sessionToken,
         appVersion,

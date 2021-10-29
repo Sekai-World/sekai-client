@@ -320,7 +320,7 @@ async function commitEventTrackResult() {
 
 async function bootstrap() {
   logger.info("ensure current version available");
-  await checkGitFolder(eventTrackerDir, remoteGitBase);
+  // await checkGitFolder(eventTrackerDir, remoteGitBase);
   try {
     const verRes = await apiClient.checkVersions();
     if (verRes.isMaintenance) {
