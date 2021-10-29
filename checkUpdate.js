@@ -625,7 +625,7 @@ async function bootstrap() {
       bootstrap();
     }, 10 * 60 * 1000);
     try {
-      await sendEmail();
+      await sendEmail(`Check Update: The connection to project sekai server ${region} failed, please check connection!!!`);
       logger.info("update: warning email sent");
     } catch (error) {
       logger.debug("update: skipped email sent");
