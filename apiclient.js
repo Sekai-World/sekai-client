@@ -1,22 +1,22 @@
-const axios = require("axios");
-const got = require("got").default;
-const msgpack = require("@msgpack/msgpack");
-const {
+import axios from "axios";
+import got from "got";
+import msgpack from "@msgpack/msgpack";
+import {
   initialHeader,
   pjsk,
   proxy,
   forceIPv6,
-  twSDK,
-} = require("./constants.js");
-const uuidV4 = require("uuid-v4");
-const crypto = require("crypto");
-const log4js = require("log4js");
-const SocksProxyAgent = require("socks-proxy-agent");
-const { HttpsProxyAgent } = require("hpagent");
-const { URLSearchParams } = require("url");
+  // twSDK,
+} from "./constants.js";
+import uuidV4 from "uuid-v4";
+import crypto from "crypto";
+import log4js from "log4js";
+import SocksProxyAgent from "socks-proxy-agent";
+import { HttpsProxyAgent } from "hpagent";
+// import { URLSearchParams } from "url";
 
-const logger = log4js.getLogger("client");
-logger.level = "info";
+const apiLogger = log4js.getLogger("client");
+apiLogger.level = "info";
 
 // the full socks5 address
 // const proxyOptions = `socks5://${proxy.user}:${proxy.pass}@${proxy.host}:${proxy.port}`;
@@ -42,14 +42,14 @@ const httpsAgent =
       })
     : undefined;
 
-// const rateLimited = false;
+let rateLimited = false;
 
 function delay(ms) {
-  logger.debug(`promise delay for ${ms} ms`);
+  apiLogger.debug(`promise delay for ${ms} ms`);
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function encrypt(body) {
+export function encrypt(body) {
   const cipher = crypto.createCipheriv(
     "aes-128-cbc",
     Buffer.from("6732666343305a637a4e394d544a3631", "hex"),
@@ -61,7 +61,7 @@ function encrypt(body) {
   return encrypted;
 }
 
-function decrypt(enc) {
+export function decrypt(enc) {
   const cipher = crypto.createDecipheriv(
     "aes-128-cbc",
     Buffer.from("6732666343305a637a4e394d544a3631", "hex"),
@@ -76,7 +76,7 @@ function decrypt(enc) {
 }
 
 const myClient = got.extend({
-  prefixUrl: pjsk.baseURL,
+  prefixUrl: pjsk.baseURL.jp,
   responseType: "buffer",
   agent: {
     https: httpsAgent,
@@ -93,7 +93,7 @@ const myClient = got.extend({
       (response, retryWithMergedOptions) => {
         if (response.statusCode === 429) {
           // hit rate limit, sleep for a while
-          logger.warn("rate limit hit, sleep for 30s");
+          apiLogger.warn("rate limit hit, sleep for 30s");
           rateLimited = true;
           setTimeout(() => {
             rateLimited = false;
@@ -124,7 +124,7 @@ const myClient = got.extend({
 //  * @param {string} method
 //  * @param {object} body
 //  */
-module.exports.callAPI = async function doReq(endpoint, method = "get", data) {
+export const callAPI = async function doReq(endpoint, method = "get", data) {
   if (endpoint.startsWith("/")) endpoint = endpoint.slice(1);
   const { body } = await myClient(endpoint, {
     method,
@@ -135,7 +135,7 @@ module.exports.callAPI = async function doReq(endpoint, method = "get", data) {
   return body;
 };
 
-module.exports.assetClient = got.extend({
+export const assetClient = got.extend({
   prefixUrl: pjsk.assetBaseURL,
   responseType: "buffer",
   agent: {
@@ -145,18 +145,28 @@ module.exports.assetClient = got.extend({
   dnsLookupIpVersion: forceIPv6 ? "ipv6" : "auto",
 });
 
-module.exports.initialHeader = initialHeader;
-
-module.exports.decrypt = decrypt;
-module.exports.encrypt = encrypt;
-
-module.exports.APIClient = class APIClient {
+export class APIClient {
   constructor(logger, region = "jp") {
     if (!logger) {
-      throw new Error("logger is missing.");
+      // throw new Error("logger is missing.");
+      this.logger = apiLogger;
+    } else {
+      this.logger = logger;
     }
-    this.axios = axios.default.create({
-      baseURL: pjsk.baseURL,
+
+    this.headers = Object.assign({}, initialHeader[region]);
+    // this.logger = logger;
+    this.versionInfo = {};
+    this._region = region;
+
+    this.isRateLimited = false;
+
+    this.initHttpClient();
+  }
+
+  initHttpClient() {
+    this.axios = axios.create({
+      baseURL: pjsk.baseURL[this._region],
       transformRequest: [
         (data, headers) => {
           headers["x-request-id"] = uuidV4();
@@ -167,13 +177,6 @@ module.exports.APIClient = class APIClient {
       responseType: "arraybuffer",
       httpsAgent,
     });
-
-    this.headers = Object.assign({}, initialHeader[region]);
-    this.logger = logger;
-    this.versionInfo = {};
-    this.region = region;
-
-    this.isRateLimited = false;
 
     this.axios.interceptors.response.use(
       (res) => {
@@ -259,52 +262,13 @@ module.exports.APIClient = class APIClient {
     });
   }
 
-  async twSDKLogin() {
-    const { params, data } = twSDK;
-    const registerData = data.registration;
-    const loginData = data.login;
-
-    // get token
-    const registerRes = await axios.default.post(
-      twSDK.url.registration,
-      new URLSearchParams(registerData).toString(),
-      {
-        params,
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        responseType: "json",
-      }
-    );
-    // logger.info(registerRes.data);
-    const { user_id, token } = registerRes.data.data;
-
-    // get accessToken
-    const useLoginData = Object.assign({}, loginData);
-    useLoginData.data.token = token;
-    useLoginData.data.user_id = String(user_id);
-    useLoginData.data = JSON.stringify(useLoginData.data);
-    useLoginData.login_id = uuidV4();
-    const loginRes = await axios.default.post(
-      twSDK.url.login,
-      new URLSearchParams(useLoginData).toString(),
-      {
-        params,
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        responseType: "json",
-      }
-    );
-    // logger.info(new URLSearchParams(useLoginData).toString(), loginRes.data);
-    const { access_token, sdk_open_id } = loginRes.data.data;
-
-    return { accessToken: access_token, userId: sdk_open_id };
-  }
-
   async login() {
     this.logger.info("simulate login process");
     this.logger.debug("do auth");
     delete this.headers["x-session-token"];
     delete this.headers["x-data-version"];
     delete this.headers["x-asset-version"];
-    if (this.region === "jp") {
+    if (this._region === "jp") {
       const { userId, credential } = this._account;
       const {
         sessionToken,
@@ -329,11 +293,11 @@ module.exports.APIClient = class APIClient {
       this.logger.info(
         `login app version ${appVersion} master version ${dataVersion} asset version ${assetVersion}`
       );
-    } else if (this.region === "tw") {
-      // const { accessToken, userId } = await this.twSDKLogin();
-      const accessToken = process.env.SEKAI_TW_ACCESS_TOKEN;
-      const userId = process.env.SEKAI_TW_USER_ID;
-      // console.log(accessToken, userId);
+    } else if (this._region === "tw") {
+      const {
+        loginInfo: { accessToken },
+        userId,
+      } = this._account;
       const {
         sessionToken,
         appVersion,
@@ -346,9 +310,9 @@ module.exports.APIClient = class APIClient {
         userID: 0,
         accessToken,
       });
-      this._account = {
-        userId,
-      };
+      // this._account = {
+      //   userId,
+      // };
 
       this.headers["x-session-token"] = sessionToken;
       this.headers["x-app-version"] = appVersion;
@@ -414,38 +378,47 @@ module.exports.APIClient = class APIClient {
     return await this.callAPI(`/user/${userId}/profile`);
   }
 
-  async checkVersions() {
+  async checkVersions(inputVersion) {
     const res = {
       isError: false,
       isMaintenance: false,
       isNewVersion: false,
     };
-    let appVersions;
+    if (inputVersion) {
+      res.isMaintenance = this.versionInfo.appVersionStatus === "maintenance";
+      res.isNewVersion =
+        inputVersion.dataVersion !== this.versionInfo.dataVersion ||
+        inputVersion.assetVersion !== this.versionInfo.assetVersion ||
+        inputVersion.appVersion !== this.versionInfo.appVersion;
+      return res;
+    }
+    let allVersions;
     try {
-      appVersions = (await this.callAPI("/system")).appVersions;
+      allVersions = (await this.callAPI("/system")).appVersions;
     } catch (error) {
-      logger.error(error);
+      this.logger.error(error);
       res.isError = true;
       return res;
     }
-    let currentVersion = appVersions.find(
-      (appVer) =>
-        appVer.appVersion === this.headers["x-app-version"] &&
-        appVer.appVersionStatus === "available"
+    const appVersion = this.headers["x-app-version"];
+    let currentVersion = allVersions.find(
+      (allVer) =>
+        allVer.appVersion === appVersion &&
+        allVer.appVersionStatus === "available"
     );
 
     if (!currentVersion) {
       // check latest available version
-      currentVersion = appVersions.find(
-        (appVer) => appVer.appVersionStatus === "available"
+      currentVersion = allVersions.find(
+        (allVer) => allVer.appVersionStatus === "available"
       );
-      if (!!currentVersion) {
+      if (currentVersion) {
         res.isNewVersion = true;
       } else {
-        currentVersion = appVersions.find(
-          (appVer) => appVer.appVersionStatus === "maintenance"
+        currentVersion = allVersions.find(
+          (allVer) => allVer.appVersionStatus === "maintenance"
         );
-        if (!!currentVersion) {
+        if (currentVersion) {
           res.isMaintenance = true;
         } else {
           // error
@@ -470,4 +443,15 @@ module.exports.APIClient = class APIClient {
 
     return res;
   }
-};
+
+  set region(newVal) {
+    this._region = newVal;
+
+    this.headers = Object.assign({}, initialHeader[newVal]);
+    this.initHttpClient();
+  }
+
+  get region() {
+    return this._region;
+  }
+}

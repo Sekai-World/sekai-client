@@ -1,13 +1,13 @@
-const nodemailer = require("nodemailer");
-const fs = require("fs");
-const fsp = require("fs/promises");
-const git = require("isomorphic-git");
-const http = require("isomorphic-git/http/node");
-const path = require("path");
+import nodemailer from "nodemailer";
+import fs from "fs";
+import fsp from "fs/promises";
+import git from "isomorphic-git";
+import http from "isomorphic-git/http/node";
+import path from "path";
 
 let lastEmailSent = 0;
 
-module.exports.sendEmail = async function (text) {
+export const sendEmail = async function (text) {
   if (new Date().getTime() - lastEmailSent < 30 * 60 * 1000) {
     throw new Error("send email too frequent");
   }
@@ -35,7 +35,7 @@ module.exports.sendEmail = async function (text) {
   lastEmailSent = new Date().getTime();
 };
 
-module.exports.checkGitFolder = async function (folderPath, remoteGitBase) {
+export const checkGitFolder = async function (folderPath, remoteGitBase) {
   try {
     await fsp.stat(folderPath);
   } catch (e) {
@@ -44,13 +44,36 @@ module.exports.checkGitFolder = async function (folderPath, remoteGitBase) {
         fs,
         http,
         dir: folderPath,
-        url: remoteGitBase + '/' + path.basename(folderPath),
+        url: remoteGitBase + "/" + path.basename(folderPath),
       });
       await git.checkout({
         fs,
         dir: folderPath,
-        ref: 'main'
-      })
+        ref: "main",
+      });
     }
   }
 };
+
+export function merge(source, target) {
+  for (const [key, val] of Object.entries(source)) {
+    if (val !== null && typeof val === `object`) {
+      if (target[key] === undefined) {
+        target[key] = new val.__proto__.constructor();
+      }
+      merge(val, target[key]);
+    } else {
+      target[key] = val;
+    }
+  }
+  return target; // we're replacing in-situ, so this is more for chaining than anything else
+}
+
+export async function clientRequest(client, ...args) {
+  const res = await client.request(...args);
+  if (res.result) return res.result;
+  if (res.error) {
+    console.error(...args, res.error);
+    throw res;
+  }
+}

@@ -1,42 +1,32 @@
-const yaml = require("js-yaml");
-const path = require("path");
-const git = require("isomorphic-git");
-const http = require("isomorphic-git/http/node");
-const { CronJob } = require("cron");
-const fs = require("fs");
-const axios = require("axios");
-const { readFileSync, copyFileSync, existsSync } = fs;
-const { writeFile, readFile } = fs.promises;
-const { APIClient } = require("./apiclient");
-const { sendEmail, checkGitFolder } = require("./utils");
-const { folders, remoteGitBase, strapi, pjsk, region } = require("./constants");
+// import yaml from "js-yaml";
+import path from "path";
+import git from "isomorphic-git";
+import http from "isomorphic-git/http/node";
+import { CronJob } from "cron";
+import { fileURLToPath } from "url";
+import fs from "fs";
+import { writeFile } from "fs/promises";
+import axios from "axios";
+import { sendEmail, clientRequest } from "./utils";
+import { folders, region, bitbucket, sekaiAPIKey } from "./constants";
 
-const log4js = require("log4js");
+import log4js from "log4js";
 
 const logger = log4js.getLogger("event-track");
 logger.level = "info";
 
-const apiClient = new APIClient(logger, region);
+import jayson from "jayson/promise";
 
-if (!existsSync("./account.yaml")) {
-  logger.warn(
-    "no account.yaml found, created empty one, remember to fill GitHubToken!"
-  );
-  copyFileSync(
-    path.join(__dirname, "account.example.yaml"),
-    path.join(__dirname, "account.yaml")
-  );
-}
-let {
-  eventTracker: account,
-  BitbucketUser,
-  BitbucketToken,
-  SekaiAPIKey,
-} = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
-apiClient.account = account;
+const client = new jayson.Client.http({
+  port: process.env.SERVER_PORT || 3939, // change port to use different server
+});
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 let eventData;
 const eventTrackerDir = path.join(__dirname, folders.eventTracker);
 const author = { name: "event-track-bot", email: "anonymous@example.com" };
+let versionInfo;
 
 // async function checkVersions() {
 //   const res = {
@@ -46,7 +36,7 @@ const author = { name: "event-track-bot", email: "anonymous@example.com" };
 //   };
 //   let appVersions;
 //   try {
-//     appVersions = (await apiClient.callAPI("/system")).appVersions;
+//     appVersions = (await clientRequest(client,"callAPI")("/system")).appVersions;
 //   } catch (error) {
 //     logger.error(error);
 //     return {
@@ -82,7 +72,8 @@ const author = { name: "event-track-bot", email: "anonymous@example.com" };
 
 const eventTrackJob = new CronJob("58 * * * * *", async () => {
   logger.info("trace event score triggered by cron job");
-  const verRes = await apiClient.checkVersions();
+  const verRes = await clientRequest(client, "checkVersions", [versionInfo]);
+  // console.log(versionInfo, verRes);
   if (verRes.isMaintenance) {
     logger.warn("server in maintenance");
     return;
@@ -97,7 +88,6 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
     return;
   }
 
-  const currentTime = new Date().getTime();
   if (
     verRes.isNewVersion ||
     new Date().toLocaleString("en-DE", {
@@ -109,16 +99,17 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
   ) {
     await refreshVersions();
     // const { userId } = account;
-    // await apiClient.callAPI(`/suite/user/${userId}`);
+    // await clientRequest(client,"callAPI")(`/suite/user/${userId}`);
   }
 
+  const currentTime = new Date().getTime();
   try {
     await trackEventResult(currentTime);
   } catch (e) {
     // in case of 403 or other errors
     // const { userId } = account;
     await refreshVersions();
-    // await apiClient.callAPI(`/suite/user/${userId}`);
+    // await clientRequest(client,"callAPI")(`/suite/user/${userId}`);
     await trackEventResult(currentTime);
   }
 
@@ -139,16 +130,17 @@ async function refreshVersions() {
   //   author,
   //   // onAuth: () => ({ username: GitHubToken }),
   // });
-
-  await apiClient.login();
-
-  const masterData = await apiClient.callAPI("/suite/master", "get");
+  const masterData = await clientRequest(client, "callAPI", [
+    "/suite/master",
+    "get",
+  ]);
   const events = masterData.events.filter(
     (it) => it.startAt <= new Date().getTime() + 60 * 1000
   );
   eventData = events.length ? events[events.length - 1] : null;
 
-  return apiClient.versionInfo;
+  versionInfo = await clientRequest(client, "versionInfo", []);
+  return versionInfo;
 }
 
 async function trackEventResult(currentTime) {
@@ -167,73 +159,73 @@ async function trackEventResult(currentTime) {
     throw Error("current event will expire soon");
   }
 
-  const { userId } = apiClient.account;
+  const { userId } = await clientRequest(client, "account", []);
 
   logger.debug("track first ten");
-  const { rankings: first10 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=1&lowerLimit=9`
-  );
+  const { rankings: first10 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=1&lowerLimit=9`,
+  ]);
   logger.debug("track critical ranking");
-  const { rankings: rank20 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=20&lowerLimit=0`
-  );
-  const { rankings: rank30 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=30&lowerLimit=0`
-  );
-  const { rankings: rank40 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=40&lowerLimit=0`
-  );
-  const { rankings: rank50 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=50&lowerLimit=0`
-  );
-  const { rankings: rank100 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=100&lowerLimit=0`
-  );
-  const { rankings: rank200 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=200&lowerLimit=0`
-  );
-  const { rankings: rank300 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=300&lowerLimit=0`
-  );
-  const { rankings: rank400 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=400&lowerLimit=0`
-  );
-  const { rankings: rank500 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=500&lowerLimit=0`
-  );
-  const { rankings: rank1000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=1000&lowerLimit=0`
-  );
-  const { rankings: rank2000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=2000&lowerLimit=0`
-  );
-  const { rankings: rank3000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=3000&lowerLimit=0`
-  );
-  const { rankings: rank4000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=4000&lowerLimit=0`
-  );
-  const { rankings: rank5000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=5000&lowerLimit=0`
-  );
-  const { rankings: rank10000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=10000&lowerLimit=0`
-  );
-  const { rankings: rank20000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=20000&lowerLimit=0`
-  );
-  const { rankings: rank30000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=30000&lowerLimit=0`
-  );
-  const { rankings: rank40000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=40000&lowerLimit=0`
-  );
-  const { rankings: rank50000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=50000&lowerLimit=0`
-  );
-  const { rankings: rank100000 } = await apiClient.callAPI(
-    `/user/${userId}/event/${eventData.id}/ranking?targetRank=100000&lowerLimit=0`
-  );
+  const { rankings: rank20 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=20&lowerLimit=0`,
+  ]);
+  const { rankings: rank30 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=30&lowerLimit=0`,
+  ]);
+  const { rankings: rank40 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=40&lowerLimit=0`,
+  ]);
+  const { rankings: rank50 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=50&lowerLimit=0`,
+  ]);
+  const { rankings: rank100 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=100&lowerLimit=0`,
+  ]);
+  const { rankings: rank200 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=200&lowerLimit=0`,
+  ]);
+  const { rankings: rank300 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=300&lowerLimit=0`,
+  ]);
+  const { rankings: rank400 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=400&lowerLimit=0`,
+  ]);
+  const { rankings: rank500 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=500&lowerLimit=0`,
+  ]);
+  const { rankings: rank1000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=1000&lowerLimit=0`,
+  ]);
+  const { rankings: rank2000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=2000&lowerLimit=0`,
+  ]);
+  const { rankings: rank3000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=3000&lowerLimit=0`,
+  ]);
+  const { rankings: rank4000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=4000&lowerLimit=0`,
+  ]);
+  const { rankings: rank5000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=5000&lowerLimit=0`,
+  ]);
+  const { rankings: rank10000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=10000&lowerLimit=0`,
+  ]);
+  const { rankings: rank20000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=20000&lowerLimit=0`,
+  ]);
+  const { rankings: rank30000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=30000&lowerLimit=0`,
+  ]);
+  const { rankings: rank40000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=40000&lowerLimit=0`,
+  ]);
+  const { rankings: rank50000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=50000&lowerLimit=0`,
+  ]);
+  const { rankings: rank100000 } = await clientRequest(client, "callAPI", [
+    `/user/${userId}/event/${eventData.id}/ranking?targetRank=100000&lowerLimit=0`,
+  ]);
 
   logger.debug("write track result");
   const newData = {
@@ -272,11 +264,11 @@ async function trackEventResult(currentTime) {
       newData,
       {
         headers: {
-          "X-API-Key": SekaiAPIKey,
+          "X-API-Key": sekaiAPIKey,
         },
         params: {
-          region
-        }
+          region,
+        },
       }
     );
   } catch (e) {
@@ -311,7 +303,10 @@ async function commitEventTrackResult() {
       dir: eventTrackerDir,
       remote: "origin",
       ref: "main",
-      onAuth: () => ({ username: BitbucketUser, password: BitbucketToken }),
+      onAuth: () => ({
+        username: bitbucket.username,
+        password: bitbucket.token,
+      }),
     });
   }
 
@@ -319,10 +314,11 @@ async function commitEventTrackResult() {
 }
 
 async function bootstrap() {
+  await clientRequest(client, "init", [region]);
   logger.info("ensure current version available");
   // await checkGitFolder(eventTrackerDir, remoteGitBase);
   try {
-    const verRes = await apiClient.checkVersions();
+    const verRes = await clientRequest(client, "checkVersions", []);
     if (verRes.isMaintenance) {
       logger.warn("bootstrap: server in maintenance");
       setTimeout(() => {
@@ -345,6 +341,7 @@ async function bootstrap() {
   }
 
   try {
+    await clientRequest(client, "login", []);
     await refreshVersions();
   } catch (error) {
     logger.error("bootstrap: failed to login onto server", error);
@@ -352,7 +349,9 @@ async function bootstrap() {
       bootstrap();
     }, 60 * 60 * 1000);
     try {
-      await sendEmail(`Event Tracker: The login onto project sekai server ${region} failed, please check parameters!!!`);
+      await sendEmail(
+        `Event Tracker: The login onto project sekai server ${region} failed, please check parameters!!!`
+      );
       logger.info("update: warning email sent");
     } catch (error) {
       logger.debug("update: skipped email sent");
