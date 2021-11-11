@@ -126,6 +126,7 @@ dist
 sekai-master-db-diff/
 *.yaml
 !*.example.yaml
+!pnpm*.yaml
 sekai-event-track/
 sekai-i18n/
 sekai-master-db-tc-diff/
