@@ -1,16 +1,15 @@
-const fs = require("fs");
-const { readFileSync, writeFileSync, existsSync } = fs;
-const { writeFile, access, readFile } = fs.promises;
-const crypto = require("crypto");
-const uuidV4 = require("uuid-v4");
-const jwt = require("jsonwebtoken");
-const { CronJob } = require("cron");
-
-const yaml = require("js-yaml");
-const log4js = require("log4js");
-const Koa = require("koa");
-const Router = require("@koa/router");
-const { APIClient } = require("./apiclient");
+// import fs from "fs";
+// const { readFileSync, writeFileSync, existsSync } = fs;
+// const { writeFile, access, readFile } = fs.promises;
+// import crypto from "crypto";
+// import uuidV4 from "uuid-v4";
+// import jwt from "jsonwebtoken";
+import { CronJob } from "cron";
+// import yaml from "js-yaml";
+import log4js from "log4js";
+import Koa from "koa";
+import Router from "@koa/router";
+import { clientRequest } from "./utils";
 
 const logger = log4js.getLogger("query-as-api");
 logger.level = "info";
@@ -18,105 +17,14 @@ logger.level = "info";
 const app = new Koa();
 const router = new Router();
 
-const max_accounts = process.env.MAX_ALLOW_ACCOUNTS || 2;
+import jayson from "jayson/promise";
 
-const apiClientPool = Array.from({ length: max_accounts }).map(
-  () => new APIClient(logger)
-);
-
-function delay(ms) {
-  logger.debug(`promise delay for ${ms} ms`);
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getClient() {
-  let apiClient = apiClientPool[currentPoolIdx++];
-  if (currentPoolIdx >= max_accounts) currentPoolIdx = 0;
-  while (!apiClient.account) {
-    apiClient = apiClientPool[currentPoolIdx++];
-    if (currentPoolIdx >= max_accounts) currentPoolIdx = 0;
-  }
-
-  return apiClient;
-}
-
-async function clientCall(apiClient, endpoint, method = "get", body) {
-  try {
-    return await apiClient.callAPI(endpoint, method, body);
-  } catch (error) {
-    logger.error(error);
-    // if (error.response.status === 426) {
-    //   logger.warn("update api client version");
-    //   await apiClient.login();
-    //   return await apiClient.callAPI(endpoint, method, body);
-    // } else if (
-    //   error.response.status === 403 &&
-    //   error.response.data.errorCode === "session_error"
-    // ) {
-    //   await apiClient.login();
-    // }
-
-    throw error;
-  }
-}
-
-if (!existsSync("./apiClientPool.yaml")) {
-  logger.warn("no apiClientPool.yaml found, created empty one!");
-  writeFileSync(
-    "./apiClientPool.yaml",
-    yaml.safeDump(
-      Array.from({ length: max_accounts }).map(() => ({
-        userId: null,
-        signature: null,
-        credential: null,
-        installId: uuidV4(),
-        ai: crypto.randomBytes(16).toString("hex"),
-        kc: uuidV4(),
-        if: uuidV4().toUpperCase(),
-      }))
-    )
-  );
-}
-let accounts = yaml.safeLoad(readFileSync("./apiClientPool.yaml", "utf-8")).slice(0, max_accounts);
-let currentPoolIdx = 0;
+const client = new jayson.Client.http({
+  port: process.env.SERVER_PORT || 3939, // change port to use different server
+});
 
 async function bootstrap() {
-  let newAccountCreated = false;
-  // prepare account pool
-  for (let idx in accounts) {
-    const account = accounts[idx];
-    apiClientPool[idx].headers["x-install-id"] = account["installId"];
-    apiClientPool[idx].headers["x-if"] = account["if"];
-    apiClientPool[idx].headers["x-kc"] = account["kc"];
-    apiClientPool[idx].headers["x-ai"] = account["ai"];
-    await apiClientPool[idx].checkVersions();
-
-    // set if account exists
-    if (account && account.userId && account.signature && account.credential) {
-      apiClientPool[idx].account = account;
-    } else {
-      const reg = await apiClientPool[idx].registerAccount();
-      logger.info("created a new account");
-
-      // account.userId = reg.userRegistration.userId;
-      account.signature = reg.userRegistration.signature;
-      account.credential = reg.credential;
-      account.userId = jwt.decode(reg.credential).userId;
-
-      apiClientPool[idx].account = account;
-      newAccountCreated = true;
-    }
-    await apiClientPool[idx].login();
-    logger.info(`user ${account.userId} logged in`);
-    if (newAccountCreated) {
-      logger.info("write new accounts to file");
-      await writeFile("./apiClientPool.yaml", yaml.safeDump(accounts));
-      newAccountCreated = false;
-      await delay(60 * 1000);
-    }
-  }
-
-  logger.info("bootstrap finished!");
+  await clientRequest(client, "login", []);
 }
 
 const reLoginJob = new CronJob(
@@ -128,7 +36,7 @@ const reLoginJob = new CronJob(
 );
 
 router.get("/health", async (ctx, next) => {
-  const isHealth = apiClientPool.some((apiClient) => !!apiClient.account);
+  const isHealth = true; // apiClientPool.some((apiClient) => !!apiClient.account);
   ctx.body = {
     status: isHealth ? "success" : "error",
   };
@@ -151,13 +59,10 @@ const protectedRoute = async (ctx, next) => {
 };
 
 router.get("/user/:id/profile", protectedRoute, async (ctx, next) => {
-  const apiClient = getClient();
-
   try {
-    const userData = await clientCall(
-      apiClient,
-      `/user/${ctx.params.id}/profile`
-    );
+    const userData = await clientRequest(client, "callAPI", [
+      `/user/${ctx.params.id}/profile`,
+    ]);
 
     ctx.body = {
       status: "success",
@@ -179,13 +84,11 @@ router.get(
   "/user/:id/event/:eventId/ranking",
   protectedRoute,
   async (ctx, next) => {
-    const apiClient = getClient();
-
     try {
-      const eventRanking = await clientCall(
-        apiClient,
-        `/user/${apiClient.account.userId}/event/${ctx.params.eventId}/ranking?targetUserId=${ctx.params.id}`
-      );
+      const account = await clientRequest(client, "account", []);
+      const eventRanking = await clientRequest(client, "callAPI", [
+        `/user/${account.userId}/event/${ctx.params.eventId}/ranking?targetUserId=${ctx.params.id}`,
+      ]);
 
       ctx.body = {
         status: "success",
@@ -204,13 +107,13 @@ router.get(
 );
 
 router.post("/refresh", protectedRoute, async (ctx, next) => {
-  for (let apiClient of apiClientPool) {
-    await apiClient.login();
-  }
+  await clientRequest(client, "relogin", []);
 
   ctx.body = {
     status: "success",
   };
+
+  return next();
 });
 
 app.use(router.routes()).use(router.allowedMethods());

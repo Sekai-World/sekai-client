@@ -1,44 +1,47 @@
-const yaml = require("js-yaml");
-const path = require("path");
-const git = require("isomorphic-git");
-const http = require("isomorphic-git/http/node");
-const { CronJob } = require("cron");
-const fs = require("fs");
-const { readFileSync, existsSync, copyFileSync } = fs;
+// import yaml from "js-yaml";
+import path from "path";
+import git from "isomorphic-git";
+import http from "isomorphic-git/http/node";
+import { CronJob } from "cron";
+import axios from "axios";
+import { fileURLToPath } from "url";
+import fs from "fs";
+// const { readFileSync, existsSync, copyFileSync } = fs;
 const { writeFile, access, readFile } = fs.promises;
-// const axios = require("axios");
-const { APIClient, decrypt, assetClient } = require("./apiclient");
-const { sendEmail, checkGitFolder } = require("./utils");
-const { folders, remoteGitBase, strapi, pjsk, region } = require("./constants");
+// import axios from "axios";
+// import { APIClient, decrypt, assetClient } from "./apiclient";
+import { sendEmail, checkGitFolder, clientRequest } from "./utils";
+import {
+  folders,
+  remoteGitBase,
+  strapi,
+  pjsk,
+  region,
+  github,
+} from "./constants";
 
-const log4js = require("log4js");
-const { default: axios } = require("axios");
+import log4js from "log4js";
 
 const logger = log4js.getLogger("check-update");
 logger.level = "info";
 
-const apiClient = new APIClient(logger, region);
+import jayson from "jayson/promise";
 
-if (!existsSync("./account.yaml")) {
-  logger.warn(
-    "no account.yaml found, created empty one, remember to fill GitHubToken!"
-  );
-  copyFileSync(
-    path.join(__dirname, "account.example.yaml"),
-    path.join(__dirname, "account.yaml")
-  );
-}
-let account = yaml.safeLoad(readFileSync("./account.yaml", "utf-8"));
-apiClient.account = account;
+const client = new jayson.Client.http({
+  port: process.env.SERVER_PORT || 3939, // change port to use different server
+});
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const masterDBDiffDir = path.join(__dirname, folders.masterDBDiff);
 const i18nDir = path.join(__dirname, folders.i18n);
 const strapiBaseUrl = strapi.baseURL;
 const strapiToken = strapi.token;
+let versionInfo;
 
 const trySystemJob = new CronJob("1/30 * * * *", async () => {
   logger.info("check update triggered by cron job");
-  const verRes = await apiClient.checkVersions();
+  const verRes = await clientRequest(client, "checkVersions", [versionInfo]);
   if (verRes.isMaintenance) {
     logger.warn("update: server in maintenance");
     return;
@@ -58,12 +61,11 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
   }
 
   if (
-    new Date().toLocaleString("en-DE", {
+    new Date().toLocaleString("en-US", {
       hour: "2-digit",
-      minute: "2-digit",
       hour12: false,
       timeZone: "Asia/Tokyo",
-    }) === "04:00" &&
+    }) === "04" &&
     pjsk.updateUserInfo
   ) {
     await saveInfoFromSuiteUser();
@@ -75,15 +77,15 @@ const trySystemJob = new CronJob("1/30 * * * *", async () => {
 
   if (
     await commitMasterDiff({
-      dataVersion: apiClient.versionInfo.dataVersion,
-      assetVersion: apiClient.versionInfo.assetVersion,
+      dataVersion: versionInfo.dataVersion,
+      assetVersion: versionInfo.assetVersion,
     })
   ) {
     logger.info("update game content i18n files");
     if (pjsk.updateI18n)
       await commitI18nFiles({
-        dataVersion: apiClient.versionInfo.dataVersion,
-        assetVersion: apiClient.versionInfo.assetVersion,
+        dataVersion: versionInfo.dataVersion,
+        assetVersion: versionInfo.assetVersion,
       });
   }
 });
@@ -115,13 +117,17 @@ async function refreshVersions() {
     });
 
   logger.debug("write versions to file and add it to git stage area");
+  versionInfo = await clientRequest(client, "versionInfo", []);
   await writeFile(
     path.join(masterDBDiffDir, "versions.json"),
-    JSON.stringify(apiClient.versionInfo, null, 2)
+    JSON.stringify(versionInfo, null, 2)
   );
   // await git.add({ fs, dir: masterDBDiffDir, filepath: "versions.json" });
 
-  const master = await apiClient.callAPI("/suite/master", "get");
+  const master = await clientRequest(client, "callAPI", [
+    "/suite/master",
+    "get",
+  ]);
   logger.debug("split master into smaller pieces, add them to git stage area");
   for (let key in master) {
     const masterKeyPath = path.join(masterDBDiffDir, `${key}.json`);
@@ -162,13 +168,13 @@ async function refreshVersions() {
   // );
   // await git.add({ fs, dir: masterDBDiffDir, filepath: "assetList.json" });
 
-  return apiClient.versionInfo;
+  return versionInfo;
 }
 
 async function saveInfoFromSuiteUser() {
   // const { userId } = account;
   // logger.debug("get suite user");
-  const userInfo = await apiClient.login();
+  const userInfo = await clientRequest(client, "getSuiteUser", []);
 
   const { userHomeBanners, userInformations } = userInfo;
   logger.debug("write active homebanners");
@@ -194,8 +200,10 @@ async function saveInfoFromSuiteUser() {
 
 async function refreshInformations() {
   logger.debug("get suite user");
-  const { informations: userInformations } = await apiClient.callAPI(
-    `/information`
+  const { informations: userInformations } = await clientRequest(
+    client,
+    "callAPI",
+    ["/information"]
   );
 
   logger.debug("write active informations");
@@ -530,7 +538,7 @@ async function updateI18nFile(filepath) {
 }
 
 async function commitMasterDiff(versions) {
-  const { GitHubToken } = account;
+  const GitHubToken = github.token;
   const { dataVersion, assetVersion } = versions;
   const fileStatusMatrix = await git.statusMatrix({ fs, dir: masterDBDiffDir });
   let shouldCommit = false;
@@ -568,7 +576,7 @@ async function commitMasterDiff(versions) {
 }
 
 async function commitI18nFiles(versions) {
-  const { GitHubToken } = account;
+  const GitHubToken = github.token;
   const { dataVersion } = versions;
   const fileStatusMatrix = await git.statusMatrix({ fs, dir: i18nDir });
   let shouldCommit = false;
@@ -605,13 +613,14 @@ async function commitI18nFiles(versions) {
 }
 
 async function bootstrap() {
+  await clientRequest(client, "init", [region]);
   logger.info("check git folders");
   await checkGitFolder(masterDBDiffDir, remoteGitBase);
   if (pjsk.updateI18n) await checkGitFolder(i18nDir, remoteGitBase);
 
   logger.info("ensure current version available");
   try {
-    const verRes = await apiClient.checkVersions();
+    const verRes = await clientRequest(client, "checkVersions", []);
     if (verRes.isMaintenance) {
       logger.warn("bootstrap: server in maintenance");
       setTimeout(() => {
@@ -619,13 +628,16 @@ async function bootstrap() {
       }, 10 * 60 * 1000);
       return;
     }
+    versionInfo = await clientRequest(client, "versionInfo", []);
   } catch (error) {
     logger.error("bootstrap: failed to connect server", error);
     setTimeout(() => {
       bootstrap();
     }, 10 * 60 * 1000);
     try {
-      await sendEmail(`Check Update: The connection to project sekai server ${region} failed, please check connection!!!`);
+      await sendEmail(
+        `Check Update: The connection to project sekai server ${region} failed, please check connection!!!`
+      );
       logger.info("update: warning email sent");
     } catch (error) {
       logger.debug("update: skipped email sent");
@@ -634,19 +646,7 @@ async function bootstrap() {
   }
 
   if (pjsk.updateUserInfo) {
-    if (!account.credential) {
-      const reg = await apiClient.registerAccount();
-
-      account.userId = reg.userRegistration.userId;
-      account.signature = reg.userRegistration.signature;
-      account.credential = reg.credential;
-
-      logger.debug("store new account information");
-      await writeFile("account.yaml", yaml.safeDump(account));
-
-      apiClient.account = account;
-    }
-
+    await clientRequest(client, "login", [region]);
     await saveInfoFromSuiteUser();
   }
 
@@ -654,7 +654,8 @@ async function bootstrap() {
     await refreshVersions();
   }
 
-  const { dataVersion, assetVersion } = apiClient.versionInfo;
+  // const versionInfo = await clientRequest(client, "versionInfo", []);
+  const { dataVersion, assetVersion } = versionInfo;
   logger.info("try commit master db diff if any update");
   if (await commitMasterDiff({ dataVersion, assetVersion })) {
     logger.info("update game content i18n files");
