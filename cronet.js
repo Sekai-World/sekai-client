@@ -70,7 +70,7 @@ export class CronetClient {
     }
     this.isParamsPrepared = false;
 
-    this.axios = axios.default.create();
+    this.axios = axios.create();
   }
 
   // will call location querying api and change params

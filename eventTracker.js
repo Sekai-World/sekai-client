@@ -259,7 +259,7 @@ async function trackEventResult(currentTime) {
 
   // post ranking to api
   try {
-    await axios.default.post(
+    await axios.post(
       `https://api.sekai.best/event/${eventData.id}/rankings`,
       newData,
       {
@@ -272,7 +272,7 @@ async function trackEventResult(currentTime) {
       }
     );
   } catch (e) {
-    logger.error("post event ranking to api failed");
+    logger.error("post event ranking to api failed", e);
   }
 }
 
