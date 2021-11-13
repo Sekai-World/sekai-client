@@ -60,6 +60,14 @@ async function getJPAccount(options = {}) {
 }
 
 async function getTWAccount(options = {}) {
+  if (process.env.SEKAI_TW_ACCESS_TOKEN) {
+    return {
+      loginInfo: {
+        accessToken: process.env.SEKAI_TW_ACCESS_TOKEN,
+      },
+      userId: process.env.SEKAI_TW_SDK_OPEN_ID,
+    };
+  }
   const filePath = path.join(__dirname, "sharedAccount.tw.yaml");
   const cronetClient = new CronetClient(logger, options);
   try {
