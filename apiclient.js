@@ -296,7 +296,7 @@ export class APIClient {
     } else if (this._region === "tw") {
       const {
         loginInfo: { accessToken },
-        userId,
+        // userId,
       } = this._account;
       const {
         sessionToken,
