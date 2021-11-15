@@ -27,7 +27,7 @@ let isLoggedIn = false;
 let suiteUserInfo;
 
 const dayChangeJob = new CronJob(
-  "* 4 * * *",
+  "0 4 * * *",
   () => {
     if (isLoggedIn) {
       loginAccount(undefined, true);
