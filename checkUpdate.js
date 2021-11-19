@@ -41,7 +41,16 @@ let versionInfo;
 
 const trySystemJob = new CronJob("1/30 * * * *", async () => {
   logger.info("check update triggered by cron job");
-  const verRes = await clientRequest(client, "checkVersions", [versionInfo]);
+  let verRes;
+  try {
+    verRes = await clientRequest(client, "checkVersions", [versionInfo]);
+  } catch (res) {
+    if (res.error.code === 400) {
+      // shared api client might get restarted
+      await bootstrap();
+      verRes = await clientRequest(client, "checkVersions", [versionInfo]);
+    }
+  }
   if (verRes.isMaintenance) {
     logger.warn("update: server in maintenance");
     return;
