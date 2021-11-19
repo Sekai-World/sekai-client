@@ -384,14 +384,7 @@ export class APIClient {
       isMaintenance: false,
       isNewVersion: false,
     };
-    if (inputVersion) {
-      res.isMaintenance = this.versionInfo.appVersionStatus === "maintenance";
-      res.isNewVersion =
-        inputVersion.dataVersion !== this.versionInfo.dataVersion ||
-        inputVersion.assetVersion !== this.versionInfo.assetVersion ||
-        inputVersion.appVersion !== this.versionInfo.appVersion;
-      return res;
-    }
+
     let allVersions;
     try {
       allVersions = (await this.callAPI("/system")).appVersions;
@@ -423,6 +416,7 @@ export class APIClient {
         } else {
           // error
           res.isError = true;
+          return res;
         }
       }
     } else {
@@ -440,6 +434,15 @@ export class APIClient {
       );
     }
     this.versionInfo = currentVersion;
+
+    if (inputVersion) {
+      res.isMaintenance = this.versionInfo.appVersionStatus === "maintenance";
+      res.isNewVersion =
+        inputVersion.dataVersion !== this.versionInfo.dataVersion ||
+        inputVersion.assetVersion !== this.versionInfo.assetVersion ||
+        inputVersion.appVersion !== this.versionInfo.appVersion;
+      return res;
+    }
 
     return res;
   }
