@@ -184,7 +184,10 @@ const server = jayson.Server({
     return await limit(() => loginAccount(args[0], true));
   },
   checkVersions: async function (args) {
-    return await limit(() => apiClient.checkVersions(args[0]));
+    if (apiClient) {
+      return await limit(() => apiClient.checkVersions(args[0]));
+    }
+    throw server.error(400, "Login before call api endpoint");
   },
   versionInfo: async function () {
     return apiClient.versionInfo;
@@ -193,7 +196,7 @@ const server = jayson.Server({
     return apiClient.account;
   },
   callAPI: async function (args) {
-    if (apiClient.account) {
+    if (apiClient && apiClient.account) {
       return await limit(() => apiClient.callAPI(...args));
     }
     throw server.error(400, "Login before call api endpoint");

@@ -72,7 +72,16 @@ let versionInfo;
 
 const eventTrackJob = new CronJob("58 * * * * *", async () => {
   logger.info("trace event score triggered by cron job");
-  const verRes = await clientRequest(client, "checkVersions", [versionInfo]);
+  let verRes;
+  try {
+    verRes = await clientRequest(client, "checkVersions", [versionInfo]);
+  } catch (res) {
+    if (res.error.code === 400) {
+      // shared api client might get restarted
+      await bootstrap();
+      verRes = await clientRequest(client, "checkVersions", [versionInfo]);
+    }
+  }
   // console.log(versionInfo, verRes);
   if (verRes.isMaintenance) {
     logger.warn("server in maintenance");
@@ -359,7 +368,7 @@ async function bootstrap() {
   }
 
   logger.info("all finished, will track event result every minute");
-  eventTrackJob.start();
+  if (!eventTrackJob.running) eventTrackJob.start();
 }
 
 bootstrap();
