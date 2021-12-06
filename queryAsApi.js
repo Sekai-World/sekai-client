@@ -10,6 +10,7 @@ import log4js from "log4js";
 import Koa from "koa";
 import Router from "@koa/router";
 import { clientRequest } from "./utils";
+import { region } from "./constants";
 
 const logger = log4js.getLogger("query-as-api");
 logger.level = "info";
@@ -24,6 +25,8 @@ const client = new jayson.Client.http({
 });
 
 async function bootstrap() {
+  await clientRequest(client, "init", [region]);
+  await clientRequest(client, "checkVersions", []);
   await clientRequest(client, "login", []);
 }
 
@@ -36,11 +39,11 @@ const reLoginJob = new CronJob(
 );
 
 router.get("/health", async (ctx, next) => {
-  const isHealth = true; // apiClientPool.some((apiClient) => !!apiClient.account);
+  const isHealthy = true; // apiClientPool.some((apiClient) => !!apiClient.account);
   ctx.body = {
-    status: isHealth ? "success" : "error",
+    status: isHealthy ? "success" : "error",
   };
-  ctx.status = isHealth ? 200 : 500;
+  ctx.status = isHealthy ? 200 : 500;
   next();
 });
 
@@ -117,5 +120,5 @@ router.post("/refresh", protectedRoute, async (ctx, next) => {
 });
 
 app.use(router.routes()).use(router.allowedMethods());
-app.listen(process.env.PORT || 9393);
+app.listen(process.env.PORT || 9393, "localhost");
 bootstrap().then(() => reLoginJob.start());
