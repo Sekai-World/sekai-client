@@ -35,6 +35,26 @@ export const initialHeader = {
     "X-Platform": "iOS",
     "X-OperatingSystem": "iOS 13.5",
   },
+  en: {
+    "x-devicemodel": "iPad6,11",
+    "x-app-version": process.env.APP_VER || "1.10.0",
+    // "x-asset-version": '1.0.0',
+    // "x-data-version": '1.0.4',
+    "x-if": "AB5D5811-551F-4590-A671-093BEB2381E2",
+    "x-install-id": "5715782a-f05a-4fda-a853-35b1184e4912",
+    "x-kc": "0bdf6de1-0a00-43e3-a632-c1af30b9484a",
+    "x-operatingsystem": "iOS 13.5",
+    "x-platform": "iOS",
+    "x-unity-version": "2019.4.3f1",
+    "x-ai": "",
+    "x-ma": "",
+    "x-ga": "",
+    "user-agent": "pjsekai/26 CFNetwork/1126 Darwin/19.5.0",
+    Accept: "application/octet-stream",
+    "accept-encoding": "gzip, deflate, br",
+    "accept-language": "zh-cn",
+    // "content-type": 'application/octet-stream'
+  },
 };
 export const twSDK = {
   params: {
