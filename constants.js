@@ -244,6 +244,7 @@ export const pjsk = {
   baseURL: {
     jp: "https://production-game-api.sekai.colorfulpalette.org/api",
     tw: "https://mk-zian-obt-https.bytedgame.com/api",
+    en: "https://n-production-game-api.sekai-en.com/api",
   },
   // assetBaseURL:
   //   process.env.SEKAI_ASSET_BASE_URL ||
