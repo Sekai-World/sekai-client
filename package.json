@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev:api": "cross-env SERVER_PORT=39390 API_TOKEN=12345678 PROXY_TYPE=none nodemon --experimental-specifier-resolution=node queryAsApi.js",
+    "dev:api": "cross-env SERVER_JP_PORT=39390 API_TOKEN=12345678 PROXY_TYPE=none nodemon --experimental-specifier-resolution=node queryAsApi.js",
     "dev:eventtracker:jp": "cross-env SERVER_PORT=39390 PROXY_TYPE=none node --experimental-specifier-resolution=node eventTracker.js",
     "dev:shared:jp": "cross-env PORT=39390 PROXY_TYPE=none node --experimental-specifier-resolution=node sharedApiClient.js",
     "dev:shared:tw": "",

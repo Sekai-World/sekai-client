@@ -229,4 +229,4 @@ const server = jayson.Server({
  * 39392 = en
  * etc
  */
-server.http().listen(process.env.PORT || 3939);
+server.http().listen(process.env.PORT || 3939, "localhost");
