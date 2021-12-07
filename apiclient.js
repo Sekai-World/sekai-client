@@ -52,8 +52,11 @@ function delay(ms) {
 export function encrypt(body) {
   const cipher = crypto.createCipheriv(
     "aes-128-cbc",
-    Buffer.from("6732666343305a637a4e394d544a3631", "hex"),
-    Buffer.from("6d737833495630693958453575595a31", "hex")
+    Buffer.from(
+      process.env.AES_KEY || "6732666343305a637a4e394d544a3631",
+      "hex"
+    ),
+    Buffer.from(process.env.AES_IV || "6d737833495630693958453575595a31", "hex")
   );
   let encrypted = cipher.update(body ? msgpack.encode(body) : body);
   encrypted = Buffer.concat([encrypted, cipher.final()]);
@@ -64,8 +67,11 @@ export function encrypt(body) {
 export function decrypt(enc) {
   const cipher = crypto.createDecipheriv(
     "aes-128-cbc",
-    Buffer.from("6732666343305a637a4e394d544a3631", "hex"),
-    Buffer.from("6d737833495630693958453575595a31", "hex")
+    Buffer.from(
+      process.env.AES_KEY || "6732666343305a637a4e394d544a3631",
+      "hex"
+    ),
+    Buffer.from(process.env.AES_IV || "6d737833495630693958453575595a31", "hex")
   );
   let decrypted = cipher.update(enc);
   decrypted = Buffer.concat([decrypted, cipher.final()]);
