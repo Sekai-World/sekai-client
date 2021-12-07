@@ -274,7 +274,7 @@ export class APIClient {
     delete this.headers["x-session-token"];
     delete this.headers["x-data-version"];
     delete this.headers["x-asset-version"];
-    if (this._region === "jp") {
+    if (this._region === "jp" || this._region === "en") {
       const { userId, credential } = this._account;
       const {
         sessionToken,
