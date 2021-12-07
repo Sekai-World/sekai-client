@@ -133,7 +133,24 @@ async function getTWAccount(options = {}) {
 }
 
 async function getENAccount(options = {}) {
-  // should be very similar, mostly identical to JP
+  const filePath = path.join(__dirname, "sharedAccount.en.yaml");
+  try {
+    await stat(filePath);
+    const account = yaml.load(await readFile(filePath, "utf-8"));
+    return account;
+  } catch (error) {
+    logger.warn("no EN shared account found, creating one...");
+    const { userRegistration, credential } = await apiClient.registerAccount();
+    const { signature } = userRegistration;
+    const { userId } = jwt.decode(credential);
+    const account = {
+      signature,
+      credential,
+      userId,
+    };
+    await writeFile(filePath, yaml.dump(account), "utf-8");
+    return account;
+  }
 }
 
 async function getAccount(options) {
