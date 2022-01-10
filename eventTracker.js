@@ -125,6 +125,12 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
   await commitEventTrackResult();
 });
 
+const currentEventUrlMap = {
+  jp: "https://strapi.sekai.best/sekai-current-event",
+  en: "https://strapi.sekai.best/sekai-current-event-en",
+  tw: "https://strapi.sekai.best/sekai-current-event-tw",
+};
+
 async function refreshVersions() {
   logger.info("refersh version info");
 
@@ -139,14 +145,7 @@ async function refreshVersions() {
   //   author,
   //   // onAuth: () => ({ username: GitHubToken }),
   // });
-  const masterData = await clientRequest(client, "callAPI", [
-    "/suite/master",
-    "get",
-  ]);
-  const events = masterData.events.filter(
-    (it) => it.startAt <= new Date().getTime() + 60 * 1000
-  );
-  eventData = events.length ? events[events.length - 1] : null;
+  eventData = (await axios.get(currentEventUrlMap[region])).data.eventJson;
 
   versionInfo = await clientRequest(client, "versionInfo", []);
   return versionInfo;
