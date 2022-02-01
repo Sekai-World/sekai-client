@@ -193,11 +193,15 @@ async function saveInfoFromSuiteUser() {
   );
   // await git.add({ fs, dir: masterDBDiffDir, filepath: "userHomeBanners.json" });
 
-  logger.debug("write active informations");
-  await writeFile(
-    path.join(masterDBDiffDir, "userInformations.json"),
-    JSON.stringify(userInformations, null, 2)
-  );
+  if (userInformations) {
+    logger.debug("write active informations");
+    await writeFile(
+      path.join(masterDBDiffDir, "userInformations.json"),
+      JSON.stringify(userInformations, null, 2)
+    );
+  } else {
+    refreshInformations();
+  }
   // await git.add({
   //   fs,
   //   dir: masterDBDiffDir,
