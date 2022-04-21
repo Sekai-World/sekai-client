@@ -24,7 +24,7 @@ const client = new jayson.Client.http({
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let eventData;
-const eventTrackerDir = path.join(__dirname, folders.eventTracker);
+const eventTrackerDir = path.resolve(__dirname, folders.eventTracker);
 const author = { name: "event-track-bot", email: "anonymous@example.com" };
 let versionInfo;
 
