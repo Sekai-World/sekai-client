@@ -1,14 +1,14 @@
 // import yaml from "js-yaml";
-import path from "path";
-import git from "isomorphic-git";
-import http from "isomorphic-git/http/node";
+// import path from "path";
+// import git from "isomorphic-git";
+// import http from "isomorphic-git/http/node";
 import { CronJob } from "cron";
-import { fileURLToPath } from "url";
-import fs from "fs";
-import { writeFile } from "fs/promises";
+// import { fileURLToPath } from "url";
+// import fs from "fs";
+// import { writeFile } from "fs/promises";
 import axios from "axios";
 import { sendEmail, clientRequest } from "./utils";
-import { folders, region, bitbucket, sekaiAPIKey } from "./constants";
+import { /*folders,*/ region, /*bitbucket,*/ sekaiAPIKey } from "./constants";
 
 import log4js from "log4js";
 
@@ -21,11 +21,11 @@ const client = new jayson.Client.http({
   port: process.env.SERVER_PORT || 3939, // change port to use different server
 });
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 let eventData;
-const eventTrackerDir = path.resolve(__dirname, folders.eventTracker);
-const author = { name: "event-track-bot", email: "anonymous@example.com" };
+// const eventTrackerDir = path.resolve(__dirname, folders.eventTracker);
+// const author = { name: "event-track-bot", email: "anonymous@example.com" };
 let versionInfo;
 
 // async function checkVersions() {
@@ -122,7 +122,7 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
     await trackEventResult(currentTime);
   }
 
-  await commitEventTrackResult();
+  // await commitEventTrackResult();
 });
 
 const currentEventUrlMap = {
@@ -235,7 +235,7 @@ async function trackEventResult(currentTime) {
     `/user/${userId}/event/${eventData.id}/ranking?targetRank=100000&lowerLimit=0`,
   ]);
 
-  logger.debug("write track result");
+  // logger.debug("write track result");
   const newData = {
     time: currentTime,
     first10,
@@ -260,10 +260,10 @@ async function trackEventResult(currentTime) {
     rank50000,
     rank100000,
   };
-  await writeFile(
-    path.join(eventTrackerDir, `event${eventData.id}.json`),
-    JSON.stringify(newData, null, 2)
-  );
+  // await writeFile(
+  //   path.join(eventTrackerDir, `event${eventData.id}.json`),
+  //   JSON.stringify(newData, null, 2)
+  // );
 
   // post ranking to api
   try {
@@ -284,42 +284,42 @@ async function trackEventResult(currentTime) {
   }
 }
 
-async function commitEventTrackResult() {
-  const fileStatusMatrix = await git.statusMatrix({ fs, dir: eventTrackerDir });
-  let shouldCommit = false;
-  for (let fileStatus of fileStatusMatrix) {
-    const [filepath, HEAD, WORKDIR, STAGE] = fileStatus;
-    if (
-      (HEAD === 0 && WORKDIR === 2 && STAGE === 0) ||
-      (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
-    ) {
-      await git.add({ fs, dir: eventTrackerDir, filepath });
-      shouldCommit = true;
-    }
-  }
-  if (shouldCommit) {
-    logger.debug("commit and push event track");
-    await git.commit({
-      fs,
-      dir: eventTrackerDir,
-      message: `event track for id ${eventData.id} at ${new Date().getTime()}`,
-      author,
-    });
-    await git.push({
-      fs,
-      http,
-      dir: eventTrackerDir,
-      remote: "origin",
-      ref: "main",
-      onAuth: () => ({
-        username: bitbucket.username,
-        password: bitbucket.token,
-      }),
-    });
-  }
+// async function commitEventTrackResult() {
+//   const fileStatusMatrix = await git.statusMatrix({ fs, dir: eventTrackerDir });
+//   let shouldCommit = false;
+//   for (let fileStatus of fileStatusMatrix) {
+//     const [filepath, HEAD, WORKDIR, STAGE] = fileStatus;
+//     if (
+//       (HEAD === 0 && WORKDIR === 2 && STAGE === 0) ||
+//       (HEAD === 1 && WORKDIR === 2 && STAGE === 1)
+//     ) {
+//       await git.add({ fs, dir: eventTrackerDir, filepath });
+//       shouldCommit = true;
+//     }
+//   }
+//   if (shouldCommit) {
+//     logger.debug("commit and push event track");
+//     await git.commit({
+//       fs,
+//       dir: eventTrackerDir,
+//       message: `event track for id ${eventData.id} at ${new Date().getTime()}`,
+//       author,
+//     });
+//     await git.push({
+//       fs,
+//       http,
+//       dir: eventTrackerDir,
+//       remote: "origin",
+//       ref: "main",
+//       onAuth: () => ({
+//         username: bitbucket.username,
+//         password: bitbucket.token,
+//       }),
+//     });
+//   }
 
-  return true;
-}
+//   return true;
+// }
 
 async function bootstrap() {
   await clientRequest(client, "init", [region]);
