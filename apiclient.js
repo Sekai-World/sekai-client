@@ -187,7 +187,7 @@ export class APIClient {
         return res;
       },
       async (err) => {
-        this.logger.error(err);
+        // this.logger.error(err.response);
         if (err.response.data.length) {
           err.response.data = decrypt(Buffer.from(err.response.data));
         }
@@ -212,7 +212,7 @@ export class APIClient {
           }
         } else if (err.response.status === 403) {
           this.logger.warn("unknown error.");
-          await this.login();
+          // await this.login();
         }
 
         // console.log(err.response)
@@ -293,7 +293,7 @@ export class APIClient {
       this.logger.info(
         `login app version ${appVersion} master version ${dataVersion} asset version ${assetVersion}`
       );
-    } else if (this._region === "tw") {
+    } else if (this._region === "tw" || this._region === "kr") {
       const {
         loginInfo: { accessToken },
         // userId,
