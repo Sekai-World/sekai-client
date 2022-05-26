@@ -13,7 +13,6 @@ import { fileURLToPath } from "url";
 
 import { APIClient } from "./apiclient";
 import { region } from "./constants";
-import { CronetClient } from "./cronet";
 
 const logger = new log4js.getLogger("shared-client");
 logger.level = "info";
@@ -68,68 +67,7 @@ async function getTWAccount(options = {}) {
       userId: process.env.SEKAI_TW_SDK_OPEN_ID,
     };
   }
-  const filePath = path.join(__dirname, "sharedAccount.tw.yaml");
-  const cronetClient = new CronetClient(logger, options);
-  try {
-    await stat(filePath);
-  } catch (error) {
-    logger.warn("no TW shared account found, creating one...");
-    const account = {};
-
-    // location query
-    const location = await cronetClient.queryLocation();
-    logger.info(location);
-    // save location in account for further usage
-    account.location = location;
-
-    // generate two uuids
-    account.loginInfo = {
-      clientUUID: uuidV4().toUpperCase(),
-      loginID: uuidV4().toUpperCase(),
-    };
-
-    // get token
-    const { userId, token } = await cronetClient.doVisitorLogin(
-      account.loginInfo
-    );
-    account.loginInfo.userId = userId;
-    account.loginInfo.token = token;
-    logger.info(account.loginInfo);
-
-    // get accessToken
-    const { accessToken, sdkOpenId } = await cronetClient.doLogin(
-      account.loginInfo
-    );
-    account.loginInfo.accessToken = accessToken;
-    account.userId = sdkOpenId;
-    logger.info(account.loginInfo);
-
-    await writeFile(filePath, yaml.dump(account), "utf-8");
-    return account;
-  }
-
-  try {
-    const account = yaml.load(await readFile(filePath, "utf-8"));
-    cronetClient.setLocation(account.location);
-
-    const { userId, token } = await cronetClient.doAutoLogin({
-      ...account.loginInfo,
-    });
-    account.loginInfo.userId = userId;
-    account.loginInfo.token = token;
-
-    const { accessToken, sdkOpenId } = await cronetClient.doLogin(
-      account.loginInfo
-    );
-    account.loginInfo.accessToken = accessToken;
-    account.userId = sdkOpenId;
-
-    // update account info including token and accessToken
-    await writeFile(filePath, yaml.dump(account), "utf-8");
-    return account;
-  } catch (error) {
-    logger.error(error);
-  }
+  throw new Error("must provide access token and sdk open id");
 }
 
 async function getENAccount(options = {}) {
@@ -153,6 +91,18 @@ async function getENAccount(options = {}) {
   }
 }
 
+async function getKRAccount(options = {}) {
+  if (process.env.SEKAI_KR_ACCESS_TOKEN) {
+    return {
+      loginInfo: {
+        accessToken: process.env.SEKAI_KR_ACCESS_TOKEN,
+      },
+      userId: process.env.SEKAI_KR_SDK_OPEN_ID,
+    };
+  }
+  throw new Error("must provide access token and sdk open id");
+}
+
 async function getAccount(options) {
   // apiClient.region = region;
   switch (_region) {
@@ -162,6 +112,8 @@ async function getAccount(options) {
       return getTWAccount(options);
     case "en":
       return getENAccount(options);
+    case "kr":
+      return getKRAccount(options);
     default:
       break;
   }

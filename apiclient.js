@@ -1,13 +1,7 @@
 import axios from "axios";
 import got from "got";
 import msgpack from "@msgpack/msgpack";
-import {
-  initialHeader,
-  pjsk,
-  proxy,
-  forceIPv6,
-  // twSDK,
-} from "./constants.js";
+import { initialHeader, pjsk, proxy, forceIPv6 } from "./constants.js";
 import uuidV4 from "uuid-v4";
 import crypto from "crypto";
 import log4js from "log4js";
