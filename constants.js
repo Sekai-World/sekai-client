@@ -55,6 +55,21 @@ export const initialHeader = {
     "accept-language": "zh-cn",
     // "content-type": 'application/octet-stream'
   },
+  kr: {
+    "X-Unity-Version": "2019.4.19f1c1",
+    "X-DeviceModel": "iPad6,11",
+    Accept: "application/octet-stream",
+    "X-Asset-Version": "",
+    "X-Install-Id": "3e9d5364-1c68-4f53-aae8-2824e08e993f",
+    "X-Data-Version": "",
+    "User-Agent":
+      "%ED%94%84%EB%A1%9C%EC%84%B8%EC%B9%B4/5011 CFNetwork/1126 Darwin/19.5.0",
+    "X-App-Version": "",
+    "X-Session-Token": "",
+    "X-Platform": "iOS",
+    "X-OperatingSystem": "iOS 13.5",
+    device_id: process.env.SEKAI_KR_DEVICE_ID || "7013473306716718593",
+  },
 };
 export const pjsk = {
   baseURL: {
