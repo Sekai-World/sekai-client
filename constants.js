@@ -64,8 +64,8 @@ export const initialHeader = {
     "X-Data-Version": "",
     "User-Agent":
       "%ED%94%84%EB%A1%9C%EC%84%B8%EC%B9%B4/5011 CFNetwork/1126 Darwin/19.5.0",
-    "X-App-Version": "",
-    "X-Session-Token": "",
+    "X-App-Version": process.env.APP_VER || "1.9.9",
+    // "X-Session-Token": "",
     "X-Platform": "iOS",
     "X-OperatingSystem": "iOS 13.5",
     device_id: process.env.SEKAI_KR_DEVICE_ID || "7013473306716718593",
