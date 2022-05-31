@@ -129,6 +129,7 @@ const currentEventUrlMap = {
   jp: "https://strapi.sekai.best/sekai-current-event",
   en: "https://strapi.sekai.best/sekai-current-event-en",
   tw: "https://strapi.sekai.best/sekai-current-event-tw",
+  kr: "https://strapi.sekai.best/sekai-current-event-kr",
 };
 
 async function refreshVersions() {
