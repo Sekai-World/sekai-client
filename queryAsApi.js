@@ -10,7 +10,6 @@ import log4js from "log4js";
 import Koa from "koa";
 import Router from "@koa/router";
 import { clientRequest } from "./utils";
-import { region } from "./constants";
 
 const logger = log4js.getLogger("query-as-api");
 logger.level = "info";
@@ -43,8 +42,8 @@ const regionalClientMap = {
 };
 
 async function bootstrap() {
-  for (let key in regionalClientMap) {
-    const client = regionalClientMap[key];
+  for (let region in regionalClientMap) {
+    const client = regionalClientMap[region];
     if (client) {
       await clientRequest(client, "init", [region]);
       await clientRequest(client, "checkVersions", []);
