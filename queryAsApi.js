@@ -4,7 +4,7 @@
 // import crypto from "crypto";
 // import uuidV4 from "uuid-v4";
 // import jwt from "jsonwebtoken";
-import { CronJob } from "cron";
+// import { CronJob } from "cron";
 // import yaml from "js-yaml";
 import log4js from "log4js";
 import Koa from "koa";
@@ -31,6 +31,11 @@ const regionalClientMap = {
       })
     : null,
   en: process.env.SERVER_EN_PORT
+    ? new jayson.Client.http({
+        port: process.env.SERVER_EN_PORT,
+      })
+    : null,
+  kr: process.env.SERVER_EN_PORT
     ? new jayson.Client.http({
         port: process.env.SERVER_EN_PORT,
       })
