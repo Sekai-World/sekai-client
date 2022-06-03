@@ -17,7 +17,7 @@ export const initialHeader = {
     Accept: "application/octet-stream",
     "accept-encoding": "gzip, deflate, br",
     "accept-language": "zh-cn",
-    // "content-type": 'application/octet-stream'
+    "Content-Type": "application/octet-stream",
   },
   tw: {
     "X-Unity-Version": "2019.4.19f1c1",
@@ -50,6 +50,7 @@ export const initialHeader = {
     "x-ma": "",
     "x-ga": "",
     "user-agent": "pjsekai/26 CFNetwork/1126 Darwin/19.5.0",
+    "Content-Type": "application/octet-stream",
     Accept: "application/octet-stream",
     "accept-encoding": "gzip, deflate, br",
     "accept-language": "zh-cn",
@@ -58,6 +59,7 @@ export const initialHeader = {
   kr: {
     "X-Unity-Version": "2019.4.19f1c1",
     "X-DeviceModel": "iPad6,11",
+    "Content-Type": "application/octet-stream",
     Accept: "application/octet-stream",
     "X-Asset-Version": "",
     "X-Install-Id": "3e9d5364-1c68-4f53-aae8-2824e08e993f",
