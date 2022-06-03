@@ -35,9 +35,9 @@ const regionalClientMap = {
         port: process.env.SERVER_EN_PORT,
       })
     : null,
-  kr: process.env.SERVER_EN_PORT
+  kr: process.env.SERVER_KR_PORT
     ? new jayson.Client.http({
-        port: process.env.SERVER_EN_PORT,
+        port: process.env.SERVER_KR_PORT,
       })
     : null,
 };
