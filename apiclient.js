@@ -1,7 +1,6 @@
 import axios from "axios";
-import got from "got";
 import msgpack from "@msgpack/msgpack";
-import { initialHeader, pjsk, proxy, forceIPv6 } from "./constants.js";
+import { initialHeader, pjsk, proxy } from "./constants.js";
 import uuidV4 from "uuid-v4";
 import crypto from "crypto";
 import log4js from "log4js";
@@ -35,8 +34,6 @@ const httpsAgent =
         proxy: `http://${proxy.host}:${proxy.port}`,
       })
     : undefined;
-
-let rateLimited = false;
 
 function delay(ms) {
   apiLogger.debug(`promise delay for ${ms} ms`);
@@ -74,76 +71,6 @@ export function decrypt(enc) {
     ? msgpack.decode(decrypted)
     : decrypted.toString("hex");
 }
-
-const myClient = got.extend({
-  prefixUrl: pjsk.baseURL.jp,
-  responseType: "buffer",
-  agent: {
-    https: httpsAgent,
-  },
-  // http2: true,
-  hooks: {
-    beforeRequest: [
-      (options) => {
-        options.headers["x-request-id"] = uuidV4();
-        options.headers["content-type"] = "application/octet-stream";
-      },
-    ],
-    afterResponse: [
-      (response, retryWithMergedOptions) => {
-        if (response.statusCode === 429) {
-          // hit rate limit, sleep for a while
-          apiLogger.warn("rate limit hit, sleep for 30s");
-          rateLimited = true;
-          setTimeout(() => {
-            rateLimited = false;
-          }, 30000);
-
-          return response;
-        } else {
-          if (
-            initialHeader["x-session-token"] &&
-            response.headers["x-session-token"]
-          )
-            initialHeader["x-session-token"] =
-              response.headers["x-session-token"];
-
-          if (response.body.length) response.body = decrypt(response.body);
-
-          return response;
-        }
-      },
-    ],
-  },
-  dnsLookupIpVersion: forceIPv6 ? "ipv6" : "auto",
-});
-
-// /**
-//  *
-//  * @param {string} endpoint
-//  * @param {string} method
-//  * @param {object} body
-//  */
-export const callAPI = async function doReq(endpoint, method = "get", data) {
-  if (endpoint.startsWith("/")) endpoint = endpoint.slice(1);
-  const { body } = await myClient(endpoint, {
-    method,
-    headers: initialHeader,
-    body: ["post", "put", "patch"].includes(method) ? encrypt(data) : undefined,
-  });
-
-  return body;
-};
-
-export const assetClient = got.extend({
-  prefixUrl: pjsk.assetBaseURL,
-  responseType: "buffer",
-  agent: {
-    https: httpsAgent,
-  },
-  // http2: true,
-  dnsLookupIpVersion: forceIPv6 ? "ipv6" : "auto",
-});
 
 export class APIClient {
   constructor(logger, region = "jp") {
@@ -211,8 +138,11 @@ export class APIClient {
             await this.login();
           }
         } else if (err.response.status === 403) {
-          this.logger.warn("unknown error.");
+          this.logger.warn("unknown error.", err.response.data.errorCode);
           // await this.login();
+          if (err.response.data.errorCode === "session_error") {
+            await this.login();
+          }
         }
 
         // console.log(err.response)
@@ -266,6 +196,7 @@ export class APIClient {
     this.logger.info("simulate login process");
     this.logger.debug("do auth");
     delete this.headers["x-session-token"];
+    delete this.headers["x-app-version"];
     delete this.headers["x-data-version"];
     delete this.headers["x-asset-version"];
     if (this._region === "jp" || this._region === "en") {
