@@ -14,7 +14,7 @@ import { fileURLToPath } from "url";
 import { APIClient } from "./apiclient";
 import { region } from "./constants";
 
-const logger = new log4js.getLogger("shared-client");
+const logger = log4js.getLogger("shared-client");
 logger.level = "info";
 
 const __filename = fileURLToPath(import.meta.url);

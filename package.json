@@ -5,10 +5,12 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev:api": "cross-env SERVER_JP_PORT=39390 API_TOKEN=12345678 PROXY_TYPE=none nodemon --experimental-specifier-resolution=node queryAsApi.js",
+    "dev:api": "cross-env SERVER_EN_PORT=39390 API_TOKEN=12345678 PROXY_TYPE=none nodemon --experimental-specifier-resolution=node queryAsApi.js",
     "dev:eventtracker:jp": "cross-env SERVER_PORT=39390 PROXY_TYPE=none node --experimental-specifier-resolution=node eventTracker.js",
     "dev:shared:jp": "cross-env PORT=39390 PROXY_TYPE=none node --experimental-specifier-resolution=node sharedApiClient.js",
     "dev:shared:tw": "",
+    "dev:shared:en": "cross-env PORT=39390 PROXY_TYPE=none SEKAI_API_BASE_URL=https://n-production-game-api.sekai-en.com/api SEKAI_REGION=en AES_KEY=DF384214B29A3ADFBF1BD9EE5B16F884 AES_IV=7E856C907987F8AEC6AFC0C54738FC7E node --experimental-specifier-resolution=node sharedApiClient.js",
+    "dev:shared:kr": "cross-env PORT=39390 PROXY_TYPE=none SEKAI_REGION=kr SEKAI_KR_DEVICE_ID=7013473306716718593 SEKAI_KR_SDK_OPEN_ID=7101995115681471234 SEKAI_KR_ACCESS_TOKEN=ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5LmV5SnpaR3RmYjNCbGJsOXBaQ0k2SWpjeE1ERTVPVFV4TVRVMk9ERTBOekV5TXpRaUxDSmtaWFpwWTJWZmFXUWlPamN3TVRNME56TXpNRFkzTVRZM01UZzFPVE1zSW5abGNuTnBiMjRpT2lKMk1pSXNJbVY0Y0NJNk1UWTFOakUyTlRBM01uMC53TldwcnprMkdKYnc0OWlxUkoyWnMteE5EOFRXTW80U1hhbDhrWFhVcnY4 node --experimental-specifier-resolution=node sharedApiClient.js",
     "lint": "eslint *.js",
     "lint:fix": "eslint --fix *.js"
   },
@@ -31,7 +33,6 @@
     "cron": "^1.8.2",
     "form-data": "^4.0.0",
     "get-timezone-offset": "^1.0.4",
-    "got": "^11.8.2",
     "hpagent": "^0.1.2",
     "isomorphic-git": "^1.10.1",
     "jayson": "^3.6.5",
