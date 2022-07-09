@@ -43,6 +43,7 @@
     "nodemailer": "^6.7.0",
     "p-limit": "^4.0.0",
     "p-queue": "^6.6.2",
+    "pm2": "^5.2.0",
     "socks-proxy-agent": "^5.0.1",
     "uuid-v4": "^0.1.0"
   },
