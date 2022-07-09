@@ -9,6 +9,7 @@ import { CronJob } from "cron";
 import axios from "axios";
 import { sendEmail, clientRequest } from "./utils";
 import { /*folders,*/ region, /*bitbucket,*/ sekaiAPIKey } from "./constants";
+import pm2 from "pm2";
 
 import log4js from "log4js";
 
@@ -76,10 +77,36 @@ const eventTrackJob = new CronJob("58 * * * * *", async () => {
   try {
     verRes = await clientRequest(client, "checkVersions", [versionInfo]);
   } catch (res) {
-    if (res.error.code === 400) {
-      // shared api client might get restarted
-      await bootstrap();
-      verRes = await clientRequest(client, "checkVersions", [versionInfo]);
+    switch (res.code) {
+      case "ECONNRESET": {
+        pm2.connect((err) => {
+          if (err) {
+            logger.error(err);
+            return;
+          }
+
+          pm2.restart(
+            process.env.PM2_SHARED_API_CLIENT_PROCESS,
+            (err, proc) => {
+              if (err) {
+                logger.error(err);
+                return;
+              }
+
+              pm2.disconnect();
+            }
+          );
+        });
+        return;
+      }
+      case 400: {
+        // shared api client might get restarted
+        await bootstrap();
+        verRes = await clientRequest(client, "checkVersions", [versionInfo]);
+        break;
+      }
+      default:
+        break;
     }
   }
   // console.log(versionInfo, verRes);
