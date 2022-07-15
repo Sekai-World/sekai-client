@@ -196,9 +196,9 @@ export class APIClient {
     this.logger.info("simulate login process");
     this.logger.debug("do auth");
     delete this.headers["x-session-token"];
-    delete this.headers["x-app-version"];
-    delete this.headers["x-data-version"];
-    delete this.headers["x-asset-version"];
+    // delete this.headers["x-app-version"];
+    // delete this.headers["x-data-version"];
+    // delete this.headers["x-asset-version"];
     if (this._region === "jp" || this._region === "en") {
       const { userId, credential } = this._account;
       const {
