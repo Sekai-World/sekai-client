@@ -165,7 +165,7 @@ const server = jayson.Server({
     return apiClient.account;
   },
   callAPI: async function (args) {
-    if (apiClient && apiClient.account) {
+    if (apiClient && (args[0] === "/system" || apiClient.account)) {
       return await limit(() => apiClient.callAPI(...args));
     }
     throw server.error(400, "Login before call api endpoint");

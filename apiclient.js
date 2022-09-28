@@ -316,14 +316,15 @@ export class APIClient {
       isNewVersion: false,
     };
 
-    let allVersions;
+    let systemResult;
     try {
-      allVersions = (await this.callAPI("/system")).appVersions;
+      systemResult = await this.callAPI("/system");
     } catch (error) {
       this.logger.error(error);
       res.isError = true;
       return res;
     }
+    const allVersions = systemResult.appVersions;
     const appVersion = this.headers["x-app-version"];
     let currentVersion = allVersions.find(
       (allVer) =>
@@ -373,6 +374,9 @@ export class APIClient {
         inputVersion.assetVersion !== this.versionInfo.assetVersion ||
         inputVersion.appVersion !== this.versionInfo.appVersion;
       return res;
+    }
+    if (this.region === "jp") {
+      res.isMaintenance = systemResult.maintenanceStatus === "maintenance_in";
     }
 
     return res;
