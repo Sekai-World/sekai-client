@@ -7,7 +7,7 @@ import jwt from "jsonwebtoken";
 // import getTimezoneOffset from "get-timezone-offset";
 // import uuidV4 from "uuid-v4";
 import jayson from "jayson/promise";
-import pLimit from "p-limit";
+import PQueue from "p-queue";
 import { CronJob } from "cron";
 import { fileURLToPath } from "url";
 
@@ -138,7 +138,8 @@ async function loginAccount(options, forced = false) {
   return {};
 }
 
-const limit = pLimit(1);
+// const queue.add = pqueue.add(1);
+const queue = new PQueue({ concurrency: 1 });
 
 const server = jayson.Server({
   init: async function (args) {
@@ -147,14 +148,14 @@ const server = jayson.Server({
       apiClient = new APIClient(logger, _region);
   },
   login: async function (args) {
-    return await limit(() => loginAccount(args[0]));
+    return await queue.add(() => loginAccount(args[0]));
   },
   relogin: async function (args) {
-    return await limit(() => loginAccount(args[0], true));
+    return await queue.add(() => loginAccount(args[0], true));
   },
   checkVersions: async function (args) {
     if (apiClient) {
-      return await limit(() => apiClient.checkVersions(args[0]));
+      return await queue.add(() => apiClient.checkVersions(args[0]));
     }
     throw server.error(400, "Login before call api endpoint");
   },
@@ -166,7 +167,7 @@ const server = jayson.Server({
   },
   callAPI: async function (args) {
     if (apiClient && (args[0] === "/system" || apiClient.account)) {
-      return await limit(() => apiClient.callAPI(...args));
+      return await queue.add(() => apiClient.callAPI(...args));
     }
     throw server.error(400, "Login before call api endpoint");
   },
