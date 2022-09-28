@@ -640,6 +640,12 @@ async function bootstrap() {
         bootstrap();
       }, 10 * 60 * 1000);
       return;
+    } else if (verRes.isError) {
+      logger.warn("bootstrap: server connection error");
+      setTimeout(() => {
+        bootstrap();
+      }, 10 * 60 * 1000);
+      return;
     }
     versionInfo = await clientRequest(client, "versionInfo", []);
   } catch (error) {
