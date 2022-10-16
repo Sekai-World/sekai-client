@@ -648,8 +648,20 @@ async function bootstrap() {
       return;
     }
     versionInfo = await clientRequest(client, "versionInfo", []);
+
+    if (pjsk.updateUserInfo) {
+      await clientRequest(client, "login", [region]);
+      await saveInfoFromSuiteUser();
+    }
+
+    if (pjsk.updateMaster) {
+      await refreshVersions();
+    }
   } catch (error) {
-    logger.error("bootstrap: failed to connect server", error);
+    logger.error(
+      "bootstrap: failed to finish, connection error or account info expired (tw, kr)",
+      error
+    );
     setTimeout(() => {
       bootstrap();
     }, 10 * 60 * 1000);
@@ -662,15 +674,6 @@ async function bootstrap() {
       logger.debug("update: skipped email sent");
     }
     return;
-  }
-
-  if (pjsk.updateUserInfo) {
-    await clientRequest(client, "login", [region]);
-    await saveInfoFromSuiteUser();
-  }
-
-  if (pjsk.updateMaster) {
-    await refreshVersions();
   }
 
   // const versionInfo = await clientRequest(client, "versionInfo", []);
