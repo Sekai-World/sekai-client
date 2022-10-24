@@ -392,8 +392,4 @@ export class APIClient {
   get region() {
     return this._region;
   }
-
-  set versionInfo(newVal) {
-    this.versionInfo = newVal;
-  }
 }
