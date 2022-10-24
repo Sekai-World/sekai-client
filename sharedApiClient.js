@@ -155,7 +155,37 @@ const server = jayson.Server({
   },
   checkVersions: async function (args) {
     if (apiClient) {
-      return await queue.add(() => apiClient.checkVersions(args[0]));
+      if (_region !== "kr") {
+        return await queue.add(() => apiClient.checkVersions(args[0]));
+      } else {
+        const res = {
+          isError: false,
+          isMaintenance: false,
+          isNewVersion: false,
+        };
+
+        try {
+          const loginRes = await queue.add(() => loginAccount(args[0]));
+          res.isNewVersion =
+            apiClient.headers["x-data-version"] !== loginRes.dataVersion ||
+            apiClient.headers["x-asset-version"] !== loginRes.assetVersion ||
+            apiClient.headers["x-app-version"] !== loginRes.appVersion;
+
+          if (res.isNewVersion) {
+            apiClient.headers["x-app-version"] = loginRes.appVersion;
+            apiClient.headers["x-asset-version"] = loginRes.assetVersion;
+            apiClient.headers["x-data-version"] = loginRes.dataVersion;
+            logger.info(
+              `get new version, app version ${loginRes.appVersion} master version ${loginRes.dataVersion} asset version ${loginRes.assetVersion}`
+            );
+          }
+          apiClient.versionInfo = loginRes;
+        } catch (error) {
+          res.isError = true;
+        }
+
+        return res;
+      }
     }
     throw server.error(400, "Login before call api endpoint");
   },
