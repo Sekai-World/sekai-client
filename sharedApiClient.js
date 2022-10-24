@@ -164,26 +164,6 @@ const server = jayson.Server({
           isNewVersion: false,
         };
 
-        try {
-          const loginRes = await queue.add(() => loginAccount(args[0]));
-          res.isNewVersion =
-            apiClient.headers["x-data-version"] !== loginRes.dataVersion ||
-            apiClient.headers["x-asset-version"] !== loginRes.assetVersion ||
-            apiClient.headers["x-app-version"] !== loginRes.appVersion;
-
-          if (res.isNewVersion) {
-            apiClient.headers["x-app-version"] = loginRes.appVersion;
-            apiClient.headers["x-asset-version"] = loginRes.assetVersion;
-            apiClient.headers["x-data-version"] = loginRes.dataVersion;
-            logger.info(
-              `get new version, app version ${loginRes.appVersion} master version ${loginRes.dataVersion} asset version ${loginRes.assetVersion}`
-            );
-          }
-          apiClient.versionInfo = loginRes;
-        } catch (error) {
-          res.isError = true;
-        }
-
         return res;
       }
     }
