@@ -249,6 +249,19 @@ export class APIClient {
       this.headers["x-app-version"] = appVersion;
       this.headers["x-data-version"] = dataVersion;
       this.headers["x-asset-version"] = assetVersion;
+
+      if (this._region === "kr") {
+        this.versionInfo = {
+          systemProfile: "production",
+          appVersion: appVersion,
+          multiPlayVersion: multiPlayVersion,
+          dataVersion: dataVersion,
+          assetVersion: assetVersion,
+          appHash: "",
+          assetHash: "",
+          appVersionStatus: "available",
+        };
+      }
       this.logger.info(
         `login app version ${appVersion} master version ${dataVersion} asset version ${assetVersion}`
       );
