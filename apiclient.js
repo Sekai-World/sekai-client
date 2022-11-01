@@ -329,6 +329,10 @@ export class APIClient {
       isNewVersion: false,
     };
 
+    if (["tw", "kr"].includes(this.region)) {
+      return res;
+    }
+
     let systemResult;
     try {
       systemResult = await this.callAPI("/system");
