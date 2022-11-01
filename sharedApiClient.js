@@ -146,7 +146,7 @@ const server = jayson.Server({
     _region = args[0] || region;
     if (!apiClient || apiClient.region !== _region) {
       apiClient = new APIClient(logger, _region);
-      if (["jp"].includes(region)) {
+      if (["jp"].includes(_region)) {
         await apiClient.initCookie();
       }
     }
