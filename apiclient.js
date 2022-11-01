@@ -153,7 +153,7 @@ export class APIClient {
   }
 
   async initCookie() {
-    const cookieResponse = await axios.get(cookiePostUrl[this.region]);
+    const cookieResponse = await axios.post(cookiePostUrl[this.region]);
     const cookie = cookieResponse.headers["set-cookie"];
     this.headers["cookie"] = cookie;
   }
