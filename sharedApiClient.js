@@ -155,9 +155,7 @@ const server = jayson.Server({
   },
   checkVersions: async function (args) {
     if (apiClient) {
-      if (_region !== "kr") {
-        return await queue.add(() => apiClient.checkVersions(args[0]));
-      } else {
+      if (["tw", "kr"].includes(this._region)) {
         const res = {
           isError: false,
           isMaintenance: false,
@@ -165,6 +163,8 @@ const server = jayson.Server({
         };
 
         return res;
+      } else {
+        return await queue.add(() => apiClient.checkVersions(args[0]));
       }
     }
     throw server.error(400, "Login before call api endpoint");
