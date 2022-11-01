@@ -224,7 +224,7 @@ export class APIClient {
       this.logger.info(
         `login app version ${appVersion} master version ${dataVersion} asset version ${assetVersion}`
       );
-    } else if (this._region === "tw" || this._region === "kr") {
+    } else if (["tw", "kr"].includes(this._region)) {
       const {
         loginInfo: { accessToken },
         // userId,
@@ -250,7 +250,7 @@ export class APIClient {
       this.headers["x-data-version"] = dataVersion;
       this.headers["x-asset-version"] = assetVersion;
 
-      if (this._region === "kr") {
+      if (["tw", "kr"].includes(this._region)) {
         this.versionInfo = {
           systemProfile: "production",
           appVersion: appVersion,
