@@ -1,6 +1,6 @@
 import axios from "axios";
 import msgpack from "@msgpack/msgpack";
-import { initialHeader, pjsk, proxy } from "./constants.js";
+import { cookiePostUrl, initialHeader, pjsk, proxy } from "./constants.js";
 import uuidV4 from "uuid-v4";
 import crypto from "crypto";
 import log4js from "log4js";
@@ -150,6 +150,12 @@ export class APIClient {
         throw err;
       }
     );
+  }
+
+  async initCookie() {
+    const cookieResponse = await axios.get(cookiePostUrl[this.region]);
+    const cookie = cookieResponse.headers["set-cookie"];
+    this.headers["cookie"] = cookie;
   }
 
   set account(data) {

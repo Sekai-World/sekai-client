@@ -144,8 +144,12 @@ const queue = new PQueue({ concurrency: 1 });
 const server = jayson.Server({
   init: async function (args) {
     _region = args[0] || region;
-    if (!apiClient || apiClient.region !== _region)
+    if (!apiClient || apiClient.region !== _region) {
       apiClient = new APIClient(logger, _region);
+      if (["jp"].includes(region)) {
+        await apiClient.initCookie();
+      }
+    }
   },
   login: async function (args) {
     return await queue.add(() => loginAccount(args[0]));

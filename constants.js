@@ -113,3 +113,6 @@ export const bitbucket = {
   token: process.env.BITBUCKET_TOKEN,
 };
 export const sekaiAPIKey = process.env.SEKAI_API_KEY;
+export const cookiePostUrl = {
+  jp: "https://issue.sekai.colorfulpalette.org/api/signature",
+};
