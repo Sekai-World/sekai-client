@@ -115,7 +115,17 @@ export class APIClient {
       },
       async (err) => {
         // this.logger.error(err.response);
-        if (err.response.data.length) {
+        if (
+          err.response.headers["content-type"] === "text/xml" &&
+          err.response.status === 403
+        ) {
+          await this.initCookie();
+          throw err;
+        }
+        if (
+          err.response.headers["content-type"] === "application/octet-stream" &&
+          err.response.data.length
+        ) {
           err.response.data = decrypt(Buffer.from(err.response.data));
         }
         if (err.response.headers["x-session-token"])
@@ -146,7 +156,6 @@ export class APIClient {
         }
 
         // console.log(err.response)
-
         throw err;
       }
     );
