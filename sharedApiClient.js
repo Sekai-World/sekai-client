@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 
 import { APIClient } from "./apiclient";
 import { region } from "./constants";
+import { execSync } from "child_process";
 
 const logger = log4js.getLogger("shared-client");
 logger.level = "info";
@@ -186,4 +187,13 @@ const server = jayson.Server({
  * 39392 = en
  * etc
  */
-server.http().listen(process.env.PORT || 3939, "localhost");
+function startSever(port) {
+  try {
+    server.http().listen(port, "localhost");
+  } catch (error) {
+    execSync(`kill $(lsof -t -i:${port})`);
+    startSever();
+  }
+}
+
+startSever(process.env.PORT || 3939);
