@@ -194,7 +194,8 @@ httpServer.listen(port, "localhost");
 httpServer.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
     logger.error("Address in use, retrying...");
-    execSync(`kill $(lsof -t -i:${port})`);
+    const pid = execSync(`lsof -t -i:${port}`).toString().trim();
+    execSync(`kill ${pid}`);
     httpServer.close();
     httpServer.listen(port, "localhost");
   }
