@@ -187,13 +187,17 @@ const server = jayson.Server({
  * 39392 = en
  * etc
  */
-function startSever(port) {
-  try {
-    server.http().listen(port, "localhost");
-  } catch (error) {
-    execSync(`kill $(lsof -t -i:${port})`);
-    startSever();
-  }
-}
+const httpServer = server.http();
+const port = process.env.PORT || 3939;
 
-startSever(process.env.PORT || 3939);
+httpServer.listen(port, "localhost");
+httpServer.on("error", (e) => {
+  if (e.code === "EADDRINUSE") {
+    console.log("Address in use, retrying...");
+    setTimeout(() => {
+      httpServer.close();
+      execSync(`kill $(lsof -t -i:${port})`);
+      httpServer.listen(port, "localhost");
+    }, 1000);
+  }
+});
