@@ -193,11 +193,9 @@ const port = process.env.PORT || 3939;
 httpServer.listen(port, "localhost");
 httpServer.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
-    console.log("Address in use, retrying...");
-    setTimeout(() => {
-      httpServer.close();
-      execSync(`kill $(lsof -t -i:${port})`);
-      httpServer.listen(port, "localhost");
-    }, 1000);
+    logger.error("Address in use, retrying...");
+    execSync(`kill $(lsof -t -i:${port})`);
+    httpServer.close();
+    httpServer.listen(port, "localhost");
   }
 });
