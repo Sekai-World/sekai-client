@@ -314,7 +314,7 @@ async function updateI18nFile(filepath) {
         if (strapiBaseUrl)
           await axios.post(
             `${strapiBaseUrl}/musics/fromDB?token=${strapiToken}`,
-            datas.map((elem) => elem.id)
+            datas.filter((elem) => elem.id > 290).map((elem) => elem.id)
           );
       }
       break;
