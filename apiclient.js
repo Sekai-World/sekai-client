@@ -120,6 +120,7 @@ export class APIClient {
           err.response.status === 403
         ) {
           await this.initCookie();
+          await this.login();
           throw err;
         }
         if (
