@@ -1,0 +1,243 @@
+import yaml
+import jwt
+
+from pytz import timezone
+from os import path, getenv
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from jsonrpc.backend.flask import api
+from flask import Flask
+
+from utils.constants import pjsk_region
+from utils.task_queue import job_queue, answer_queue
+from api_client import APIClient
+
+dirname = path.dirname(__file__)
+api_client: APIClient = None
+client_region = pjsk_region
+user_logged_in = False
+user_info = None
+
+
+def day_change_func():
+    if user_logged_in:
+        login_account(True)
+
+
+scheduler = BackgroundScheduler(timezone=timezone('Asia/Tokyo'))
+cron_trigger = CronTrigger(hour='4', minute='0', second='0')
+day_change_job = scheduler.add_job(day_change_func,
+                                   cron_trigger,
+                                   name="day_change_job")
+
+
+def get_account_info():
+    if client_region in ("jp", "en"):
+        filepath = path.join(dirname, f'sharedAccount.{client_region}.yaml')
+        if path.exists(filepath):
+            with open(filepath, 'r') as f:
+                return yaml.safe_load(f)
+        else:
+            app.logger.warn(
+                f'no {client_region} account found, registering a new one')
+            register_info = api_client.register_new_account()
+            credential = register_info["credential"]
+            signature = register_info["userRegistration"]["signature"]
+            user_id = jwt.decode(credential,
+                                 options={"verify_signature": False})["userId"]
+
+            account_info = {
+                "signature": signature,
+                "credential": credential,
+                "userId": user_id
+            }
+            with open(filepath, 'w') as f:
+                yaml.dump(account_info, f)
+            return account_info
+
+    if client_region in ("tw", "kr"):
+        access_token = getenv(f"SEKAI_{client_region.upper()}_ACCESS_TOKEN",
+                              None)
+        sdk_open_id = getenv(f"SEKAI_{client_region.upper()}_SDK_OPEN_ID",
+                             None)
+        if not access_token or not sdk_open_id:
+            raise ValueError(
+                f"Missing access token and/or SDK open id for {client_region} server"
+            )
+        return {"loginInfo": {"accessToken": access_token}, "userId": user_id}
+
+
+def login_account(forced=False):
+    global user_logged_in
+    if (not user_logged_in) or forced:
+        day_change_job.pause()
+
+        global api_client
+        api_client.account_info = get_account_info()
+        global user_info
+        user_info = api_client.login()
+        user_logged_in = True
+
+        day_change_job.resume()
+
+        return user_info
+    elif user_logged_in:
+        return user_info
+
+    return {}
+
+
+@api.dispatcher.add_method
+def init(region):
+    global client_region
+    if region:
+        client_region = region
+
+    global api_client
+    api_client = APIClient(region=client_region, logger=app.logger)
+    if client_region in ("jp"):
+        api_client.init_cookie()
+
+    app.logger.info(f"Initialized API client for {client_region} server")
+    return True
+
+
+@api.dispatcher.add_method
+def is_init():
+    return not not api_client
+
+
+@api.dispatcher.add_method
+def login():
+    job_queue.put(lambda: login_account())
+    res = answer_queue.get()
+    answer_queue.task_done()
+
+    return res
+
+
+@api.dispatcher.add_method
+def relogin():
+    job_queue.put(lambda: login_account(True))
+    res = answer_queue.get()
+    answer_queue.task_done()
+
+    return res
+
+
+@api.dispatcher.add_method
+def check_versions(input_ver_info=None):
+    if not api_client:
+        raise RuntimeError("Init before calling this method")
+
+    job_queue.put(lambda: api_client.check_versions(input_ver_info))
+    res = answer_queue.get()
+    answer_queue.task_done()
+
+    return res
+
+
+@api.dispatcher.add_method
+def version_info():
+    if not api_client:
+        raise RuntimeError("Init before calling this method")
+
+    return api_client.version_info
+
+
+@api.dispatcher.add_method
+def account_info():
+    if not user_logged_in:
+        raise RuntimeError("Login before calling this method")
+
+    return account_info
+
+
+@api.dispatcher.add_method
+def login_user_info():
+    if not user_logged_in:
+        raise RuntimeError("Login before calling this method")
+
+    return user_info
+
+
+@api.dispatcher.add_method
+def fetch_user_profile(user_id):
+    if not user_logged_in:
+        raise RuntimeError("Login before calling this method")
+
+    job_queue.put(lambda: api_client.fetch_user_profile(user_id))
+    res = answer_queue.get()
+    answer_queue.task_done()
+
+    return res
+
+
+@api.dispatcher.add_method
+def fetch_user_event_ranking(target_user_id, event_id):
+    if not user_logged_in:
+        raise RuntimeError("Login before calling this method")
+
+    job_queue.put(
+        lambda: api_client.fetch_user_event_ranking(target_user_id, event_id))
+    res = answer_queue.get()
+    answer_queue.task_done()
+
+    return res
+
+
+@api.dispatcher.add_method
+def fetch_master_data():
+    if not api_client:
+        raise RuntimeError("Init before calling this method")
+
+    job_queue.put(lambda: api_client.call_pjsk_api("/suite/master"))
+    res = answer_queue.get()
+    answer_queue.task_done()
+
+    return res
+
+
+@api.dispatcher.add_method
+def fetch_system_data():
+    if not api_client:
+        raise RuntimeError("Init before calling this method")
+
+    job_queue.put(lambda: api_client.fetch_system_data())
+    res = answer_queue.get()
+    answer_queue.task_done()
+
+    return res
+
+
+@api.dispatcher.add_method
+def fetch_information():
+    if not api_client:
+        raise RuntimeError("Init before calling this method")
+
+    job_queue.put(lambda: api_client.fetch_information())
+    res = answer_queue.get()
+    answer_queue.task_done()
+
+    return res
+
+
+@api.dispatcher.add_method
+def call_pjsk_api(endpoint: str, method="get", body: str | dict = ""):
+    if not api_client:
+        raise RuntimeError("Init before calling this method")
+
+    job_queue.put(lambda: api_client.call_pjsk_api(endpoint, method, body))
+    res = answer_queue.get()
+    answer_queue.task_done()
+
+    return res
+
+
+app = Flask(__name__)
+app.register_blueprint(api.as_blueprint())
+
+
+@app.before_first_request
+def start_scheduler():
+    scheduler.start()
