@@ -10,7 +10,7 @@ from time import sleep
 from pytz import timezone
 from git.repo import Repo
 from git.util import Actor
-from apscheduler.schedulers.background import BlockingScheduler
+from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from utils.jsonrpc_client import JSONRPCClient
@@ -46,10 +46,10 @@ def try_update_func():
 
     ver_res = None
     try:
-        ver_res = jsonrpc_client.request("check_verions", [version_info])
+        ver_res = jsonrpc_client.request("check_versions", [version_info])
     except:
         bootstrap()
-        ver_res = jsonrpc_client.request("check_verions", [version_info])
+        ver_res = jsonrpc_client.request("check_versions", [version_info])
 
     global is_in_maintenance
     if ver_res["maintenance"]:
