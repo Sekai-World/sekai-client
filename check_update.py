@@ -335,7 +335,7 @@ def refresh_version():
                                     old_data)), *value
                         ]
         with open(file_path, 'w') as f:
-            json.dump(file_data, f, ensure_ascii=False)
+            json.dump(file_data, f, ensure_ascii=False, indent=2)
 
         logger.debug(
             '[refresh_version] write i18n json files by keys if necessary')
