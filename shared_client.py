@@ -25,7 +25,10 @@ def day_change_func():
 
 
 scheduler = BackgroundScheduler(timezone=timezone('Asia/Tokyo'))
-cron_trigger = CronTrigger(hour='4', minute='0', second='0')
+cron_trigger = CronTrigger(hour='4',
+                           minute='0',
+                           second='0',
+                           timezone=timezone('Asia/Tokyo'))
 day_change_job = scheduler.add_job(day_change_func,
                                    cron_trigger,
                                    name="day_change_job")
@@ -64,7 +67,12 @@ def get_account_info():
             raise ValueError(
                 f"Missing access token and/or SDK open id for {client_region} server"
             )
-        return {"loginInfo": {"accessToken": access_token}, "userId": user_id}
+        return {
+            "loginInfo": {
+                "accessToken": access_token
+            },
+            "userId": sdk_open_id
+        }
 
 
 def login_account(forced=False):

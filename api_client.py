@@ -320,13 +320,16 @@ class APIClient:
 
     def fetch_user_profile(self, user_id: str) -> dict:
         return self.call_pjsk_api(f'/user/{user_id}/profile')
-    
-    def fetch_user_event_ranking(self, target_user_id: str, event_id: str) -> dict:
+
+    def fetch_user_event_ranking(self, target_user_id: str,
+                                 event_id: str) -> dict:
         user_id = self.account_info["userId"]
-        return self.call_pjsk_api(f'/user/{user_id}/event/{event_id}/ranking?targetUserId={target_user_id}')
+        return self.call_pjsk_api(
+            f'/user/{user_id}/event/{event_id}/ranking?targetUserId={target_user_id}'
+        )
 
     def fetch_information(self):
         return self.call_pjsk_api('/information')
-    
+
     def fetch_system_data(self):
         return self.call_pjsk_api('/system')

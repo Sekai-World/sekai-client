@@ -51,7 +51,8 @@ def track_event_func():
         refresh_version()
 
     curr_time = int(time.time() * 1000)
-    logger.debug(f'[track_event_func] call track_event_scores now at {curr_time}')
+    logger.debug(
+        f'[track_event_func] call track_event_scores now at {curr_time}')
     try:
         track_event_scores(curr_time)
     except:
@@ -126,7 +127,9 @@ def track_event_scores(curr_time):
             f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank=100000&lowerLimit=0'
         ])["rankings"]
 
-    logger.debug(f"[track_event_scores] posting event ranking result to api, result={ranking_data}, api_key={sekai_api_key}")
+    logger.debug(
+        f"[track_event_scores] posting event ranking result to api, result={ranking_data}, api_key={sekai_api_key}"
+    )
     try:
         r = requests.post(
             f'https://api.sekai.best/event/{event_data["id"]}/rankings',
@@ -143,7 +146,7 @@ def bootstrap():
             "init", [pjsk_region]):
         sys.exit(1)
     logger.info("[bootstrap] PJSK client inited")
-    
+
     try:
         check_version_res = jsonrpc_client.request("check_versions")
         if check_version_res["maintenance"]:
@@ -163,12 +166,13 @@ def bootstrap():
         bootstrap()
         return
     logger.info("[bootstrap] Fetched current available version info")
-    
+
     logger.info(
         "[bootstrap] Finished, will track event result at 58 seconds of each minute"
     )
     if scheduler.state != STATE_RUNNING:
         scheduler.start()
+
 
 if __name__ == "__main__":
     bootstrap()
