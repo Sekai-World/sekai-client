@@ -13,9 +13,9 @@ app.wsgi_app = ProxyFix(
 
 client_map = {
     "jp": JSONRPCClient(f'http://localhost:{getenv("JP_PORT", "39390")}/'),
-    # "tw": JSONRPCClient(f'http://localhost:{getenv("TW_PORT", "39391")}/'),
-    # "en": JSONRPCClient(f'http://localhost:{getenv("EN_PORT", "39392")}/'),
-    # "kr": JSONRPCClient(f'http://localhost:{getenv("KR_PORT", "39393")}/'),
+    "tw": JSONRPCClient(f'http://localhost:{getenv("TW_PORT", "39391")}/'),
+    "en": JSONRPCClient(f'http://localhost:{getenv("EN_PORT", "39392")}/'),
+    "kr": JSONRPCClient(f'http://localhost:{getenv("KR_PORT", "39393")}/'),
 }
 
 
