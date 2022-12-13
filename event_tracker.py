@@ -7,7 +7,8 @@ from os import getenv
 from pytz import timezone
 from git.repo import Repo
 from git.util import Actor
-from apscheduler.schedulers.background import BlockingScheduler
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.base import STATE_RUNNING
 from apscheduler.triggers.cron import CronTrigger
 
 from utils.jsonrpc_client import JSONRPCClient
@@ -32,10 +33,10 @@ def track_event_func():
 
     ver_res = None
     try:
-        ver_res = jsonrpc_client.request("check_verions", [version_info])
+        ver_res = jsonrpc_client.request("check_versions", [version_info])
     except:
         bootstrap()
-        ver_res = jsonrpc_client.request("check_verions", [version_info])
+        ver_res = jsonrpc_client.request("check_versions", [version_info])
 
     global is_in_maintenance
     if ver_res["maintenance"]:
@@ -163,7 +164,8 @@ def bootstrap():
     logger.info(
         "[bootstrap] Finished, will track event result at 58 seconds of each minute"
     )
-    scheduler.start()
+    if scheduler.state != STATE_RUNNING:
+        scheduler.start()
 
 if __name__ == "__main__":
     bootstrap()
