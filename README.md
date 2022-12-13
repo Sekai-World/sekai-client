@@ -50,3 +50,4 @@ Some files need to have specific environment variables, listed below
 | `STRAPI_BASE_URL` | strapi base url | | ✅ | ✅ | |
 | `STRAPI_TOKEN` | strapi access token | | ✅ | | |
 | `SEKAI_API_KEY` | sekai api key | | | ✅ | |
+| `JSONRPC_PORT` | Shared client jsonrpc port | | ✅ | ✅ | |
