@@ -317,8 +317,7 @@ def refresh_version():
         json.dump(version_info, f, indent=2)
         f.truncate()
 
-    logger.debug(
-        '[refresh_version] fetching master db')
+    logger.debug('[refresh_version] fetching master db')
     master_data: dict[str, list] = jsonrpc_client.request("fetch_master_data")
     logger.debug(
         '[refresh_version] write master db to separate json files by keys')
@@ -330,7 +329,9 @@ def refresh_version():
             if path.exists(file_path):
                 with open(file_path, 'r') as f:
                     old_data = json.load(f)
-                    if isinstance(old_data, list) and old_data[0].get("id", None):
+                    if isinstance(old_data,
+                                  list) and len(old_data) and old_data[0].get(
+                                      "id", None):
                         file_data = [
                             *list(
                                 filter(
@@ -341,9 +342,12 @@ def refresh_version():
         with open(file_path, 'w') as f:
             json.dump(file_data, f, ensure_ascii=False, indent=2)
 
-        logger.debug(
-            f'[refresh_version] write i18n json file for {key}.json if necessary')
+        logger.debug(f'[refresh_version] wrote master db {key}.json')
+
         if update_options["i18n"]:
+            logger.debug(
+                f'[refresh_version] write i18n json file for {key}.json if necessary'
+            )
             update_i18n_files(key, file_data)
 
     logger.debug("[refresh_version] finished")
@@ -360,7 +364,7 @@ def save_info_from_suite_user():
                   ensure_ascii=False,
                   indent=2)
 
-    if suite_user["userInformations"]:
+    if suite_user.get("userInformations", None):
         logger.debug("[save_info_from_suite_user] write user informations")
         with open(
                 path.join(masterdb_diff_folder_path, "userInformations.json"),
@@ -408,17 +412,16 @@ def commit_master_diff():
             f'[commit_master_diff] push commit to origin in {local_git_folder_names["masterDBDiff"]}'
         )
         masterdb_diff_repo.remote().push()
-        
+
         return True
-    
+
     return False
-        
+
 
 def commit_i18n_files():
     data_ver = version_info["dataVersion"]
 
-    if i18n_diff_repo and i18n_diff_repo.is_dirty(
-            untracked_files=True):
+    if i18n_diff_repo and i18n_diff_repo.is_dirty(untracked_files=True):
         logger.debug(
             f'[commit_i18n_files] add files to staged in {local_git_folder_names["i18n"]}'
         )
@@ -429,17 +432,17 @@ def commit_i18n_files():
         logger.debug(
             f'[commit_i18n_files] commit staged changes in {local_git_folder_names["i18n"]}'
         )
-        curr_index.commit(
-            f'i18n update for master version {data_ver}',
-            author=Actor("i18n-diff-bot", "anonymous@example.com"))
+        curr_index.commit(f'i18n update for master version {data_ver}',
+                          author=Actor("i18n-diff-bot",
+                                       "anonymous@example.com"))
 
         logger.debug(
             f'[commit_i18n_files] push commit to origin in {local_git_folder_names["i18n"]}'
         )
         i18n_diff_repo.remote().push()
-        
+
         return True
-    
+
     return False
 
 
@@ -467,12 +470,12 @@ def bootstrap():
             bootstrap()
             return
 
-        global version_info
-        version_info = jsonrpc_client.request("version_info")
-
         if update_options["userInfo"]:
             jsonrpc_client.request("login")
             save_info_from_suite_user()
+
+        global version_info
+        version_info = jsonrpc_client.request("version_info")
 
         if update_options["master"]:
             refresh_version()
