@@ -32,6 +32,8 @@ Some files need to have specific environment variables, listed below
 | Variable name | Description | shared_client | check_update | event_tracker | api_public_server |
 | --- | --- | :---: | :---: | :---: | :---: |
 | `APP_VER` | PJSK app version | ✅ | | | |
+| `AES_KEY` | PJSK aes key | ✅ | | | |
+| `AES_IV` | PJSK aes iv | ✅ | | | |
 | `SEKAI_TW_DEVICE_ID` | Device id for tw server | ✅ (pjsk_region=tw) | | | |
 | `SEKAI_TW_ACCESS_TOKEN` | Access token for tw server | ✅ (pjsk_region=tw) | | | |
 | `SEKAI_TW_SDK_OPEN_ID` | SDK open id for tw server | ✅ (pjsk_region=tw) | | | |
