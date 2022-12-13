@@ -37,6 +37,7 @@ def track_event_func():
     except:
         bootstrap()
         ver_res = jsonrpc_client.request("check_versions", [version_info])
+    logger.debug('[track_event_func] got ver_res')
 
     global is_in_maintenance
     if ver_res["maintenance"]:
@@ -50,6 +51,7 @@ def track_event_func():
         refresh_version()
 
     curr_time = int(time.time() * 1000)
+    logger.debug(f'[track_event_func] call track_event_scores now at {curr_time}')
     try:
         track_event_scores(curr_time)
     except:
@@ -88,14 +90,14 @@ def track_event_scores(curr_time):
         logger.warning("Current event will expire soon")
         raise RuntimeError("Current event will expire soon")
 
-    user_id = jsonrpc_client.request("account_info")
+    user_id = jsonrpc_client.request("account_info")["userId"]
     logger.debug(f"[track_event_scores] got user id {user_id}")
 
     ranking_data = {"time": curr_time}
 
     ranking_data["first10"] = jsonrpc_client.request("call_pjsk_api", [
         f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank=1&lowerLimit=9'
-    ])
+    ])["rankings"]
     logger.debug("[track_event_scores] fetched first ten ranked players")
 
     logger.debug("[track_event_scores] fetching critical cutoffs")
@@ -103,36 +105,37 @@ def track_event_scores(curr_time):
         ranking_data[f"rank{i}0"] = jsonrpc_client.request(
             "call_pjsk_api", [
                 f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank={i}0&lowerLimit=0'
-            ])
+            ])["rankings"]
     for i in range(1, 6):
         ranking_data[f"rank{i}00"] = jsonrpc_client.request(
             "call_pjsk_api", [
                 f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank={i}00&lowerLimit=0'
-            ])
+            ])["rankings"]
     for i in range(1, 6):
         ranking_data[f"rank{i}000"] = jsonrpc_client.request(
             "call_pjsk_api", [
                 f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank={i}000&lowerLimit=0'
-            ])
+            ])["rankings"]
     for i in range(1, 6):
         ranking_data[f"rank{i}0000"] = jsonrpc_client.request(
             "call_pjsk_api", [
                 f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank={i}0000&lowerLimit=0'
-            ])
+            ])["rankings"]
     ranking_data[f"rank100000"] = jsonrpc_client.request(
         "call_pjsk_api", [
             f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank=100000&lowerLimit=0'
-        ])
+        ])["rankings"]
 
-    logger.debug("[track_event_scores] posting event ranking result to api")
+    logger.debug(f"[track_event_scores] posting event ranking result to api, result={ranking_data}, api_key={sekai_api_key}")
     try:
-        requests.post(
+        r = requests.post(
             f'https://api.sekai.best/event/{event_data["id"]}/rankings',
             json=ranking_data,
             headers={"X-API-Key": sekai_api_key},
             params={"region": pjsk_region})
-    except:
-        logger.error(f'Error posting event ranking result to api')
+        r.raise_for_status()
+    except requests.HTTPError as err:
+        logger.error(f'Error posting event ranking result to api, {r.content}')
 
 
 def bootstrap():

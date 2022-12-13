@@ -150,7 +150,7 @@ def account_info():
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    return account_info
+    return api_client.account_info
 
 
 @api.dispatcher.add_method

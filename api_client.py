@@ -92,7 +92,7 @@ class APIClient:
                 headers=self.headers,
                 data=data)
             self.logger.debug(
-                f"response url={base_pjsk_api_url[self.region]}{endpoint}, method={method.lower()}, headers={self.headers.items()}"
+                f"response url={base_pjsk_api_url[self.region]}{endpoint}, method={method.lower()}, headers={self.headers.items()}, status={r.status_code}"
             )
             if r.headers.get("x-session-token", None):
                 self.headers["x-session-token"] = r.headers["x-session-token"]
