@@ -3,7 +3,7 @@ import jwt
 
 from pytz import timezone
 from os import path, getenv
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.background import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from jsonrpc.backend.flask import api
 from flask import Flask
@@ -24,7 +24,7 @@ def day_change_func():
         login_account(True)
 
 
-scheduler = BackgroundScheduler(timezone=timezone('Asia/Tokyo'))
+scheduler = BlockingScheduler(timezone=timezone('Asia/Tokyo'))
 cron_trigger = CronTrigger(hour='4', minute='0', second='0')
 day_change_job = scheduler.add_job(day_change_func,
                                    cron_trigger,
