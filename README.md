@@ -33,7 +33,11 @@ Some files need to have specific environment variables, listed below
 | --- | --- | :---: | :---: | :---: | :---: |
 | `APP_VER` | PJSK app version | ✅ | | | |
 | `SEKAI_TW_DEVICE_ID` | Device id for tw server | ✅ (pjsk_region=tw) | | | |
+| `SEKAI_TW_ACCESS_TOKEN` | Access token for tw server | ✅ (pjsk_region=tw) | | | |
+| `SEKAI_TW_SDK_OPEN_ID` | SDK open id for tw server | ✅ (pjsk_region=tw) | | | |
 | `SEKAI_KR_DEVICE_ID` | Device id for kr server | ✅ (pjsk_region=kr) | | | |
+| `SEKAI_KR_ACCESS_TOKEN` | Access token for kr server | ✅ (pjsk_region=kr) | | | |
+| `SEKAI_KR_SDK_OPEN_ID` | SDK open id for kr server | ✅ (pjsk_region=kr) | | | |
 | `SEKAI_REGION` | PJSK game region | ✅ | ✅ | ✅ | |
 | `ENABLE_SEKAI_UPDATE_MASTER` | whether to update sekai master db | | ✅ | | |
 | `ENABLE_SEKAI_UPDATE_USER_INFO` | whether to update sekai user info | | ✅ | | |
