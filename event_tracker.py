@@ -7,13 +7,14 @@ from os import getenv
 from pytz import timezone
 from git.repo import Repo
 from git.util import Actor
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.background import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from utils.jsonrpc_client import JSONRPCClient
 from utils.constants import strapi_base_url, pjsk_region, sekai_api_key
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+LOGLEVEL = getenv('LOGLEVEL', 'INFO').upper()
+logging.basicConfig(level=LOGLEVEL, format='%(asctime)s %(message)s')
 logger = logging.getLogger(__name__)
 
 jsonrpc_client = JSONRPCClient(
@@ -55,7 +56,7 @@ def track_event_func():
         track_event_scores(curr_time)
 
 
-scheduler = BackgroundScheduler(timezone=timezone('Asia/Tokyo'))
+scheduler = BlockingScheduler(timezone=timezone('Asia/Tokyo'))
 track_event_cron_trigger = CronTrigger(second='58')
 track_event_job = scheduler.add_job(track_event_func,
                                     track_event_cron_trigger,

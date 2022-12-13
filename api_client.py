@@ -1,5 +1,7 @@
 import logging
 import requests
+
+from os import getenv
 from uuid import uuid4
 from copy import deepcopy
 from time import sleep
@@ -7,7 +9,8 @@ from time import sleep
 from utils.constants import initial_api_headers, base_pjsk_api_url, pjsk_cookie_post_url, pjsk_region
 from utils.crypto import encrypt, decrypt, encrypt_msgpack, decrypt_msgpack
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+LOGLEVEL = getenv('LOGLEVEL', 'INFO').upper()
+logging.basicConfig(level=LOGLEVEL, format='%(asctime)s %(message)s')
 logger = logging.getLogger(__name__)
 
 

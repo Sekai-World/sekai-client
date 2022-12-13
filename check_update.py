@@ -3,20 +3,22 @@ import sys
 import json
 import requests
 import re
+import traceback
 
 from os import path, getenv
 from time import sleep
 from pytz import timezone
 from git.repo import Repo
 from git.util import Actor
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.background import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from utils.jsonrpc_client import JSONRPCClient
 from utils.constants import remote_git_url_base, local_git_folder_names, strapi_base_url, strapi_token, update_options, pjsk_region
 from utils.git import check_git_folder
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+LOGLEVEL = getenv('LOGLEVEL', 'INFO').upper()
+logging.basicConfig(level=LOGLEVEL, format='%(asctime)s %(message)s')
 logger = logging.getLogger(__name__)
 
 jsonrpc_client = JSONRPCClient(
@@ -70,7 +72,7 @@ def try_update_func():
             logger.info("Updated and committed i18n data")
 
 
-scheduler = BackgroundScheduler(timezone=timezone('Asia/Tokyo'))
+scheduler = BlockingScheduler(timezone=timezone('Asia/Tokyo'))
 day_change_cron_trigger = CronTrigger(hour='4', minute='0', second='0')
 day_change_job = scheduler.add_job(day_change_func,
                                    day_change_cron_trigger,
@@ -191,7 +193,7 @@ def update_i18n_files(key: str, data: list):
                           "event_story_episode_title.json"), 'w') as f:
             json.dump(
                 {
-                    elem[f'{episode["eventStoryId"]}-{episode["episodeNo"]}']:
+                    f'{episode["eventStoryId"]}-{episode["episodeNo"]}':
                     episode["title"]
                     for elem in data for episode in elem["eventStoryEpisodes"]
                 },
@@ -316,8 +318,10 @@ def refresh_version():
         f.truncate()
 
     logger.debug(
-        '[refresh_version] write master db to separate json files by keys')
+        '[refresh_version] fetching master db')
     master_data: dict[str, list] = jsonrpc_client.request("fetch_master_data")
+    logger.debug(
+        '[refresh_version] write master db to separate json files by keys')
     for key, value in master_data.items():
         file_path = path.join(masterdb_diff_folder_path, f'{key}.json')
         file_data = value
@@ -326,7 +330,7 @@ def refresh_version():
             if path.exists(file_path):
                 with open(file_path, 'r') as f:
                     old_data = json.load(f)
-                    if isinstance(old_data, list):
+                    if isinstance(old_data, list) and old_data[0].get("id", None):
                         file_data = [
                             *list(
                                 filter(
@@ -338,7 +342,7 @@ def refresh_version():
             json.dump(file_data, f, ensure_ascii=False, indent=2)
 
         logger.debug(
-            '[refresh_version] write i18n json files by keys if necessary')
+            f'[refresh_version] write i18n json file for {key}.json if necessary')
         if update_options["i18n"]:
             update_i18n_files(key, file_data)
 
@@ -472,7 +476,8 @@ def bootstrap():
 
         if update_options["master"]:
             refresh_version()
-    except:
+    except Exception as e:
+        logging.error(traceback.format_exc())
         logger.error(
             "[bootstrap] Failed to bootstrap, possible reasons: connection error or account info expired (for tw and kr servers). Retry after 10 minutes."
         )
