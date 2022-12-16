@@ -19,6 +19,19 @@ user_logged_in = False
 user_info = None
 
 
+def get_answer():
+    res = answer_queue.get()
+    if isinstance(res, RuntimeError):
+        answer_queue.task_done()
+        raise RuntimeError(res.args[1])
+    elif isinstance(res, Exception):
+        answer_queue.task_done()
+        raise str(res)
+    else:
+        answer_queue.task_done()
+        return res
+
+
 def day_change_func():
     if user_logged_in:
         login_account(True)
@@ -118,19 +131,13 @@ def is_init():
 @api.dispatcher.add_method
 def login():
     job_queue.put(lambda: login_account())
-    res = answer_queue.get()
-    answer_queue.task_done()
-
-    return res
+    return get_answer()
 
 
 @api.dispatcher.add_method
 def relogin():
     job_queue.put(lambda: login_account(True))
-    res = answer_queue.get()
-    answer_queue.task_done()
-
-    return res
+    return get_answer()
 
 
 @api.dispatcher.add_method
@@ -139,10 +146,7 @@ def check_versions(input_ver_info=None):
         raise RuntimeError("Init before calling this method")
 
     job_queue.put(lambda: api_client.check_versions(input_ver_info))
-    res = answer_queue.get()
-    answer_queue.task_done()
-
-    return res
+    return get_answer()
 
 
 @api.dispatcher.add_method
@@ -175,10 +179,7 @@ def fetch_user_profile(user_id):
         raise RuntimeError("Login before calling this method")
 
     job_queue.put(lambda: api_client.fetch_user_profile(user_id))
-    res = answer_queue.get()
-    answer_queue.task_done()
-
-    return res
+    return get_answer()
 
 
 @api.dispatcher.add_method
@@ -188,10 +189,7 @@ def fetch_user_event_ranking(target_user_id, event_id):
 
     job_queue.put(
         lambda: api_client.fetch_user_event_ranking(target_user_id, event_id))
-    res = answer_queue.get()
-    answer_queue.task_done()
-
-    return res
+    return get_answer()
 
 
 @api.dispatcher.add_method
@@ -200,10 +198,7 @@ def fetch_master_data():
         raise RuntimeError("Init before calling this method")
 
     job_queue.put(lambda: api_client.call_pjsk_api("/suite/master"))
-    res = answer_queue.get()
-    answer_queue.task_done()
-
-    return res
+    return get_answer()
 
 
 @api.dispatcher.add_method
@@ -212,10 +207,7 @@ def fetch_system_data():
         raise RuntimeError("Init before calling this method")
 
     job_queue.put(lambda: api_client.fetch_system_data())
-    res = answer_queue.get()
-    answer_queue.task_done()
-
-    return res
+    return get_answer()
 
 
 @api.dispatcher.add_method
@@ -224,10 +216,7 @@ def fetch_information():
         raise RuntimeError("Init before calling this method")
 
     job_queue.put(lambda: api_client.fetch_information())
-    res = answer_queue.get()
-    answer_queue.task_done()
-
-    return res
+    return get_answer()
 
 
 @api.dispatcher.add_method
@@ -236,10 +225,7 @@ def call_pjsk_api(endpoint: str, method="get", body: str | dict = ""):
         raise RuntimeError("Init before calling this method")
 
     job_queue.put(lambda: api_client.call_pjsk_api(endpoint, method, body))
-    res = answer_queue.get()
-    answer_queue.task_done()
-
-    return res
+    return get_answer()
 
 
 app = Flask(__name__)
