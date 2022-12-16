@@ -96,7 +96,7 @@ class APIClient:
             )
             if r.headers.get("x-session-token", None):
                 self.headers["x-session-token"] = r.headers["x-session-token"]
-            if r.headers["content-type"] == "application/octet-stream" and len(
+            if "octet-stream" in r.headers["content-type"] and len(
                     r.content):
                 try:
                     res_data = decrypt_msgpack(r.content)
