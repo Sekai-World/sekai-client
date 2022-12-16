@@ -364,7 +364,9 @@ def save_info_from_suite_user():
                   ensure_ascii=False,
                   indent=2)
 
-    if suite_user.get("userInformations", None):
+    if pjsk_region == "en":
+        refresh_information()
+    elif suite_user.get("userInformations", None):
         logger.debug("[save_info_from_suite_user] write user informations")
         with open(
                 path.join(masterdb_diff_folder_path, "userInformations.json"),
