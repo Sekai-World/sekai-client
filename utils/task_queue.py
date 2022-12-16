@@ -11,7 +11,10 @@ def worker():
     while True:
         item = job_queue.get()
         print(f'Working on {item}')
-        res = item()
+        try:
+            res = item()
+        except Exception as e:
+            res = e
         print(f'Finished {item}')
         answer_queue.put(res)
         job_queue.task_done()
