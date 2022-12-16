@@ -36,6 +36,9 @@ i18n_diff_repo: Repo | None = None
 
 
 def day_change_func():
+    logger.debug(f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes')
+    masterdb_diff_repo.remote().pull()
+
     refresh_version()
     if not is_in_maintenance and update_options["userInfo"]:
         save_info_from_suite_user()
@@ -58,6 +61,8 @@ def try_update_func():
         return
 
     is_in_maintenance = False
+    logger.debug(f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes')
+    masterdb_diff_repo.remote().pull()
     if ver_res["new_version"] and update_options["master"]:
         logger.info("Got a new version during checking update")
         refresh_version()
@@ -288,16 +293,6 @@ def update_i18n_files(key: str, data: list):
 def refresh_version():
     logger.debug("[refresh_version] called")
 
-    if not masterdb_diff_repo:
-        raise RuntimeError(
-            f'{local_git_folder_names["masterDBDiff"]} repository must be existed to refresh version info.'
-        )
-
-    masterdb_diff_repo.remote().pull()
-    logger.debug(
-        f'[refresh_version] pulled repository {local_git_folder_names["masterDBDiff"]}'
-    )
-
     if update_options["i18n"]:
         if not i18n_diff_repo:
             raise RuntimeError(
@@ -472,6 +467,8 @@ def bootstrap():
             bootstrap()
             return
 
+        logger.debug(f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes')
+        masterdb_diff_repo.remote().pull()
         if update_options["userInfo"]:
             jsonrpc_client.request("login")
             save_info_from_suite_user()
