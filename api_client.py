@@ -96,8 +96,7 @@ class APIClient:
             )
             if r.headers.get("x-session-token", None):
                 self.headers["x-session-token"] = r.headers["x-session-token"]
-            if "octet-stream" in r.headers["content-type"] and len(
-                    r.content):
+            if "octet-stream" in r.headers["content-type"] and len(r.content):
                 try:
                     res_data = decrypt_msgpack(r.content)
                 except:
@@ -127,6 +126,14 @@ class APIClient:
                 self.logger.warn(
                     f"{self.region} server should update version info")
                 self.check_versions()
+                self.login()
+                if retry_after_error:
+                    return self.call_pjsk_api(endpoint, method, body)
+            elif r.status_code == 406 and res_data[
+                    "errorCode"] == 'rule_not_agreement':
+                self.logger.warn(
+                    f"{self.region} server should accept new agreeement")
+                self.accept_agreement()
                 self.login()
                 if retry_after_error:
                     return self.call_pjsk_api(endpoint, method, body)
@@ -333,3 +340,11 @@ class APIClient:
 
     def fetch_system_data(self):
         return self.call_pjsk_api('/system')
+
+    def accept_agreement(self):
+        user_id = self.account_info["userId"]
+        credential = self.account_info["credential"]
+        return self.call_pjsk_api(f'/user/{user_id}/rule-agreement', 'post', {
+            "credential": credential,
+            "userId": 0
+        })
