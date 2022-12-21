@@ -306,8 +306,7 @@ def refresh_version():
 
     logger.debug('[refresh_version] write version info to json file')
     global version_info
-    if not version_info:
-        version_info = jsonrpc_client.request("version_info")
+    version_info = jsonrpc_client.request("version_info")
     with open(path.join(masterdb_diff_folder_path, "versions.json"), 'w') as f:
         json.dump(version_info, f, indent=2)
         f.truncate()
