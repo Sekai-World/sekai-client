@@ -1,7 +1,7 @@
 from bs4 import BeautifulSoup
 import requests
 from os import environ
-from constants import initial_api_headers
+from .constants import initial_api_headers
 
 
 def get_app_ver_qooapp(appid, region) -> str:
