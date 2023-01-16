@@ -6,8 +6,9 @@ from uuid import uuid4
 from copy import deepcopy
 from time import sleep
 
-from utils.constants import initial_api_headers, base_pjsk_api_url, pjsk_cookie_post_url, pjsk_region
+from utils.constants import initial_api_headers, base_pjsk_api_url, pjsk_cookie_post_url, pjsk_region, app_id_regions
 from utils.crypto import encrypt, decrypt, encrypt_msgpack, decrypt_msgpack
+from utils.get_app_ver import get_app_ver_qooapp
 
 LOGLEVEL = getenv('LOGLEVEL', 'INFO').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(asctime)s %(message)s')
@@ -125,6 +126,8 @@ class APIClient:
             elif r.status_code == 426:
                 self.logger.warn(
                     f"{self.region} server should update version info")
+                # update app version as well
+                get_app_ver_qooapp(app_id_regions[self.region])
                 self.check_versions()
                 self.login()
                 if retry_after_error:
