@@ -128,7 +128,7 @@ class APIClient:
                     f"{self.region} server should update version info")
                 # update app version as well
                 var_text = get_app_ver_qooapp(app_id_regions[self.region])
-                initial_api_headers[self.region]["x-app-version"] = var_text
+                self.headers["x-app-version"] = var_text
                 self.check_versions()
                 self.login()
                 if retry_after_error:
