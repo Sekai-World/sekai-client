@@ -127,7 +127,7 @@ class APIClient:
                 self.logger.warn(
                     f"{self.region} server should update version info")
                 # update app version as well
-                get_app_ver_qooapp(app_id_regions[self.region])
+                get_app_ver_qooapp(app_id_regions[self.region], self.region)
                 self.check_versions()
                 self.login()
                 if retry_after_error:
