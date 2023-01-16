@@ -1,10 +1,9 @@
 from bs4 import BeautifulSoup
 import requests
 from os import environ
-from .constants import initial_api_headers
 
 
-def get_app_ver_qooapp(appid, region) -> str:
+def get_app_ver_qooapp(appid) -> str:
     url = f'https://apps.qoo-app.com/en/app/{appid}'
 
     r = requests.get(
@@ -19,6 +18,5 @@ def get_app_ver_qooapp(appid, region) -> str:
 
     var_text = app_info_tree.find_all(class_="row")[1].var.text
     environ['APP_VER'] = var_text
-    initial_api_headers[region]["x-app-version"] = var_text
 
     return var_text
