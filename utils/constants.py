@@ -113,4 +113,11 @@ strapi_base_url = getenv("STRAPI_BASE_URL", "http://localhost:3000")
 strapi_token = getenv("STRAPI_TOKEN", "")
 
 sekai_api_key = getenv("SEKAI_API_KEY", "")
+
+app_id_regions = {
+    "jp": "9038",
+    "tw": "18298",
+    "en": "18337",
+    "kr": "20082"
+}
 ### END check_update & event_tracker constants ###

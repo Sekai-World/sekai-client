@@ -38,6 +38,8 @@ werkzeug = "==2.2.2"
 wrapt = "==1.14.1"
 yapf = "==0.32.0"
 gunicorn = "*"
+beautifulsoup4 = "*"
+lxml = "*"
 
 [dev-packages]
 
