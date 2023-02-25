@@ -1,6 +1,6 @@
 import logging
 import sys
-import json
+import ujson as json
 import requests
 import re
 import traceback
