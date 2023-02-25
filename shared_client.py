@@ -5,11 +5,11 @@ from pytz import timezone
 from os import path, getenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from jsonrpc.backend.flask import api
 from flask import Flask
 
 from utils.constants import pjsk_region
 from utils.task_queue import job_queue, answer_queue
+from utils.ujsonrpcapi import api
 from api_client import APIClient
 
 dirname = path.dirname(__file__)
