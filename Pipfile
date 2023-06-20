@@ -41,6 +41,7 @@ gunicorn = "*"
 beautifulsoup4 = "*"
 lxml = "*"
 ujson = "*"
+gevent = "*"
 
 [dev-packages]
 
