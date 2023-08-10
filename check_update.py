@@ -36,7 +36,9 @@ i18n_diff_repo: Repo | None = None
 
 
 def day_change_func():
-    logger.debug(f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes')
+    logger.debug(
+        f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes'
+    )
     masterdb_diff_repo.remote().pull()
 
     refresh_version()
@@ -61,8 +63,15 @@ def try_update_func():
         return
 
     is_in_maintenance = False
-    logger.debug(f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes')
+    logger.debug(
+        f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes'
+    )
     masterdb_diff_repo.remote().pull()
+    if update_options["i18n"]:
+        logger.debug(
+            f'[bootstrap] Pull {local_git_folder_names["i18n"]} repo remote changes before making any local changes'
+        )
+        i18n_diff_repo.remote().pull()
     if ver_res["new_version"] and update_options["master"]:
         logger.info("Got a new version during checking update")
         refresh_version()
@@ -73,8 +82,8 @@ def try_update_func():
     if commit_master_diff():
         logger.info("Updated and committed master data")
         if update_options["i18n"]:
-            commit_i18n_files()
-            logger.info("Updated and committed i18n data")
+            if commit_i18n_files():
+                logger.info("Updated and committed i18n data")
 
 
 scheduler = BlockingScheduler(timezone=timezone('Asia/Tokyo'))
@@ -390,24 +399,31 @@ def commit_master_diff():
 
     if masterdb_diff_repo and masterdb_diff_repo.is_dirty(
             untracked_files=True):
-        logger.debug(
-            f'[commit_master_diff] add files to staged in {local_git_folder_names["masterDBDiff"]}'
-        )
+        try:
+            logger.debug(
+                f'[commit_master_diff] add files to staged in {local_git_folder_names["masterDBDiff"]}'
+            )
 
-        curr_index = masterdb_diff_repo.index
-        curr_index.add('**')
+            curr_index = masterdb_diff_repo.index
+            curr_index.add('**')
 
-        logger.debug(
-            f'[commit_master_diff] commit staged changes in {local_git_folder_names["masterDBDiff"]}'
-        )
-        curr_index.commit(
-            f'master version {data_ver} asset version {asset_ver}',
-            author=Actor("master-db-diff-bot", "anonymous@example.com"))
+            logger.debug(
+                f'[commit_master_diff] commit staged changes in {local_git_folder_names["masterDBDiff"]}'
+            )
+            curr_index.commit(
+                f'master version {data_ver} asset version {asset_ver}',
+                author=Actor("master-db-diff-bot", "anonymous@example.com"))
 
-        logger.debug(
-            f'[commit_master_diff] push commit to origin in {local_git_folder_names["masterDBDiff"]}'
-        )
-        masterdb_diff_repo.remote().push()
+            logger.debug(
+                f'[commit_master_diff] push commit to origin in {local_git_folder_names["masterDBDiff"]}'
+            )
+            masterdb_diff_repo.remote().push()
+        except:
+            # reset to last commit
+            masterdb_diff_repo.head.reset(commit="HEAD~1",
+                                          index=True,
+                                          working_tree=True)
+            return False
 
         return True
 
@@ -418,24 +434,31 @@ def commit_i18n_files():
     data_ver = version_info["dataVersion"]
 
     if i18n_diff_repo and i18n_diff_repo.is_dirty(untracked_files=True):
-        logger.debug(
-            f'[commit_i18n_files] add files to staged in {local_git_folder_names["i18n"]}'
-        )
+        try:
+            logger.debug(
+                f'[commit_i18n_files] add files to staged in {local_git_folder_names["i18n"]}'
+            )
 
-        curr_index = i18n_diff_repo.index
-        curr_index.add('**')
+            curr_index = i18n_diff_repo.index
+            curr_index.add('**')
 
-        logger.debug(
-            f'[commit_i18n_files] commit staged changes in {local_git_folder_names["i18n"]}'
-        )
-        curr_index.commit(f'i18n update for master version {data_ver}',
-                          author=Actor("i18n-diff-bot",
-                                       "anonymous@example.com"))
+            logger.debug(
+                f'[commit_i18n_files] commit staged changes in {local_git_folder_names["i18n"]}'
+            )
+            curr_index.commit(f'i18n update for master version {data_ver}',
+                              author=Actor("i18n-diff-bot",
+                                           "anonymous@example.com"))
 
-        logger.debug(
-            f'[commit_i18n_files] push commit to origin in {local_git_folder_names["i18n"]}'
-        )
-        i18n_diff_repo.remote().push()
+            logger.debug(
+                f'[commit_i18n_files] push commit to origin in {local_git_folder_names["i18n"]}'
+            )
+            i18n_diff_repo.remote().push()
+        except:
+            # reset to last commit
+            i18n_diff_repo.head.reset(commit="HEAD~1",
+                                      index=True,
+                                      working_tree=True)
+            return False
 
         return True
 
@@ -466,7 +489,9 @@ def bootstrap():
             bootstrap()
             return
 
-        logger.debug(f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes')
+        logger.debug(
+            f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes'
+        )
         masterdb_diff_repo.remote().pull()
         if update_options["userInfo"]:
             jsonrpc_client.request("login")
