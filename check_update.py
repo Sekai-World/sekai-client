@@ -327,23 +327,32 @@ def refresh_version():
     for key, value in master_data.items():
         file_path = path.join(masterdb_diff_folder_path, f'{key}.json')
         file_data = value
-        if any(x in key
-               for x in ["event", "gacha", "virtual", "cheerfulCarnival"]):
-            if path.exists(file_path):
-                with open(file_path, 'r') as f:
-                    old_data = json.load(f)
-                    if isinstance(old_data,
-                                  list) and len(old_data) and old_data[0].get(
-                                      "id", None):
-                        file_data = [
-                            *list(
-                                filter(
-                                    lambda x: not any(x["id"] == y["id"]
-                                                      for y in value),
-                                    old_data)), *value
-                        ]
-        with open(file_path, 'w') as f:
-            json.dump(file_data, f, ensure_ascii=False, indent=2)
+        logger.debug(f'[refresh_version] start writing master db {key}.json')
+
+        try:
+            if any(x in key
+                   for x in ["event", "gacha", "virtual", "cheerfulCarnival"
+                             ]) and (pjsk_region not in ["tw", "kr"]
+                                     and key != "eventCards"):
+                if path.exists(file_path):
+                    with open(file_path, 'r') as f:
+                        old_data = json.load(f)
+                        if isinstance(
+                                old_data,
+                                list) and len(old_data) and old_data[0].get(
+                                    "id", None):
+                            file_data = [
+                                *list(
+                                    filter(
+                                        lambda x: not any(x["id"] == y["id"]
+                                                          for y in value),
+                                        old_data)), *value
+                            ]
+            with open(file_path, 'w') as f:
+                json.dump(file_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.debug(json.dumps(value))
+            raise e
 
         logger.debug(f'[refresh_version] wrote master db {key}.json')
 
