@@ -330,23 +330,27 @@ def refresh_version():
         logger.debug(f'[refresh_version] start writing master db {key}.json')
 
         try:
-            if any(x in key
-                   for x in ["event", "gacha", "virtual", "cheerfulCarnival"
-                             ]) and (pjsk_region not in ["tw", "kr"]
-                                     and key != "eventCards"):
+            id_key = None
+            if any(x in key for x in [
+                    "event", "gacha", "virtual", "cheerfulCarnival", "tips"
+            ]) and (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
+                id_key = "id"
+            elif (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
+                id_key = "cardId"
+            if id_key is not None:
                 if path.exists(file_path):
                     with open(file_path, 'r') as f:
                         old_data = json.load(f)
                         if isinstance(
                                 old_data,
                                 list) and len(old_data) and old_data[0].get(
-                                    "id", None):
+                                    id_key, None):
                             file_data = [
                                 *list(
                                     filter(
-                                        lambda x: not any(x["id"] == y["id"]
-                                                          for y in value),
-                                        old_data)), *value
+                                        lambda x: not any(
+                                            x[id_key] == y[id_key]
+                                            for y in value), old_data)), *value
                             ]
             with open(file_path, 'w') as f:
                 json.dump(file_data, f, ensure_ascii=False, indent=2)
