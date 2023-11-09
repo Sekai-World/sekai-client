@@ -1,4 +1,5 @@
 import logging
+import shutil
 import sys
 import ujson as json
 import requests
@@ -407,6 +408,7 @@ def refresh_information():
 
 
 def commit_master_diff():
+    global masterdb_diff_repo
     data_ver = version_info["dataVersion"]
     asset_ver = version_info["assetVersion"]
 
@@ -433,9 +435,13 @@ def commit_master_diff():
             masterdb_diff_repo.remote().push()
         except:
             # reset to last commit
-            masterdb_diff_repo.head.reset(commit="HEAD~1",
-                                          index=True,
-                                          working_tree=True)
+            # masterdb_diff_repo.head.reset(commit="HEAD~1",
+            #                               index=True,
+            #                               working_tree=True)
+            # delete current repo folder and clone again
+            shutil.rmtree(masterdb_diff_folder_path)
+            masterdb_diff_repo = check_git_folder(masterdb_diff_folder_path,
+                                                  remote_git_url_base)
             return False
 
         return True
@@ -444,6 +450,7 @@ def commit_master_diff():
 
 
 def commit_i18n_files():
+    global i18n_diff_repo
     data_ver = version_info["dataVersion"]
 
     if i18n_diff_repo and i18n_diff_repo.is_dirty(untracked_files=True):
@@ -468,9 +475,13 @@ def commit_i18n_files():
             i18n_diff_repo.remote().push()
         except:
             # reset to last commit
-            i18n_diff_repo.head.reset(commit="HEAD~1",
-                                      index=True,
-                                      working_tree=True)
+            # i18n_diff_repo.head.reset(commit="HEAD~1",
+            #                           index=True,
+            #                           working_tree=True)
+            # delete current repo folder and clone again
+            shutil.rmtree(i18n_diff_folder_path)
+            i18n_diff_repo = check_git_folder(i18n_diff_folder_path,
+                                              remote_git_url_base)
             return False
 
         return True
