@@ -32,23 +32,40 @@ def get_regional_client(region):
 
     if not client:
         raise BadRequest("No such region.")
+    if not is_regional_client_inited(region):
+        try:
+            init_regional_client(region)
+        except:
+            raise BadRequest(f"Failed to init {region} client")
 
     return client
+
+
+def init_regional_client(region):
+    if not is_regional_client_inited(region):
+        client_map[region].request("init", [region])
+
+    client_map[region].request("check_versions", [])
+    client_map[region].request("login", [])
+    
+
+def is_regional_client_inited(region):
+    return client_map[region].request("is_init", [])
 
 
 @app.before_first_request
 def bootstrap():
     for region in client_map:
-        if not client_map[region].request("is_init", []):
-            client_map[region].request("init", [region])
-        client_map[region].request("check_versions", [])
-        client_map[region].request("login", [])
+        try:
+            init_regional_client(region)
+        except:
+            print(f"skip {region} region for bootstrap", flush=True)
 
 
 @app.route('/health', methods=['GET'])
 def health():
     is_healthy = all([(not not client_map.get(region)
-                       and client_map.get(region).request("is_init"))
+                       and is_regional_client_inited(region))
                       for region in client_map])
 
     return jsonify({"status": "success" if is_healthy else "error"
