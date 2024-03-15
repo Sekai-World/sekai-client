@@ -123,6 +123,22 @@ def track_event_scores(curr_time):
         r.raise_for_status()
     except requests.HTTPError as err:
         logger.error(f'Error posting event ranking result to api, {r.content}')
+        
+    if event_data["eventType"] == "world_bloom":
+        logger.debug("[track_event_scores] world link event detected, posting world bloom chapter rankings")
+        chapter_ranking_data = {"time": curr_time}
+        chapter_ranking_data["first100"] = first100_data["userWorldBloomChapterRankings"]
+        chapter_ranking_data["border"] = border_data["userWorldBloomChapterRankings"]
+        
+        try:
+            r = requests.post(
+                f'https://api.sekai.best/event/{event_data["id"]}/chapter_rankings',
+                json=chapter_ranking_data,
+                headers={"X-API-Key": sekai_api_key},
+                params={"region": pjsk_region})
+            r.raise_for_status()
+        except requests.HTTPError as err:
+            logger.error(f'Error posting event ranking result to api, {r.content}')
 
 
 def bootstrap():
