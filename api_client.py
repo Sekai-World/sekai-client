@@ -97,7 +97,7 @@ class APIClient:
             )
             if r.headers.get("x-session-token", None):
                 self.headers["x-session-token"] = r.headers["x-session-token"]
-            if "octet-stream" in r.headers["content-type"] and len(r.content):
+            if int(r.headers["content-length"]) > 0 and "octet-stream" in r.headers["content-type"] and len(r.content):
                 try:
                     res_data = decrypt_msgpack(r.content)
                 except:
@@ -228,8 +228,8 @@ class APIClient:
         return self.call_pjsk_api(
             "/user", "post", {
                 "platform": "iOS",
-                "deviceModel": "iPad6,11",
-                "operatingSystem": "iOS 13.5",
+                "deviceModel": "iPad13,16",
+                "operatingSystem": "iPadOS 17.4",
             })
 
     def login(self) -> dict:
@@ -313,6 +313,9 @@ class APIClient:
                 self.call_pjsk_api(f'/user/{user_id}/tutorial', 'patch',
                                    {"tutorialStatus": status})
 
+        self.logger.debug("check user invitation")
+        self.call_pjsk_api(f'/user/{user_id}/invitation', 'get')
+        
         self.logger.debug("refresh home login_bonus")
         self.call_pjsk_api(f'/user/{user_id}/home/refresh', 'put',
                            {"refreshableTypes": ["login_bonus"]})
@@ -344,6 +347,15 @@ class APIClient:
 
     def fetch_system_data(self):
         return self.call_pjsk_api('/system')
+
+    def fetch_event_rank_first_100(self, event_id: str) -> dict:
+        user_id = self.account_info["userId"]
+        return self.call_pjsk_api(
+            f'/user/{user_id}/event/{event_id}/ranking?rankingViewType=top100'
+        )
+
+    def fetch_event_rank_border(self, event_id: str) -> dict:
+        return self.call_pjsk_api(f'/event/{event_id}/ranking-border')
 
     def accept_agreement(self):
         user_id = self.account_info["userId"]
