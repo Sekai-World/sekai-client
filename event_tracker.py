@@ -95,37 +95,21 @@ def track_event_scores(curr_time):
     logger.debug(f"[track_event_scores] got user id {user_id}")
 
     ranking_data = {"time": curr_time}
+    event_id = event_data["id"]
 
-    ranking_data["first10"] = jsonrpc_client.request("call_pjsk_api", [
-        f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank=1&lowerLimit=9'
-    ])["rankings"]
+    # first 100
+    logger.debug("[track_event_scores] fetching first ten ranked players")
+    first100_data = jsonrpc_client.request("fetch_event_rank_first_100",
+                                           [event_id])
+    if first100_data["isEventAggregate"]:
+        logger.debug("[track_event_scores] event is aggregating, skipping...")
+        return
+    ranking_data["first100"] = first100_data["rankings"]
     logger.debug("[track_event_scores] fetched first ten ranked players")
 
-    logger.debug("[track_event_scores] fetching critical cutoffs")
-    for i in range(2, 6):
-        ranking_data[f"rank{i}0"] = jsonrpc_client.request(
-            "call_pjsk_api", [
-                f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank={i}0&lowerLimit=0'
-            ])["rankings"]
-    for i in range(1, 6):
-        ranking_data[f"rank{i}00"] = jsonrpc_client.request(
-            "call_pjsk_api", [
-                f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank={i}00&lowerLimit=0'
-            ])["rankings"]
-    for i in range(1, 6):
-        ranking_data[f"rank{i}000"] = jsonrpc_client.request(
-            "call_pjsk_api", [
-                f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank={i}000&lowerLimit=0'
-            ])["rankings"]
-    for i in range(1, 6):
-        ranking_data[f"rank{i}0000"] = jsonrpc_client.request(
-            "call_pjsk_api", [
-                f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank={i}0000&lowerLimit=0'
-            ])["rankings"]
-    ranking_data[f"rank100000"] = jsonrpc_client.request(
-        "call_pjsk_api", [
-            f'/user/{user_id}/event/{event_data["id"]}/ranking?targetRank=100000&lowerLimit=0'
-        ])["rankings"]
+    logger.debug("[track_event_scores] fetching border cutoffs")
+    border_data = jsonrpc_client.request("fetch_event_rank_border", [event_id])
+    ranking_data["border"] = border_data["borderRankings"]
 
     logger.debug(
         f"[track_event_scores] posting event ranking result to api, result={ranking_data}, api_key={sekai_api_key}"
