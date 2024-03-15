@@ -26,7 +26,7 @@ def get_answer():
         raise RuntimeError(res.args[1])
     elif isinstance(res, Exception):
         answer_queue.task_done()
-        raise str(res)
+        raise RuntimeError(str(res))
     else:
         answer_queue.task_done()
         return res
@@ -216,6 +216,24 @@ def fetch_information():
         raise RuntimeError("Init before calling this method")
 
     job_queue.put(lambda: api_client.fetch_information())
+    return get_answer()
+
+
+@api.dispatcher.add_method
+def fetch_event_rank_first_100(event_id):
+    if not user_logged_in:
+        raise RuntimeError("Login before calling this method")
+
+    job_queue.put(lambda: api_client.fetch_event_rank_first_100(event_id))
+    return get_answer()
+
+
+@api.dispatcher.add_method
+def fetch_event_rank_border(event_id):
+    if not user_logged_in:
+        raise RuntimeError("Login before calling this method")
+
+    job_queue.put(lambda: api_client.fetch_event_rank_border(event_id))
     return get_answer()
 
 
