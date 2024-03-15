@@ -111,9 +111,9 @@ def track_event_scores(curr_time):
     border_data = jsonrpc_client.request("fetch_event_rank_border", [event_id])
     ranking_data["border"] = border_data["borderRankings"]
 
-    logger.debug(
-        f"[track_event_scores] posting event ranking result to api, result={ranking_data}, api_key={sekai_api_key}"
-    )
+    # logger.debug(
+    #     f"[track_event_scores] posting event ranking result to api, result={ranking_data}, api_key={sekai_api_key}"
+    # )
     try:
         r = requests.post(
             f'https://api.sekai.best/event/{event_data["id"]}/rankings',
@@ -121,6 +121,7 @@ def track_event_scores(curr_time):
             headers={"X-API-Key": sekai_api_key},
             params={"region": pjsk_region})
         r.raise_for_status()
+        logger.debug("[track_event_scores] event ranking posted")
     except requests.HTTPError as err:
         logger.error(f'Error posting event ranking result to api, {r.content}')
         
@@ -128,7 +129,7 @@ def track_event_scores(curr_time):
         logger.debug("[track_event_scores] world link event detected, posting world bloom chapter rankings")
         chapter_ranking_data = {"time": curr_time}
         chapter_ranking_data["first100"] = first100_data["userWorldBloomChapterRankings"]
-        chapter_ranking_data["border"] = border_data["userWorldBloomChapterRankings"]
+        chapter_ranking_data["border"] = border_data["userWorldBloomChapterRankingBorders"]
         
         try:
             r = requests.post(
@@ -137,6 +138,7 @@ def track_event_scores(curr_time):
                 headers={"X-API-Key": sekai_api_key},
                 params={"region": pjsk_region})
             r.raise_for_status()
+            logger.debug("[track_event_scores] event chapter ranking posted")
         except requests.HTTPError as err:
             logger.error(f'Error posting event ranking result to api, {r.content}')
 
