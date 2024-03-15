@@ -28,6 +28,19 @@ is_in_maintenance = False
 curr_event_url = f'{strapi_base_url}/sekai-current-event' if pjsk_region == "jp" else f'{strapi_base_url}/sekai-current-event-{pjsk_region}'
 
 
+def get_current_world_link_character(event_id, curr_time):
+    json_url_base = 'https://sekai-world.github.io/sekai-master-db-diff' if pjsk_region == "jp" else f'https://sekai-world.github.io/sekai-master-db-{pjsk_region}-diff'
+    json_url = f'{json_url_base}/worldBlooms.json'
+    json_data = requests.get(json_url).json()
+    
+    # find the current world link character by event_id and current time
+    for world_link in json_data:
+        if world_link["eventId"] == event_id and world_link["chapterStartAt"] < curr_time and world_link["aggregateAt"] > curr_time:
+            return world_link["gameCharacterId"]
+        
+    return -1
+
+
 def track_event_func():
     logger.info("Track event score triggered by cron job")
 
@@ -127,9 +140,15 @@ def track_event_scores(curr_time):
         
     if event_data["eventType"] == "world_bloom":
         logger.debug("[track_event_scores] world link event detected, posting world bloom chapter rankings")
+        curr_character_id = get_current_world_link_character(event_id, curr_time)
+        if curr_character_id == -1:
+            logger.error("[track_event_scores] failed to get current world link character, skipping...")
+            return
+
+        logger.debug(f"[track_event_scores] current world link chapter character id: {curr_character_id}")
         chapter_ranking_data = {"time": curr_time}
-        chapter_ranking_data["first100"] = first100_data["userWorldBloomChapterRankings"]
-        chapter_ranking_data["border"] = border_data["userWorldBloomChapterRankingBorders"]
+        chapter_ranking_data["first100"] = [x for x in first100_data["userWorldBloomChapterRankings"] if x["gameCharacterId"] == curr_character_id]
+        chapter_ranking_data["border"] = [x for x in border_data["userWorldBloomChapterRankingBorders"] if x["gameCharacterId"] == curr_character_id]
         
         try:
             r = requests.post(
