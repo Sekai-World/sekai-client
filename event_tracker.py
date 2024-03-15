@@ -61,7 +61,7 @@ def track_event_func():
 
 
 scheduler = BlockingScheduler(timezone=timezone('Asia/Tokyo'))
-track_event_cron_trigger = CronTrigger(second='58')
+track_event_cron_trigger = CronTrigger(minute='*/3')
 track_event_job = scheduler.add_job(track_event_func,
                                     track_event_cron_trigger,
                                     name="track_event_job")
