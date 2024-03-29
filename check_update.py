@@ -309,7 +309,7 @@ def get_splitted_master_data():
     # download every split
     master_data: dict[str, list] = {}
     for split_path in master_split_paths:
-        master_data |= jsonrpc_client.request("call_pjsk_api", [split_path])
+        master_data |= jsonrpc_client.request("call_pjsk_api", [f'/{split_path}'])
         
     return master_data
 

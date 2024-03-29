@@ -4,6 +4,7 @@ from os import getenv
 initial_api_headers = {
     "jp": {
         "x-devicemodel": "iPad13,16",
+        "x-app-hash": getenv("APP_HASH", "a4afe2ff-8be2-4e6b-ebbc-75d32802351e"),
         "x-app-version": getenv("APP_VER", "1.10.0"),
         "x-asset-version": getenv("ASSET_VER", "1.7.3.1"),
         "x-data-version": getenv("DATA_VER", "1.7.3.1"),
@@ -16,7 +17,7 @@ initial_api_headers = {
         "x-ai": "",
         "x-ma": "",
         "x-ga": "",
-        "user-agent": "ProductName/152 CFNetwork/1494.0.7 Darwin/23.4.0",
+        "user-agent": "ProductName/169 CFNetwork/1494.0.7 Darwin/23.4.0",
         "accept": "application/octet-stream",
         "accept-encoding": "gzip, deflate, br",
         "accept-language": "zh-cn",
