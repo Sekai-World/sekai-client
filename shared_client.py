@@ -246,6 +246,14 @@ def call_pjsk_api(endpoint: str, method="get", body: str | dict = ""):
     return get_answer()
 
 
+@api.dispatcher.add_method
+def master_split_paths():
+    if not user_logged_in:
+        raise RuntimeError("Login before calling this method")
+
+    return api_client.master_split_paths
+
+
 app = Flask(__name__)
 app.register_blueprint(api.as_blueprint())
 
