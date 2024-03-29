@@ -57,6 +57,14 @@ class APIClient:
         self._region = data
 
         self.headers = deepcopy(initial_api_headers[data])
+        
+    @property
+    def master_split_paths(self) -> list[str]:
+        return self._master_split_paths
+    
+    @master_split_paths.setter
+    def master_split_paths(self, data: list[str]):
+        self._master_split_paths = data
 
     def init_cookie(self):
         r = requests.post(pjsk_cookie_post_url[self.region])
@@ -244,6 +252,9 @@ class APIClient:
             auth_data = self.call_pjsk_api(
                 f"/user/{user_id}/auth?refreshUpdatedResources=False", "put",
                 {"credential": credential})
+            
+            if self.region == "jp":
+                self.master_split_paths = auth_data["suiteMasterSplitPath"]
         elif self.region in ("tw", "kr"):
             access_token = self.account_info["loginInfo"]["accessToken"]
 

@@ -171,7 +171,7 @@ def update_i18n_files(key: str, data: list):
                   'w') as f:
             json.dump(
                 {
-                    elem["id"]: re.sub(r"^.*：", "",
+                    elem["id"]: re.sub(r"^.*:", "",
                                        re.sub(r"\[.*\]", "", elem["name"]))
                     for elem in data
                 },
@@ -300,6 +300,19 @@ def update_i18n_files(key: str, data: list):
                       indent=2)
 
 
+def get_splitted_master_data():
+    global pjsk_region
+    global version_info
+    
+    master_split_paths: list[str] = jsonrpc_client.request("master_split_paths")
+    
+    # download every split
+    master_data: dict[str, list] = {}
+    for split_path in master_split_paths:
+        master_data |= jsonrpc_client.request("call_pjsk_api", [split_path])
+        
+    return master_data
+
 def refresh_version():
     logger.debug("[refresh_version] called")
 
@@ -322,7 +335,10 @@ def refresh_version():
         f.truncate()
 
     logger.debug('[refresh_version] fetching master db')
-    master_data: dict[str, list] = jsonrpc_client.request("fetch_master_data")
+    if pjsk_region in ["jp"]:
+        master_data: dict[str, list] = get_splitted_master_data()
+    else:
+        master_data: dict[str, list] = jsonrpc_client.request("fetch_master_data")
     logger.debug(
         '[refresh_version] write master db to separate json files by keys')
     for key, value in master_data.items():
