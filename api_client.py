@@ -135,8 +135,9 @@ class APIClient:
                 self.logger.warn(
                     f"{self.region} server should update version info")
                 # update app version as well
-                var_text = get_app_ver_qooapp(app_id_regions[self.region])
-                self.headers["x-app-version"] = var_text
+                if not (self.region in ["jp"]):
+                    var_text = get_app_ver_qooapp(app_id_regions[self.region])
+                    self.headers["x-app-version"] = var_text
                 self.check_versions()
                 self.login()
                 if retry_after_error:
@@ -214,9 +215,11 @@ class APIClient:
             self.headers["x-data-version"] = curr_ver_info["dataVersion"]
             self.headers["x-asset-version"] = curr_ver_info["assetVersion"]
             self.headers["x-app-version"] = curr_ver_info["appVersion"]
+            if not (self.headers.get("x-app-hash", None) is None):
+                self.headers["x-app-hash"] = curr_ver_info["appHash"]
 
             self.logger.info(
-                f'{self.region} server fetched a new available version: appVersion={curr_ver_info["appVersion"]}, dataVersion={curr_ver_info["dataVersion"]}, assetVersion={curr_ver_info["assetVersion"]}'
+                f'{self.region} server fetched a new available version: appVersion={curr_ver_info["appVersion"]}, appHash={curr_ver_info["appHash"]} dataVersion={curr_ver_info["dataVersion"]}, assetVersion={curr_ver_info["assetVersion"]}'
             )
 
         self.version_info = curr_ver_info
