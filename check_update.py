@@ -336,6 +336,8 @@ def refresh_version():
 
     logger.debug('[refresh_version] fetching master db')
     if pjsk_region in ["jp"]:
+        # ask apiclient to relogin and refresh the splitted master data list
+        jsonrpc_client.request("relogin")
         master_data: dict[str, list] = get_splitted_master_data()
     else:
         master_data: dict[str, list] = jsonrpc_client.request("fetch_master_data")
