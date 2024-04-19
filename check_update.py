@@ -309,6 +309,7 @@ def get_splitted_master_data():
     # download every split
     master_data: dict[str, list] = {}
     for split_path in master_split_paths:
+        logger.debug(f'[get_splitted_master_data] fetch split {split_path}')
         master_data |= jsonrpc_client.request("call_pjsk_api", [f'/{split_path}'])
         
     return master_data
@@ -337,6 +338,7 @@ def refresh_version():
     logger.debug('[refresh_version] fetching master db')
     if pjsk_region in ["jp"]:
         # ask apiclient to relogin and refresh the splitted master data list
+        logger.debug('[refresh_version] relogin to refresh splitted master data list')
         jsonrpc_client.request("relogin")
         master_data: dict[str, list] = get_splitted_master_data()
     else:
