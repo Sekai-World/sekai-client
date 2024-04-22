@@ -8,7 +8,7 @@ from time import sleep
 
 from utils.constants import initial_api_headers, base_pjsk_api_url, pjsk_cookie_post_url, pjsk_region, app_id_regions
 from utils.crypto import encrypt, decrypt, encrypt_msgpack, decrypt_msgpack
-from utils.get_app_ver import get_app_ver_qooapp
+from utils.get_app_ver import get_app_ver_qooapp, get_app_ver_and_hash_jp
 
 LOGLEVEL = getenv('LOGLEVEL', 'INFO').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(asctime)s %(message)s')
@@ -135,9 +135,13 @@ class APIClient:
                 self.logger.warn(
                     f"{self.region} server should update version info")
                 # update app version as well
-                if not (self.region in ["jp"]):
-                    var_text = get_app_ver_qooapp(app_id_regions[self.region])
-                    self.headers["x-app-version"] = var_text
+                if self.region in ["jp"]:
+                    ver_data = get_app_ver_and_hash_jp()
+                    self.headers["x-app-version"] = ver_data["appVersion"]
+                    self.headers["x-app-hash"] = ver_data["appHash"]
+                else:
+                    ver_text = get_app_ver_qooapp(app_id_regions[self.region])
+                    self.headers["x-app-version"] = ver_text
                 self.check_versions()
                 self.login()
                 if retry_after_error:
@@ -217,9 +221,13 @@ class APIClient:
             self.headers["x-app-version"] = curr_ver_info["appVersion"]
             if not (self.headers.get("x-app-hash", None) is None):
                 self.headers["x-app-hash"] = curr_ver_info["appHash"]
+            elif self.region in ["jp"]:
+                ver_data = get_app_ver_and_hash_jp()
+                self.headers["x-app-version"] = ver_data["appVersion"]
+                self.headers["x-app-hash"] = ver_data["appHash"]
 
             self.logger.info(
-                f'{self.region} server fetched a new available version: appVersion={curr_ver_info["appVersion"]}, appHash={curr_ver_info["appHash"]} dataVersion={curr_ver_info["dataVersion"]}, assetVersion={curr_ver_info["assetVersion"]}'
+                f'{self.region} server fetched a new available version: appVersion={self.headers["x-app-version"]}, appHash={self.headers["x-app-hash"]} dataVersion={self.headers["x-data-version"]}, assetVersion={self.headers["x-asset-version"]}'
             )
 
         self.version_info = curr_ver_info

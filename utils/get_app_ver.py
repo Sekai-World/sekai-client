@@ -20,3 +20,11 @@ def get_app_ver_qooapp(appid) -> str:
     environ['APP_VER'] = var_text
 
     return var_text
+
+def get_app_ver_and_hash_jp() -> dict:
+    url = 'https://storage.sekai.best/sekai-best-assets/app-5EFRqzeWn5VDsWgq.json'
+    
+    r = requests.get(url)
+    data = r.json()
+    
+    return data
