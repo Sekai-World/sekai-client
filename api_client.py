@@ -57,11 +57,11 @@ class APIClient:
         self._region = data
 
         self.headers = deepcopy(initial_api_headers[data])
-        
+
     @property
     def master_split_paths(self) -> list[str]:
         return self._master_split_paths
-    
+
     @master_split_paths.setter
     def master_split_paths(self, data: list[str]):
         self._master_split_paths = data
@@ -105,7 +105,10 @@ class APIClient:
             )
             if r.headers.get("x-session-token", None):
                 self.headers["x-session-token"] = r.headers["x-session-token"]
-            if int(r.headers["content-length"]) > 0 and "octet-stream" in r.headers["content-type"] and len(r.content):
+            if int(
+                    r.headers["content-length"]
+            ) > 0 and "octet-stream" in r.headers["content-type"] and len(
+                    r.content):
                 try:
                     res_data = decrypt_msgpack(r.content)
                 except:
@@ -208,18 +211,19 @@ class APIClient:
                 res["new_version"] = True
         else:
             curr_ver_info = curr_ver_infos[0]
-            res["new_version"] = self.headers[
-                "x-data-version"] != curr_ver_info[
-                    "dataVersion"] or self.headers[
-                        "x-asset-version"] != curr_ver_info[
-                            "assetVersion"] or self.headers[
-                                "x-app-version"] != curr_ver_info["appVersion"]
+            res["new_version"] = (
+                "dataVersion" in curr_ver_info and
+                self.headers["x-data-version"] != curr_ver_info["dataVersion"]
+            ) or self.headers["x-asset-version"] != curr_ver_info[
+                "assetVersion"] or self.headers[
+                    "x-app-version"] != curr_ver_info["appVersion"]
 
         if res["new_version"]:
-            self.headers["x-data-version"] = curr_ver_info["dataVersion"]
+            if "dataVersion" in curr_ver_info:
+                self.headers["x-data-version"] = curr_ver_info["dataVersion"]
             self.headers["x-asset-version"] = curr_ver_info["assetVersion"]
             self.headers["x-app-version"] = curr_ver_info["appVersion"]
-            if not (self.headers.get("x-app-hash", None) is None):
+            if self.headers.get("x-app-hash", None) is not None and "appHash" in curr_ver_info:
                 self.headers["x-app-hash"] = curr_ver_info["appHash"]
             elif self.region in ["jp"]:
                 ver_data = get_app_ver_and_hash_jp()
@@ -227,7 +231,7 @@ class APIClient:
                 self.headers["x-app-hash"] = ver_data["appHash"]
 
             self.logger.info(
-                f'{self.region} server fetched a new available version: appVersion={self.headers["x-app-version"]}, appHash={self.headers["x-app-hash"]} dataVersion={self.headers["x-data-version"]}, assetVersion={self.headers["x-asset-version"]}'
+                f'{self.region} server fetched a new available version: appVersion={self.headers["x-app-version"]}, appHash={self.headers["x-app-hash"]} dataVersion={self.headers["x-data-version"] if "dataVersion" in curr_ver_info else "N/A"}, assetVersion={self.headers["x-asset-version"]}'
             )
 
         self.version_info = curr_ver_info
@@ -235,11 +239,12 @@ class APIClient:
         if input_ver_info:
             res["maintenance"] = self.version_info[
                 "appVersionStatus"] == "maintenance"
-            res["new_version"] = input_ver_info["dataVersion"] != curr_ver_info[
-                "dataVersion"] or input_ver_info[
-                    "assetVersion"] != curr_ver_info[
-                        "assetVersion"] or input_ver_info[
-                            "appVersion"] != curr_ver_info["appVersion"]
+            res["new_version"] = (
+                "dataVersion" in input_ver_info and
+                input_ver_info["dataVersion"] != curr_ver_info["dataVersion"]
+            ) or input_ver_info["assetVersion"] != curr_ver_info[
+                "assetVersion"] or input_ver_info[
+                    "appVersion"] != curr_ver_info["appVersion"]
 
         return res
 
@@ -263,7 +268,7 @@ class APIClient:
             auth_data = self.call_pjsk_api(
                 f"/user/{user_id}/auth?refreshUpdatedResources=False", "put",
                 {"credential": credential})
-            
+
             if self.region == "jp":
                 self.master_split_paths = auth_data["suiteMasterSplitPath"]
         elif self.region in ("tw", "kr"):
@@ -302,6 +307,8 @@ class APIClient:
                 "assetHash": "",
                 'appVersionStatus': "available",
             }
+        if self.region in ("jp"):
+            self.version_info["dataVersion"] = data_ver
 
         self.logger.debug("get suite user")
         user_id = self.account_info["userId"]
@@ -337,7 +344,7 @@ class APIClient:
 
         self.logger.debug("check user invitation")
         self.call_pjsk_api(f'/user/{user_id}/invitation', 'get')
-        
+
         self.logger.debug("refresh home login_bonus")
         self.call_pjsk_api(f'/user/{user_id}/home/refresh', 'put',
                            {"refreshableTypes": ["login_bonus"]})
@@ -373,8 +380,7 @@ class APIClient:
     def fetch_event_rank_first_100(self, event_id: str) -> dict:
         user_id = self.account_info["userId"]
         return self.call_pjsk_api(
-            f'/user/{user_id}/event/{event_id}/ranking?rankingViewType=top100'
-        )
+            f'/user/{user_id}/event/{event_id}/ranking?rankingViewType=top100')
 
     def fetch_event_rank_border(self, event_id: str) -> dict:
         return self.call_pjsk_api(f'/event/{event_id}/ranking-border')
