@@ -294,7 +294,7 @@ class APIClient:
         app_ver = auth_data["appVersion"]
         data_ver = auth_data["dataVersion"]
         asset_ver = auth_data["assetVersion"]
-        # asset_hash = auth_data["assetHash"]
+        asset_hash = auth_data["assetHash"]
         # app_hash = auth_data["appHash"]
         multi_play_ver = auth_data["multiPlayVersion"]
 
@@ -320,6 +320,7 @@ class APIClient:
             }
         if self.region in ("jp"):
             self.version_info["dataVersion"] = data_ver
+            self.version_info["asset_hash"] = asset_hash
 
         self.logger.debug("get suite user")
         user_id = self.account_info["userId"]
