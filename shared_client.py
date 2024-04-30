@@ -129,6 +129,11 @@ def is_init():
 
 
 @api.dispatcher.add_method
+def is_login():
+    return user_logged_in
+
+
+@api.dispatcher.add_method
 def login():
     job_queue.put(lambda: login_account())
     return get_answer()

@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class APIClient:
+    _account_info = {}
+    _version_info = {}
+    _user_info = {}
+    _region = ''
+    _master_split_paths = []
 
     def __init__(self, region=pjsk_region, logger=logger) -> None:
         self.logger = logger
@@ -26,7 +31,7 @@ class APIClient:
 
     @property
     def account_info(self) -> dict:
-        return self._account_info or {}
+        return self._account_info
 
     @account_info.setter
     def account_info(self, data: dict):
@@ -223,7 +228,9 @@ class APIClient:
                 self.headers["x-data-version"] = curr_ver_info["dataVersion"]
             self.headers["x-asset-version"] = curr_ver_info["assetVersion"]
             self.headers["x-app-version"] = curr_ver_info["appVersion"]
-            if self.headers.get("x-app-hash", None) is not None and "appHash" in curr_ver_info:
+            if self.headers.get(
+                    "x-app-hash",
+                    None) is not None and "appHash" in curr_ver_info:
                 self.headers["x-app-hash"] = curr_ver_info["appHash"]
             elif self.region in ["jp"]:
                 ver_data = get_app_ver_and_hash_jp()
@@ -234,7 +241,8 @@ class APIClient:
                 f'{self.region} server fetched a new available version: appVersion={self.headers["x-app-version"]}, appHash={self.headers["x-app-hash"]} dataVersion={self.headers["x-data-version"] if "dataVersion" in curr_ver_info else "N/A"}, assetVersion={self.headers["x-asset-version"]}'
             )
 
-        self.version_info = curr_ver_info
+        for key in curr_ver_info:
+            self.version_info[key] = curr_ver_info[key]
 
         if input_ver_info:
             res["maintenance"] = self.version_info[

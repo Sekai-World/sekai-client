@@ -329,6 +329,8 @@ def refresh_version():
         )
 
     logger.debug('[refresh_version] write version info to json file')
+    if pjsk_region == "jp" and not jsonrpc_client.request("is_login"):
+        jsonrpc_client.request("login")
     global version_info
     version_info = jsonrpc_client.request("version_info")
     with open(path.join(masterdb_diff_folder_path, "versions.json"), 'w') as f:
