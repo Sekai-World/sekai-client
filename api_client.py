@@ -147,6 +147,7 @@ class APIClient:
                     ver_data = get_app_ver_and_hash_jp()
                     self.headers["x-app-version"] = ver_data["appVersion"]
                     self.headers["x-app-hash"] = ver_data["appHash"]
+                    self.version_info["appHash"] = ver_data["appHash"]
                 else:
                     ver_text = get_app_ver_qooapp(app_id_regions[self.region])
                     self.headers["x-app-version"] = ver_text
@@ -236,6 +237,7 @@ class APIClient:
                 ver_data = get_app_ver_and_hash_jp()
                 self.headers["x-app-version"] = ver_data["appVersion"]
                 self.headers["x-app-hash"] = ver_data["appHash"]
+                self.version_info["appHash"] = ver_data["appHash"]
 
             self.logger.info(
                 f'{self.region} server fetched a new available version: appVersion={self.headers["x-app-version"]}, appHash={self.headers["x-app-hash"]} dataVersion={self.headers["x-data-version"] if "dataVersion" in curr_ver_info else "N/A"}, assetVersion={self.headers["x-asset-version"]}'
