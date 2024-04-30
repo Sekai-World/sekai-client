@@ -250,7 +250,8 @@ class APIClient:
             res["maintenance"] = self.version_info[
                 "appVersionStatus"] == "maintenance"
             res["new_version"] = (
-                "dataVersion" in input_ver_info and
+                "dataVersion" in input_ver_info
+                and "dataVersion" in curr_ver_info and
                 input_ver_info["dataVersion"] != curr_ver_info["dataVersion"]
             ) or input_ver_info["assetVersion"] != curr_ver_info[
                 "assetVersion"] or input_ver_info[
