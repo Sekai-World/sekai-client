@@ -320,7 +320,7 @@ class APIClient:
             }
         if self.region in ("jp"):
             self.version_info["dataVersion"] = data_ver
-            self.version_info["asset_hash"] = asset_hash
+            self.version_info["assetHash"] = asset_hash
 
         self.logger.debug("get suite user")
         user_id = self.account_info["userId"]
