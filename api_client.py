@@ -240,7 +240,7 @@ class APIClient:
                 self.version_info["appHash"] = ver_data["appHash"]
 
             self.logger.info(
-                f'{self.region} server fetched a new available version: appVersion={self.headers["x-app-version"]}, appHash={self.headers["x-app-hash"]} dataVersion={self.headers["x-data-version"] if "dataVersion" in curr_ver_info else "N/A"}, assetVersion={self.headers["x-asset-version"]}'
+                f'{self.region} server fetched a new available version: appVersion={self.headers["x-app-version"]}, appHash={self.headers.get("x-app-hash", "N/A")} dataVersion={self.headers.get("x-data-version","N/A")}, assetVersion={self.headers["x-asset-version"]}'
             )
 
         for key in curr_ver_info:
@@ -294,7 +294,8 @@ class APIClient:
         app_ver = auth_data["appVersion"]
         data_ver = auth_data["dataVersion"]
         asset_ver = auth_data["assetVersion"]
-        asset_hash = auth_data["assetHash"] if "assetHash" in auth_data else None
+        asset_hash = auth_data[
+            "assetHash"] if "assetHash" in auth_data else None
         # app_hash = auth_data["appHash"]
         multi_play_ver = auth_data["multiPlayVersion"]
 
