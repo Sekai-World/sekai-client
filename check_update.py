@@ -454,7 +454,7 @@ def commit_master_diff():
             logger.debug(
                 f'[commit_master_diff] push commit to origin in {local_git_folder_names["masterDBDiff"]}'
             )
-            masterdb_diff_repo.remote().push()
+            masterdb_diff_repo.remote().push().raise_if_error()
         except:
             # reset to last commit
             # masterdb_diff_repo.head.reset(commit="HEAD~1",
@@ -494,7 +494,7 @@ def commit_i18n_files():
             logger.debug(
                 f'[commit_i18n_files] push commit to origin in {local_git_folder_names["i18n"]}'
             )
-            i18n_diff_repo.remote().push()
+            i18n_diff_repo.remote().push().raise_if_error()
         except:
             # reset to last commit
             # i18n_diff_repo.head.reset(commit="HEAD~1",
