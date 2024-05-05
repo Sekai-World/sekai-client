@@ -294,7 +294,7 @@ class APIClient:
         app_ver = auth_data["appVersion"]
         data_ver = auth_data["dataVersion"]
         asset_ver = auth_data["assetVersion"]
-        asset_hash = auth_data["assetHash"]
+        asset_hash = auth_data["assetHash"] if "assetHash" in auth_data else None
         # app_hash = auth_data["appHash"]
         multi_play_ver = auth_data["multiPlayVersion"]
 
