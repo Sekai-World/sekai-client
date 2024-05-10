@@ -320,8 +320,11 @@ class APIClient:
                 'appVersionStatus': "available",
             }
         if self.region in ("jp"):
+            self.version_info["appVersion"] = app_ver
+            self.version_info["assetVersion"] = asset_ver
             self.version_info["dataVersion"] = data_ver
             self.version_info["assetHash"] = asset_hash
+            self.version_info["multiPlayVersion"] = multi_play_ver
 
         self.logger.debug("get suite user")
         user_id = self.account_info["userId"]
