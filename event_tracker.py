@@ -189,7 +189,7 @@ def bootstrap():
     logger.info("[bootstrap] Fetched current available version info")
 
     logger.info(
-        "[bootstrap] Finished, will track event result at 58 seconds of each minute"
+        "[bootstrap] Finished, will track event result every 3 minutes"
     )
     if scheduler.state != STATE_RUNNING:
         scheduler.start()
