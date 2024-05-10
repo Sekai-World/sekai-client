@@ -329,8 +329,12 @@ def refresh_version():
         )
 
     logger.debug('[refresh_version] write version info to json file')
-    if pjsk_region == "jp" and not jsonrpc_client.request("is_login"):
-        jsonrpc_client.request("login")
+    if pjsk_region == "jp":
+        if not jsonrpc_client.request("is_login"):
+            jsonrpc_client.request("login")
+        else:
+            logger.debug('[refresh_version] relogin to refresh full version info and splitted master data list')
+            jsonrpc_client.request("relogin")
     global version_info
     version_info = jsonrpc_client.request("version_info")
     with open(path.join(masterdb_diff_folder_path, "versions.json"), 'w') as f:
@@ -340,8 +344,8 @@ def refresh_version():
     logger.debug('[refresh_version] fetching master db')
     if pjsk_region in ["jp"]:
         # ask apiclient to relogin and refresh the splitted master data list
-        logger.debug('[refresh_version] relogin to refresh splitted master data list')
-        jsonrpc_client.request("relogin")
+        # logger.debug('[refresh_version] relogin to refresh splitted master data list')
+        # jsonrpc_client.request("relogin")
         master_data: dict[str, list] = get_splitted_master_data()
     else:
         master_data: dict[str, list] = jsonrpc_client.request("fetch_master_data")
