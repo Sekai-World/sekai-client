@@ -46,8 +46,10 @@ def track_event_func():
 
     ver_res = None
     try:
+        logger.info("[track_event_func] Check game versions")
         ver_res = jsonrpc_client.request("check_versions", [version_info])
     except:
+        logger.warn("[track_event_func] Failed to execute check_versions, restart bootstraping...")
         bootstrap()
         ver_res = jsonrpc_client.request("check_versions", [version_info])
     logger.debug('[track_event_func] got ver_res')

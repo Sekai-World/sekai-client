@@ -1,4 +1,4 @@
-from jsonrpc.backend.flask import JSONRPCAPI, JSONRPCRequest, JSONRPCInvalidRequestException, JSONRPCResponseManager, Response, DatetimeDecimalEncoder
+from jsonrpc.backend.flask import JSONRPCAPI, JSONRPCRequest, JSONRPCInvalidRequestException, JSONRPCResponseManager, Response
 import ujson as json
 
 
