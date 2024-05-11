@@ -6,6 +6,7 @@ from os import path, getenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from flask import Flask
+from jsonrpc.exceptions import JSONRPCInternalError
 
 from utils.constants import pjsk_region
 from utils.task_queue import job_queue, answer_queue
@@ -23,10 +24,10 @@ def get_answer():
     res = answer_queue.get()
     if isinstance(res, RuntimeError):
         answer_queue.task_done()
-        raise RuntimeError(res.args[1])
+        return JSONRPCInternalError(data=res.args[1])
     elif isinstance(res, Exception):
         answer_queue.task_done()
-        raise RuntimeError(str(res))
+        return JSONRPCInternalError(data=str(res))
     else:
         answer_queue.task_done()
         return res
