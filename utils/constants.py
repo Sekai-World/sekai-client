@@ -80,7 +80,7 @@ initial_api_headers = {
 
 base_pjsk_api_url = {
     "jp": "https://production-game-api.sekai.colorfulpalette.org/api",
-    "tw": "https://mk-zian-obt-https.bytedgame.com/api",
+    "tw": "https://mk-zian-obt-cdn.bytedgame.com/api",
     "en": "https://n-production-game-api.sekai-en.com/api",
     "kr": "https://mkkorea-obt-prod01-cdn.bytedgame.com/api",
 }
