@@ -307,10 +307,15 @@ def get_splitted_master_data():
     master_split_paths: list[str] = jsonrpc_client.request("master_split_paths")
     
     # download every split
-    master_data: dict[str, list] = {}
+    master_data_raw = []
     for split_path in master_split_paths:
         logger.debug(f'[get_splitted_master_data] fetch split {split_path}')
-        master_data |= jsonrpc_client.request("call_pjsk_api", [f'/{split_path}'])
+        master_data_raw.append(jsonrpc_client.request("call_pjsk_api", [f'/{split_path}']))
+        
+    master_data: dict[str, list] = {}
+    for idx, split_data_raw in enumerate(master_data_raw):
+        logger.debug(f'[get_splitted_master_data] merging split {master_split_paths[idx]}')
+        master_data |= split_data_raw
         
     return master_data
 
@@ -382,7 +387,7 @@ def refresh_version():
             with open(file_path, 'w') as f:
                 json.dump(file_data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.debug(json.dumps(value))
+            # logger.debug(json.dumps(value))
             raise e
 
         logger.debug(f'[refresh_version] wrote master db {key}.json')

@@ -113,14 +113,14 @@ def track_event_scores(curr_time):
     event_id = event_data["id"]
 
     # first 100
-    logger.debug("[track_event_scores] fetching first ten ranked players")
+    logger.debug("[track_event_scores] fetching first 100 ranked players")
     first100_data = jsonrpc_client.request("fetch_event_rank_first_100",
                                            [event_id])
     if first100_data["isEventAggregate"]:
         logger.debug("[track_event_scores] event is aggregating, skipping...")
         return
     ranking_data["first100"] = first100_data["rankings"]
-    logger.debug("[track_event_scores] fetched first ten ranked players")
+    logger.debug("[track_event_scores] fetched first 100 ranked players")
 
     logger.debug("[track_event_scores] fetching border cutoffs")
     border_data = jsonrpc_client.request("fetch_event_rank_border", [event_id])

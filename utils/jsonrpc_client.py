@@ -10,7 +10,7 @@ class JSONRPCClient:
         self.url = url
 
     def request(self, func_name: str, params: tuple | dict | None = None):
-        r = requests.post(self.url, json=request_uuid(func_name, params))
+        r = requests.post(self.url, json=request_uuid(func_name, params), timeout=150)
         parsed = parse(r.json())
 
         if isinstance(parsed, Ok):
