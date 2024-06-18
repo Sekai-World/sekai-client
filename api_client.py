@@ -72,7 +72,7 @@ class APIClient:
         self._master_split_paths = data
 
     def init_cookie(self):
-        r = requests.post(pjsk_cookie_post_url[self.region])
+        r = requests.post(pjsk_cookie_post_url[self.region], timeout=150)
         self.headers["cookie"] = r.headers["set-cookie"]
 
     def call_pjsk_api(self,
@@ -104,7 +104,8 @@ class APIClient:
                 method=method.lower(),
                 url=f"{base_pjsk_api_url[self.region]}{endpoint}",
                 headers=self.headers,
-                data=data)
+                data=data,
+                timeout=150)
             self.logger.debug(
                 f"response url={base_pjsk_api_url[self.region]}{endpoint}, method={method.lower()}, headers={r.headers.items()}, status={r.status_code}"
             )
