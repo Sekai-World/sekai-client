@@ -364,7 +364,7 @@ def refresh_version():
         try:
             id_key = None
             if any(x in key for x in [
-                    "event", "gacha", "virtual", "cheerfulCarnival", "tips", "musics", "cards"
+                    "event", "gacha", "virtual", "cheerfulCarnival", "tips", "music", "card"
             ]) and (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
                 id_key = "id"
             elif (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
