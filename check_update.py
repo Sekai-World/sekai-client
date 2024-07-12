@@ -369,21 +369,20 @@ def refresh_version():
                 id_key = "id"
             elif (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
                 id_key = "cardId"
-            if id_key is not None:
-                if path.exists(file_path):
-                    with open(file_path, 'r') as f:
+            if id_key is not None and path.exists(file_path):
+                with open(file_path, 'r') as f:
+                    try:
                         old_data = json.load(f)
-                        if isinstance(
-                                old_data,
-                                list) and len(old_data) and old_data[0].get(
-                                    id_key, None):
-                            file_data = [
-                                *list(
-                                    filter(
-                                        lambda x: not any(
-                                            x[id_key] == y[id_key]
-                                            for y in value), old_data)), *value
-                            ]
+                    except json.JSONDecodeError:
+                        old_data = []  # 或者根据需要处理异常
+            
+                if isinstance(old_data, list) and len(old_data) > 0 and old_data[0].get(id_key) is not None:
+                    # save ids in a set for faster lookup
+                    value_ids = {item[id_key] for item in value}
+                    # use list comprehension to filter out old data with same ids
+                    file_data = [x for x in old_data if x[id_key] not in value_ids] + value
+                    # sort file_name accroding to id_key again
+                    file_data.sort(key=lambda x: x[id_key])
             with open(file_path, 'w') as f:
                 json.dump(file_data, f, ensure_ascii=False, indent=2)
         except Exception as e:
