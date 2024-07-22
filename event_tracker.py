@@ -150,7 +150,8 @@ def track_event_scores(curr_time):
         logger.debug(f"[track_event_scores] current world link chapter character id: {curr_character_id}")
         chapter_ranking_data = {"time": curr_time}
         chapter_ranking_data["first100"] = [x for x in first100_data["userWorldBloomChapterRankings"] if x["gameCharacterId"] == curr_character_id]
-        chapter_ranking_data["border"] = [x for x in border_data["userWorldBloomChapterRankingBorders"] if x["gameCharacterId"] == curr_character_id and x["rank"] > 100]
+        chapter_ranking_data["border"] = [x for x in border_data["userWorldBloomChapterRankingBorders"] if x["gameCharacterId"] == curr_character_id]
+        chapter_ranking_data["border"]["borderRankings"] = [x for x in chapter_ranking_data["border"]["borderRankings"] if x["rank"] > 100]
         
         try:
             r = requests.post(
