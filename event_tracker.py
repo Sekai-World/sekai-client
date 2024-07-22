@@ -124,7 +124,7 @@ def track_event_scores(curr_time):
 
     logger.debug("[track_event_scores] fetching border cutoffs")
     border_data = jsonrpc_client.request("fetch_event_rank_border", [event_id])
-    ranking_data["border"] = border_data["borderRankings"]
+    ranking_data["border"] = [x for x in border_data["borderRankings"] if x["rank"] != 100]
 
     # logger.debug(
     #     f"[track_event_scores] posting event ranking result to api, result={ranking_data}, api_key={sekai_api_key}"
@@ -150,7 +150,7 @@ def track_event_scores(curr_time):
         logger.debug(f"[track_event_scores] current world link chapter character id: {curr_character_id}")
         chapter_ranking_data = {"time": curr_time}
         chapter_ranking_data["first100"] = [x for x in first100_data["userWorldBloomChapterRankings"] if x["gameCharacterId"] == curr_character_id]
-        chapter_ranking_data["border"] = [x for x in border_data["userWorldBloomChapterRankingBorders"] if x["gameCharacterId"] == curr_character_id]
+        chapter_ranking_data["border"] = [x for x in border_data["userWorldBloomChapterRankingBorders"] if x["gameCharacterId"] == curr_character_id and x["rank"] != 100]
         
         try:
             r = requests.post(
