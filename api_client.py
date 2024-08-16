@@ -181,7 +181,7 @@ class APIClient:
             return res
 
         system_data = self.fetch_system_data()
-        if self.region in ("jp"):
+        if self.region in ("jp", "en"):
             res["maintenance"] = system_data[
                 "maintenanceStatus"] == "maintenance_in"
 
@@ -189,23 +189,22 @@ class APIClient:
         curr_app_ver = self.headers["x-app-version"]
 
         curr_ver_info = None
-        curr_ver_infos = list(
-            filter(
-                lambda ver_info: ver_info["appVersion"] == curr_app_ver and
-                ver_info["appVersionStatus"] == "available",
-                all_ver_infos))[:1]
+        curr_ver_infos = [
+            ver_info for ver_info in all_ver_infos
+            if ver_info["appVersion"] == curr_app_ver and ver_info["appVersionStatus"] == "available"
+        ]
 
         if not len(curr_ver_infos):
-            curr_ver_infos = list(
-                filter(
-                    lambda ver_info: ver_info["appVersionStatus"] ==
-                    "available", all_ver_infos))[:1]
+            curr_ver_infos = [
+                ver_info for ver_info in all_ver_infos
+                if ver_info["appVersionStatus"] == "available"
+            ]
 
             if not len(curr_ver_infos):
-                curr_ver_infos = list(
-                    filter(
-                        lambda ver_info: ver_info["appVersionStatus"] ==
-                        "maintenance", all_ver_infos))[:1]
+                curr_ver_infos = [
+                    ver_info for ver_info in all_ver_infos
+                    if ver_info["appVersionStatus"] == "maintenance"
+                ]
                 if not len(curr_ver_infos):
                     raise RuntimeError(
                         f"{self.region} server failed to fetch valid version info"
