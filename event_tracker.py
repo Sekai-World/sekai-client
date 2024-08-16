@@ -5,11 +5,10 @@ import requests
 
 from os import getenv
 from pytz import timezone
-from git.repo import Repo
-from git.util import Actor
 from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.schedulers.base import STATE_RUNNING
+from apscheduler.schedulers.base import STATE_RUNNING, EVENT_JOB_MAX_INSTANCES
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.events import JobEvent
 
 from utils.jsonrpc_client import JSONRPCClient
 from utils.constants import strapi_base_url, pjsk_region, sekai_api_key
@@ -32,12 +31,14 @@ def get_current_world_link_character(event_id, curr_time):
     json_url_base = 'https://sekai-world.github.io/sekai-master-db-diff' if pjsk_region == "jp" else f'https://sekai-world.github.io/sekai-master-db-{pjsk_region}-diff'
     json_url = f'{json_url_base}/worldBlooms.json'
     json_data = requests.get(json_url).json()
-    
+
     # find the current world link character by event_id and current time
     for world_link in json_data:
-        if world_link["eventId"] == event_id and world_link["chapterStartAt"] < curr_time and world_link["aggregateAt"] > curr_time:
+        if world_link["eventId"] == event_id and world_link[
+                "chapterStartAt"] < curr_time and world_link[
+                    "aggregateAt"] > curr_time:
             return world_link["gameCharacterId"]
-        
+
     return -1
 
 
@@ -49,7 +50,9 @@ def track_event_func():
         logger.info("[track_event_func] Check game versions")
         ver_res = jsonrpc_client.request("check_versions", [version_info])
     except:
-        logger.warn("[track_event_func] Failed to execute check_versions, restart bootstraping...")
+        logger.warn(
+            "[track_event_func] Failed to execute check_versions, restart bootstraping..."
+        )
         bootstrap()
         ver_res = jsonrpc_client.request("check_versions", [version_info])
     logger.debug('[track_event_func] got ver_res')
@@ -75,11 +78,25 @@ def track_event_func():
         track_event_scores(curr_time)
 
 
+def scheduler_listener(event: JobEvent):
+    global track_event_job, track_event_cron_trigger
+    if event.code == EVENT_JOB_MAX_INSTANCES:
+        logger.error(
+            f"Scheduler error: maximum number of running instances reached, job {event.job_id} skipped")
+        if event.job_id == track_event_job.id:
+            logger.error("Track event job skipped, reset job...")
+            track_event_job.remove()
+            track_event_job = scheduler.add_job(track_event_func,
+                                                track_event_cron_trigger,
+                                                name="track_event_job")
+
+
 scheduler = BlockingScheduler(timezone=timezone('Asia/Tokyo'))
 track_event_cron_trigger = CronTrigger(minute='*/3')
 track_event_job = scheduler.add_job(track_event_func,
                                     track_event_cron_trigger,
                                     name="track_event_job")
+scheduler.add_listener(scheduler_listener, EVENT_JOB_MAX_INSTANCES)
 
 
 def refresh_version():
@@ -124,7 +141,9 @@ def track_event_scores(curr_time):
 
     logger.debug("[track_event_scores] fetching border cutoffs")
     border_data = jsonrpc_client.request("fetch_event_rank_border", [event_id])
-    ranking_data["border"] = [x for x in border_data["borderRankings"] if x["rank"] > 100]
+    ranking_data["border"] = [
+        x for x in border_data["borderRankings"] if x["rank"] > 100
+    ]
 
     # logger.debug(
     #     f"[track_event_scores] posting event ranking result to api, result={ranking_data}, api_key={sekai_api_key}"
@@ -139,21 +158,36 @@ def track_event_scores(curr_time):
         logger.debug("[track_event_scores] event ranking posted")
     except requests.HTTPError as err:
         logger.error(f'Error posting event ranking result to api, {r.content}')
-        
+
     if event_data["eventType"] == "world_bloom":
-        logger.debug("[track_event_scores] world link event detected, posting world bloom chapter rankings")
-        curr_character_id = get_current_world_link_character(event_id, curr_time)
+        logger.debug(
+            "[track_event_scores] world link event detected, posting world bloom chapter rankings"
+        )
+        curr_character_id = get_current_world_link_character(
+            event_id, curr_time)
         if curr_character_id == -1:
-            logger.error("[track_event_scores] failed to get current world link character, skipping...")
+            logger.error(
+                "[track_event_scores] failed to get current world link character, skipping..."
+            )
             return
 
-        logger.debug(f"[track_event_scores] current world link chapter character id: {curr_character_id}")
+        logger.debug(
+            f"[track_event_scores] current world link chapter character id: {curr_character_id}"
+        )
         chapter_ranking_data = {"time": curr_time}
-        chapter_ranking_data["first100"] = [x for x in first100_data["userWorldBloomChapterRankings"] if x["gameCharacterId"] == curr_character_id]
-        chapter_ranking_data["border"] = [x for x in border_data["userWorldBloomChapterRankingBorders"] if x["gameCharacterId"] == curr_character_id]
+        chapter_ranking_data["first100"] = [
+            x for x in first100_data["userWorldBloomChapterRankings"]
+            if x["gameCharacterId"] == curr_character_id
+        ]
+        chapter_ranking_data["border"] = [
+            x for x in border_data["userWorldBloomChapterRankingBorders"]
+            if x["gameCharacterId"] == curr_character_id
+        ]
         for border in chapter_ranking_data["border"]:
-            border["borderRankings"] = [x for x in border["borderRankings"] if x["rank"] > 100]
-        
+            border["borderRankings"] = [
+                x for x in border["borderRankings"] if x["rank"] > 100
+            ]
+
         try:
             r = requests.post(
                 f'https://api.sekai.best/event/{event_data["id"]}/chapter_rankings',
@@ -163,7 +197,8 @@ def track_event_scores(curr_time):
             r.raise_for_status()
             logger.debug("[track_event_scores] event chapter ranking posted")
         except requests.HTTPError as err:
-            logger.error(f'Error posting event ranking result to api, {r.content}')
+            logger.error(
+                f'Error posting event ranking result to api, {r.content}')
 
 
 def bootstrap():
@@ -193,8 +228,7 @@ def bootstrap():
     logger.info("[bootstrap] Fetched current available version info")
 
     logger.info(
-        "[bootstrap] Finished, will track event result every 3 minutes"
-    )
+        "[bootstrap] Finished, will track event result every 3 minutes")
     if scheduler.state != STATE_RUNNING:
         scheduler.start()
 
