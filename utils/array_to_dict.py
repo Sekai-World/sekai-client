@@ -41,10 +41,7 @@ structures = {
                 "cardId", "seq",
                 [
                     "cost",
-                    [
-                        "resourceId", "resourceType", "resourceLevel",
-                        "quantity"
-                    ]
+                    ("resourceId", "resourceType", "resourceLevel", "quantity")
                 ]
             ]
         ], ["masterLessonAchieveResources", ["masterRank",
@@ -89,8 +86,8 @@ structures = {
     ],
     "events": [
         "id", "eventType", "name", "assetbundleName", "bgmAssetbundleName",
-        "eventOnlyComponentDisplayStartAt", "startAt", "aggregateAt",
-        "rankingAnnounceAt", "distributionStartAt",
+        "eventPointAssetbundleName", "eventOnlyComponentDisplayStartAt",
+        "startAt", "aggregateAt", "rankingAnnounceAt", "distributionStartAt",
         "eventOnlyComponentDisplayEndAt", "closedAt", "virtualLiveId", "unit",
         [
             "eventRankingRewardRanges",
@@ -150,7 +147,7 @@ structures = {
                 "gachaSpinnableType"
             ]
         ], ["gachaPickups", ["gachaId", "cardId"]],
-        ["gachaInformation", ["gachaId", "summary", "description"]]
+        ["gachaInformation", ("gachaId", "summary", "description")]
     ],
     "honors": [
         "id", "seq", "groupId", "honorRarity", "name", "assetbundleName",
@@ -261,8 +258,7 @@ structures = {
                 "id", "seq", "virtualLiveSetlistType", "assetbundleName",
                 "virtualLiveStageId", "musicVocalId", "character3dId1",
                 "character3dId2", "character3dId3", "character3dId4",
-                "character3dId5", "character3dId6", "", "virtualLiveId",
-                "musicId"
+                "character3dId5", "character3dId6", "virtualLiveId", "musicId"
             ]
         ],
         [
@@ -285,7 +281,7 @@ structures = {
         ["virtualLiveRewards", ["virtualLiveType", "resourceBoxId"]],
         [
             "virtualLiveWaitingRoom",
-            ["id", "lobbyAssetbundleName", "startAt", "endAt"]
+            ("id", "lobbyAssetbundleName", "startAt", "endAt")
         ],
         [
             "virtualItems",
@@ -315,13 +311,10 @@ structures = {
         ],
         [
             "virtualLiveInformation",
-            ["virtualLiveId", "summary", "description"]
+            ("virtualLiveId", "summary", "description")
         ]
     ],
-    "wordings": [
-        "wordingKey",
-        "value"
-    ]
+    "wordings": ["wordingKey", "value"]
 }
 
 
