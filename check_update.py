@@ -17,6 +17,7 @@ from apscheduler.triggers.cron import CronTrigger
 from utils.jsonrpc_client import JSONRPCClient
 from utils.constants import remote_git_url_base, local_git_folder_names, strapi_base_url, strapi_token, update_options, pjsk_region
 from utils.git import check_git_folder
+from utils.array_to_dict import structures, convert_array_to_dict
 
 LOGLEVEL = getenv('LOGLEVEL', 'INFO').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(asctime)s %(message)s')
@@ -59,7 +60,7 @@ def try_update_func():
 
     global is_in_maintenance
     if ver_res["maintenance"]:
-        logger.warn("PJSK server is in maintenance, skipping...")
+        logger.warning("PJSK server is in maintenance, skipping...")
         is_in_maintenance = True
         return
 
@@ -303,21 +304,26 @@ def update_i18n_files(key: str, data: list):
 def get_splitted_master_data():
     global pjsk_region
     global version_info
-    
-    master_split_paths: list[str] = jsonrpc_client.request("master_split_paths")
-    
+
+    master_split_paths: list[str] = jsonrpc_client.request(
+        "master_split_paths")
+
     # download every split
     master_data_raw = []
     for split_path in master_split_paths:
         logger.debug(f'[get_splitted_master_data] fetch split {split_path}')
-        master_data_raw.append(jsonrpc_client.request("call_pjsk_api", [f'/{split_path}']))
-        
+        master_data_raw.append(
+            jsonrpc_client.request("call_pjsk_api", [f'/{split_path}']))
+
     master_data: dict[str, list] = {}
     for idx, split_data_raw in enumerate(master_data_raw):
-        logger.debug(f'[get_splitted_master_data] merging split {master_split_paths[idx]}')
+        logger.debug(
+            f'[get_splitted_master_data] merging split {master_split_paths[idx]}'
+        )
         master_data |= split_data_raw
-        
+
     return master_data
+
 
 def refresh_version():
     logger.debug("[refresh_version] called")
@@ -338,7 +344,9 @@ def refresh_version():
         if not jsonrpc_client.request("is_login"):
             jsonrpc_client.request("login")
         else:
-            logger.debug('[refresh_version] relogin to refresh full version info and splitted master data list')
+            logger.debug(
+                '[refresh_version] relogin to refresh full version info and splitted master data list'
+            )
             jsonrpc_client.request("relogin")
     global version_info
     version_info = jsonrpc_client.request("version_info")
@@ -353,7 +361,8 @@ def refresh_version():
         # jsonrpc_client.request("relogin")
         master_data: dict[str, list] = get_splitted_master_data()
     else:
-        master_data: dict[str, list] = jsonrpc_client.request("fetch_master_data")
+        master_data: dict[str,
+                          list] = jsonrpc_client.request("fetch_master_data")
     logger.debug(
         '[refresh_version] write master db to separate json files by keys')
     for key, value in master_data.items():
@@ -364,23 +373,30 @@ def refresh_version():
         try:
             id_key = None
             if any(x in key for x in [
-                    "event", "gacha", "virtual", "cheerfulCarnival", "tips", "music", "card"
+                    "event", "gacha", "virtual", "cheerfulCarnival", "tips",
+                    "music", "card"
             ]) and (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
                 id_key = "id"
             elif (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
                 id_key = "cardId"
+            if pjsk_region in ["tw", "kr"] and key in structures:
+                file_data = convert_array_to_dict(value, structures[key])
             if id_key is not None and path.exists(file_path):
                 with open(file_path, 'r') as f:
                     try:
                         old_data = json.load(f)
                     except json.JSONDecodeError:
                         old_data = []  # 或者根据需要处理异常
-            
-                if isinstance(old_data, list) and len(old_data) > 0 and old_data[0].get(id_key) is not None:
+
+                if isinstance(old_data,
+                              list) and len(old_data) > 0 and old_data[0].get(
+                                  id_key) is not None:
                     # save ids in a set for faster lookup
                     value_ids = {item[id_key] for item in value}
                     # use list comprehension to filter out old data with same ids
-                    file_data = [x for x in old_data if x[id_key] not in value_ids] + value
+                    file_data = [
+                        x for x in old_data if x[id_key] not in value_ids
+                    ] + value
                     # sort file_name accroding to id_key again
                     file_data.sort(key=lambda x: x[id_key])
             with open(file_path, 'w') as f:
@@ -537,7 +553,7 @@ def bootstrap():
     try:
         check_version_res = jsonrpc_client.request("check_versions")
         if check_version_res["maintenance"]:
-            logger.warn(
+            logger.warning(
                 "[bootstrap] Server in maintenance, retry after 10 minutes")
             sleep(10 * 60)
             bootstrap()

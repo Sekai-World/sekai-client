@@ -6,3 +6,4 @@ from . import git
 from . import decorators
 from . import get_app_ver
 from . import ujsonrpcapi
+from . import array_to_dict
