@@ -380,7 +380,7 @@ def refresh_version():
             elif (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
                 id_key = "cardId"
             if pjsk_region in ["tw", "kr"] and key in structures:
-                file_data = convert_array_to_dict(value, structures[key])
+                file_data = [convert_array_to_dict(file_datum, structures[key]) for file_datum in file_data]
             if id_key is not None and path.exists(file_path):
                 with open(file_path, 'r') as f:
                     try:
