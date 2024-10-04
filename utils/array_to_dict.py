@@ -31,8 +31,8 @@ structures = {
     "bondsHonors": [
         "id", "seq", "bondsGroupId", "gameCharacterUnitId1",
         "gameCharacterUnitId2", "honorRarity", "name", "description",
-        ["levels", ["id", "bondsHonorId", "level", "description"],
-         "configurableUnitVirtualSinger"]
+        ["levels", ["id", "bondsHonorId", "level", "description"]],
+        "configurableUnitVirtualSinger"
     ],
     "cardCostume3ds": ["cardId", "costume3dId"],
     "cards": [
