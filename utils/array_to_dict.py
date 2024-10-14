@@ -31,10 +31,16 @@ structures = {
     "bondsHonors": [
         "id", "seq", "bondsGroupId", "gameCharacterUnitId1",
         "gameCharacterUnitId2", "honorRarity", "name", "description",
-        ["levels", ["id", "bondsHonorId", "level", "description"]],
-        "configurableUnitVirtualSinger"
+        ["levels", ["id", "bondsHonorId", "level",
+                    "description"]], "configurableUnitVirtualSinger"
     ],
     "cardCostume3ds": ["cardId", "costume3dId"],
+    "cardEpisodes": [
+        "id", "cardId", "title", "scenarioId", "releaseConditionId",
+        "power1BonusFixed", "power2BonusFixed", "power3BonusFixed",
+        ["costs", ["resourceId", "resourceType", "resourceLevel",
+                   "quantity"]], "cardEpisodePartType"
+    ],
     "cards": [
         "id", "seq", "characterId", "cardRarityType",
         "specialTrainingPower1BonusFixed", "specialTrainingPower2BonusFixed",
