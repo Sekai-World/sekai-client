@@ -50,7 +50,7 @@ def track_event_func():
         logger.info("[track_event_func] Check game versions")
         ver_res = jsonrpc_client.request("check_versions", [version_info])
     except:
-        logger.warn(
+        logger.warning(
             "[track_event_func] Failed to execute check_versions, restart bootstraping..."
         )
         bootstrap()
@@ -59,7 +59,7 @@ def track_event_func():
 
     global is_in_maintenance
     if ver_res["maintenance"]:
-        logger.warn("PJSK server is in maintenance, skipping...")
+        logger.warning("PJSK server is in maintenance, skipping...")
         is_in_maintenance = True
         return
 
@@ -74,6 +74,9 @@ def track_event_func():
     try:
         track_event_scores(curr_time)
     except:
+        logger.warning(
+            '[W] Failed to track event scores, refresh version info and retrying...'
+        )
         refresh_version()
         track_event_scores(curr_time)
 
@@ -82,7 +85,8 @@ def scheduler_listener(event: JobEvent):
     global track_event_job, track_event_cron_trigger
     if event.code == EVENT_JOB_MAX_INSTANCES:
         logger.error(
-            f"Scheduler error: maximum number of running instances reached, job {event.job_id} skipped")
+            f"Scheduler error: maximum number of running instances reached, job {event.job_id} skipped"
+        )
         if event.job_id == track_event_job.id:
             logger.error("Track event job skipped, reset job...")
             track_event_job.remove()
@@ -153,9 +157,12 @@ def track_event_scores(curr_time):
             f'https://api.sekai.best/event/{event_data["id"]}/rankings',
             json=ranking_data,
             headers={"X-API-Key": sekai_api_key},
-            params={"region": pjsk_region})
+            params={"region": pjsk_region},
+            timeout=30)
         r.raise_for_status()
         logger.debug("[track_event_scores] event ranking posted")
+    except requests.Timeout as err:
+        logger.error(f'Error posting event ranking result to api, {err}')
     except requests.HTTPError as err:
         logger.error(f'Error posting event ranking result to api, {r.content}')
 
@@ -193,9 +200,12 @@ def track_event_scores(curr_time):
                 f'https://api.sekai.best/event/{event_data["id"]}/chapter_rankings',
                 json=chapter_ranking_data,
                 headers={"X-API-Key": sekai_api_key},
-                params={"region": pjsk_region})
+                params={"region": pjsk_region},
+                timeout=30)
             r.raise_for_status()
             logger.debug("[track_event_scores] event chapter ranking posted")
+        except requests.Timeout as err:
+            logger.error(f'Error posting event ranking result to api, {err}')
         except requests.HTTPError as err:
             logger.error(
                 f'Error posting event ranking result to api, {r.content}')
@@ -210,7 +220,7 @@ def bootstrap():
     try:
         check_version_res = jsonrpc_client.request("check_versions")
         if check_version_res["maintenance"]:
-            logger.warn(
+            logger.warning(
                 "[bootstrap] Server in maintenance, retry after 10 minutes")
             time.sleep(10 * 60)
             bootstrap()
