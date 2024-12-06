@@ -83,6 +83,7 @@ base_pjsk_api_url = {
     "tw": "https://mk-zian-obt-cdn.bytedgame.com/api",
     "en": "https://n-production-game-api.sekai-en.com/api",
     "kr": "https://mkkorea-obt-prod01-cdn.bytedgame.com/api",
+    "cn": "https://mkcn-prod-public-30001-1.dailygn.com/api"
 }
 
 pjsk_region = getenv("SEKAI_REGION", "jp")
