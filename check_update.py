@@ -375,11 +375,11 @@ def refresh_version():
             if any(x in key for x in [
                     "event", "gacha", "virtual", "cheerfulCarnival", "tips",
                     "music", "card"
-            ]) and (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
+            ]) and (pjsk_region not in ["cn", "tw", "kr"] and key != "eventCards"):
                 id_key = "id"
-            elif (pjsk_region in ["tw", "kr"] and key == "eventCards"):
+            elif (pjsk_region in ["cn", "tw", "kr"] and key == "eventCards"):
                 id_key = "cardId"
-            if pjsk_region in ["tw", "kr"] and key in structures:
+            if pjsk_region in ["cn", "tw", "kr"] and key in structures:
                 file_data = [convert_array_to_dict(file_datum, structures[key]) for file_datum in file_data]
             if id_key is not None and path.exists(file_path):
                 with open(file_path, 'r') as f:

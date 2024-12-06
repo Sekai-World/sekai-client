@@ -72,7 +72,7 @@ def get_account_info():
                 yaml.dump(account_info, f)
             return account_info
 
-    if client_region in ("tw", "kr"):
+    if client_region in ("cn", "tw", "kr"):
         access_token = getenv(f"SEKAI_{client_region.upper()}_ACCESS_TOKEN",
                               None)
         sdk_open_id = getenv(f"SEKAI_{client_region.upper()}_SDK_OPEN_ID",
