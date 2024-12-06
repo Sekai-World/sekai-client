@@ -11,13 +11,12 @@
 
 # End of https://www.toptal.com/developers/gitignore/api/vscode,node
 
-sekai-master-db-diff/
+sekai-master-db*/
 *.yaml
 !*.example.yaml
 !pnpm*.yaml
 sekai-event-track/
 sekai-i18n/
-sekai-master-db-tc-diff/
 sekai-event-track-tw/
 
 # Byte-compiled / optimized / DLL files
