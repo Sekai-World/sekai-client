@@ -177,7 +177,7 @@ class APIClient:
     def check_versions(self, input_ver_info=None):
         res = {"maintenance": False, "new_version": False}
 
-        if self.region in ("tw", "kr"):
+        if self.region in ("cn", "tw", "kr"):
             return res
 
         system_data = self.fetch_system_data()
@@ -282,7 +282,7 @@ class APIClient:
 
             if self.region == "jp":
                 self.master_split_paths = auth_data["suiteMasterSplitPath"]
-        elif self.region in ("tw", "kr"):
+        elif self.region in ("cn", "tw", "kr"):
             access_token = self.account_info["loginInfo"]["accessToken"]
 
             auth_data = self.call_pjsk_api("/user/auth", "post", {
