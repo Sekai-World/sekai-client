@@ -377,7 +377,7 @@ def refresh_version():
                     "music", "card"
             ]) and (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
                 id_key = "id"
-            elif (pjsk_region not in ["tw", "kr"] and key != "eventCards"):
+            elif (pjsk_region in ["tw", "kr"] and key == "eventCards"):
                 id_key = "cardId"
             if pjsk_region in ["tw", "kr"] and key in structures:
                 file_data = [convert_array_to_dict(file_datum, structures[key]) for file_datum in file_data]
