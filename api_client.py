@@ -308,7 +308,7 @@ class APIClient:
             f'login appVersion={app_ver} dataVersion={data_ver} assetVersion={asset_ver}'
         )
 
-        if self.region in ("tw", "kr"):
+        if self.region in ("cn", "tw", "kr"):
             self.version_info = {
                 "systemProfile": "production",
                 "appVersion": app_ver,
@@ -317,7 +317,8 @@ class APIClient:
                 "assetVersion": asset_ver,
                 "appHash": "",
                 "assetHash": "",
-                'appVersionStatus': "available",
+                "appVersionStatus": "available",
+                "cdnVersion": auth_data["cdnVersion"]
             }
         if self.region in ("jp"):
             self.version_info["appVersion"] = app_ver
