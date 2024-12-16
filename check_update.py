@@ -14,7 +14,6 @@ from git.util import Actor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from utils.crypto import decrypt_msgpack
 from utils.jsonrpc_client import JSONRPCClient
 from utils.constants import remote_git_url_base, local_git_folder_names, strapi_base_url, strapi_token, update_options, pjsk_region, nuverse_master_data_base_url
 from utils.git import check_git_folder
@@ -329,10 +328,7 @@ def get_splitted_master_data():
 def download_nuverse_master_data(cdn_version: int):
     base_url = nuverse_master_data_base_url[pjsk_region]
     
-    r = requests.get(f'{base_url}/master-data-{cdn_version}.info')
-    r.raise_for_status()
-    
-    return decrypt_msgpack(r.content)
+    return jsonrpc_client.request("request_and_decrypt", [f'{base_url}/master-data-{cdn_version}.info'])
 
 
 def refresh_version():

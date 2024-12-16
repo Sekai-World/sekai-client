@@ -127,13 +127,13 @@ class APIClient:
             )
 
             if r.status_code == 403 and r.headers["content-type"] == "text/xml":
-                self.logger.warn(
+                self.logger.warning(
                     f"{self.region} server cookie expired, refreshing...")
                 self.init_cookie()
                 if retry_after_error:
                     return self.call_pjsk_api(endpoint, method, body)
             elif r.status_code == 429:
-                self.logger.warn(
+                self.logger.warning(
                     f"{self.region} server hits rate limit, sleep for 60s")
                 self.rate_limited = True
                 sleep(60.0)
@@ -141,7 +141,7 @@ class APIClient:
                 if retry_after_error:
                     return self.call_pjsk_api(endpoint, method, body)
             elif r.status_code == 426:
-                self.logger.warn(
+                self.logger.warning(
                     f"{self.region} server should update version info")
                 # update app version as well
                 if self.region in ["jp"]:
@@ -158,7 +158,7 @@ class APIClient:
                     return self.call_pjsk_api(endpoint, method, body)
             elif r.status_code == 406 and res_data[
                     "errorCode"] == 'rule_not_agreement':
-                self.logger.warn(
+                self.logger.warning(
                     f"{self.region} server should accept new agreeement")
                 self.accept_agreement()
                 self.login()
@@ -334,7 +334,7 @@ class APIClient:
         self.logger.debug("check and skip tutorial")
         user_tutorial = user_info["userTutorial"]
         if user_tutorial["tutorialStatus"] == "start":
-            self.logger.warn("tutorial is at start, set username first")
+            self.logger.warning("tutorial is at start, set username first")
             self.call_pjsk_api(f'/user/{user_id}/tutorial', 'patch',
                                {"tutorialStatus": "opening_1"})
             self.call_pjsk_api(f'/user/{user_id}', 'patch', {
@@ -409,3 +409,9 @@ class APIClient:
             "credential": credential,
             "userId": 0
         })
+        
+    def request_and_decrypt(self, url: str, method="get", body: str | dict = "") -> dict:
+        res = requests.request(method, url, data=body)
+        res.raise_for_status()
+
+        return decrypt_msgpack(res.content)
