@@ -14,8 +14,9 @@ from git.util import Actor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from utils.crypto import decrypt_msgpack
 from utils.jsonrpc_client import JSONRPCClient
-from utils.constants import remote_git_url_base, local_git_folder_names, strapi_base_url, strapi_token, update_options, pjsk_region
+from utils.constants import remote_git_url_base, local_git_folder_names, strapi_base_url, strapi_token, update_options, pjsk_region, nuverse_master_data_base_url
 from utils.git import check_git_folder
 from utils.array_to_dict import structures, convert_array_to_dict
 
@@ -325,6 +326,15 @@ def get_splitted_master_data():
     return master_data
 
 
+def download_nuverse_master_data(cdn_version: int):
+    base_url = nuverse_master_data_base_url[pjsk_region]
+    
+    r = requests.get(f'{base_url}/master-data-{cdn_version}.info')
+    r.raise_for_status()
+    
+    return decrypt_msgpack(r.content)
+
+
 def refresh_version():
     logger.debug("[refresh_version] called")
 
@@ -360,9 +370,12 @@ def refresh_version():
         # logger.debug('[refresh_version] relogin to refresh splitted master data list')
         # jsonrpc_client.request("relogin")
         master_data: dict[str, list] = get_splitted_master_data()
-    else:
+    elif pjsk_region in ["en"]:
         master_data: dict[str,
                           list] = jsonrpc_client.request("fetch_master_data")
+    else:
+        master_data: dict[str,
+                          list] = download_nuverse_master_data(version_info["cdnVersion"])
     logger.debug(
         '[refresh_version] write master db to separate json files by keys')
     for key, value in master_data.items():
