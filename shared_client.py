@@ -9,6 +9,7 @@ from flask import Flask
 from jsonrpc.exceptions import JSONRPCInternalError
 
 from utils.constants import pjsk_region
+from utils.crypto import decrypt_msgpack
 from utils.task_queue import job_queue, answer_queue
 from utils.ujsonrpcapi import api
 from api_client import APIClient
@@ -258,6 +259,15 @@ def master_split_paths():
         raise RuntimeError("Login before calling this method")
 
     return api_client.master_split_paths
+
+
+@api.dispatcher.add_method
+def request_and_decrypt(url: str, method="get", body: str | dict = ""):
+    if not api_client:
+        raise RuntimeError("Init before calling this method")
+
+    job_queue.put(lambda: api_client.request_and_decrypt(url, method, body))
+    return get_answer()
 
 
 app = Flask(__name__)
