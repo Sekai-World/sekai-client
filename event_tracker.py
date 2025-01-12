@@ -33,13 +33,19 @@ def get_current_world_link_character(event_id, curr_time):
     json_data = requests.get(json_url).json()
 
     # find the current world link character by event_id and current time
+    curr_id = -1
+    aggr_id = -1
     for world_link in json_data:
         if world_link["eventId"] == event_id and world_link[
                 "chapterStartAt"] < curr_time and world_link[
                     "aggregateAt"] > curr_time:
-            return world_link["gameCharacterId"]
+            curr_id = world_link["gameCharacterId"]
+        if world_link["eventId"] == event_id and world_link[
+                "chapterEndAt"] < curr_time and world_link[
+                    "chapterEndAt"] + 5 * 60 * 1000 > curr_time:
+            aggr_id = world_link["gameCharacterId"]
 
-    return -1
+    return curr_id, aggr_id
 
 
 def track_event_func():
@@ -118,12 +124,12 @@ def track_event_scores(curr_time):
     if not event_data or curr_time < event_data["startAt"] or (
             curr_time >
         (event_data["rankingAnnounceAt"] + 6 * 60 * 1000) and curr_time <
-        (event_data["closedAt"] - 10 * 1000)) or (
+        (event_data["closedAt"] - 15 * 60 * 1000)) or (
             curr_time > event_data["aggregateAt"]
             and curr_time < event_data["rankingAnnounceAt"]):
         logger.warning("No ongoing event, skipping...")
         return
-    elif curr_time >= (event_data["closedAt"] - 10 * 1000):
+    elif curr_time >= (event_data["closedAt"] - 15 * 60 * 1000):
         logger.warning("Current event will expire soon")
         raise RuntimeError("Current event will expire soon")
 
@@ -170,45 +176,82 @@ def track_event_scores(curr_time):
         logger.debug(
             "[track_event_scores] world link event detected, posting world bloom chapter rankings"
         )
-        curr_character_id = get_current_world_link_character(
+        curr_character_id, aggregated_character_id = get_current_world_link_character(
             event_id, curr_time)
+
         if curr_character_id == -1:
-            logger.error(
-                "[track_event_scores] failed to get current world link character, skipping..."
+            logger.warning(
+                "[track_event_scores] no ongoing world link chapter, skipping..."
             )
-            return
-
-        logger.debug(
-            f"[track_event_scores] current world link chapter character id: {curr_character_id}"
-        )
-        chapter_ranking_data = {"time": curr_time}
-        chapter_ranking_data["first100"] = [
-            x for x in first100_data["userWorldBloomChapterRankings"]
-            if x["gameCharacterId"] == curr_character_id
-        ]
-        chapter_ranking_data["border"] = [
-            x for x in border_data["userWorldBloomChapterRankingBorders"]
-            if x["gameCharacterId"] == curr_character_id
-        ]
-        for border in chapter_ranking_data["border"]:
-            border["borderRankings"] = [
-                x for x in border["borderRankings"] if x["rank"] > 100
+        else:
+            logger.debug(
+                f"[track_event_scores] current world link chapter character id: {curr_character_id}"
+            )
+            chapter_ranking_data = {"time": curr_time}
+            chapter_ranking_data["first100"] = [
+                x for x in first100_data["userWorldBloomChapterRankings"]
+                if x["gameCharacterId"] == curr_character_id
             ]
+            chapter_ranking_data["border"] = [
+                x for x in border_data["userWorldBloomChapterRankingBorders"]
+                if x["gameCharacterId"] == curr_character_id
+            ]
+            for border in chapter_ranking_data["border"]:
+                border["borderRankings"] = [
+                    x for x in border["borderRankings"] if x["rank"] > 100
+                ]
 
-        try:
-            r = requests.post(
-                f'https://api.sekai.best/event/{event_data["id"]}/chapter_rankings',
-                json=chapter_ranking_data,
-                headers={"X-API-Key": sekai_api_key},
-                params={"region": pjsk_region},
-                timeout=30)
-            r.raise_for_status()
-            logger.debug("[track_event_scores] event chapter ranking posted")
-        except requests.Timeout as err:
-            logger.error(f'Error posting event ranking result to api, {err}')
-        except requests.HTTPError as err:
-            logger.error(
-                f'Error posting event ranking result to api, {r.content}')
+            try:
+                r = requests.post(
+                    f'https://api.sekai.best/event/{event_data["id"]}/chapter_rankings',
+                    json=chapter_ranking_data,
+                    headers={"X-API-Key": sekai_api_key},
+                    params={"region": pjsk_region},
+                    timeout=30)
+                r.raise_for_status()
+                logger.debug("[track_event_scores] event chapter ranking posted")
+            except requests.Timeout as err:
+                logger.error(f'Error posting event ranking result to api, {err}')
+            except requests.HTTPError as err:
+                logger.error(
+                    f'Error posting event ranking result to api, {r.content}')
+                
+        if aggregated_character_id == -1:
+            logger.debug(
+                "[track_event_scores] no aggregated world link chapter, skipping..."
+            )
+        else:
+            logger.debug(
+                f"[track_event_scores] aggregated world link chapter character id: {aggregated_character_id}"
+            )
+            aggregated_chapter_ranking_data = {"time": curr_time}
+            aggregated_chapter_ranking_data["first100"] = [
+                x for x in first100_data["userWorldBloomChapterRankings"]
+                if x["gameCharacterId"] == aggregated_character_id
+            ]
+            aggregated_chapter_ranking_data["border"] = [
+                x for x in border_data["userWorldBloomChapterRankingBorders"]
+                if x["gameCharacterId"] == aggregated_character_id
+            ]
+            for border in aggregated_chapter_ranking_data["border"]:
+                border["borderRankings"] = [
+                    x for x in border["borderRankings"] if x["rank"] > 100
+                ]
+
+            try:
+                r = requests.post(
+                    f'https://api.sekai.best/event/{event_data["id"]}/chapter_rankings',
+                    json=aggregated_chapter_ranking_data,
+                    headers={"X-API-Key": sekai_api_key},
+                    params={"region": pjsk_region},
+                    timeout=30)
+                r.raise_for_status()
+                logger.debug("[track_event_scores] event chapter ranking posted")
+            except requests.Timeout as err:
+                logger.error(f'Error posting event ranking result to api, {err}')
+            except requests.HTTPError as err:
+                logger.error(
+                    f'Error posting event ranking result to api, {r.content}')
 
 
 def bootstrap():
