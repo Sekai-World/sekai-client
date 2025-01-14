@@ -24,7 +24,16 @@ def get_app_ver_qooapp(appid) -> str:
 def get_app_ver_and_hash_jp() -> dict:
     url = 'https://storage.sekai.best/sekai-best-assets/app-5EFRqzeWn5VDsWgq.json'
     
-    r = requests.get(url)
-    data = r.json()
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+    except:
+        # try to get from github repo
+        
+        url = 'https://sekai-world.github.io/sekai-master-db-diff/versions.json'
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
     
     return data
