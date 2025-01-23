@@ -380,7 +380,10 @@ class APIClient:
 
     def fetch_user_profile(self, user_id: str) -> dict:
         my_user_id = self.account_info["userId"]
-        return self.call_pjsk_api(f'/user/{my_user_id}/{user_id}/profile')
+        if self.region in ("jp"):
+            return self.call_pjsk_api(f'/user/{my_user_id}/{user_id}/profile')
+        else:
+            return self.call_pjsk_api(f'/user/{user_id}/profile')
 
     def fetch_user_event_ranking(self, target_user_id: str,
                                  event_id: str) -> dict:
