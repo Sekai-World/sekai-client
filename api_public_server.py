@@ -16,6 +16,7 @@ client_map = {
     "tw": JSONRPCClient(f'http://localhost:{getenv("TW_PORT", "39391")}/'),
     "en": JSONRPCClient(f'http://localhost:{getenv("EN_PORT", "39392")}/'),
     "kr": JSONRPCClient(f'http://localhost:{getenv("KR_PORT", "39393")}/'),
+    "cn": JSONRPCClient(f'http://localhost:{getenv("CN_PORT", "39394")}/'),
 }
 
 
