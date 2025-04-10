@@ -158,7 +158,8 @@ class APIClient:
                     ver_text = get_app_ver_qooapp(app_id_regions[self.region])
                     self.headers["x-app-version"] = ver_text
                 self.check_versions()
-                self.login()
+                if self.account_info:
+                    self.login()
                 if retry_after_error:
                     return self.call_pjsk_api(endpoint, method, body)
             elif r.status_code == 406 and res_data[
@@ -166,12 +167,14 @@ class APIClient:
                 self.logger.warning(
                     f"{self.region} server should accept new agreeement")
                 self.accept_agreement()
-                self.login()
+                if self.account_info:
+                    self.login()
                 if retry_after_error:
                     return self.call_pjsk_api(endpoint, method, body)
             elif r.status_code == 403:
                 if res_data["errorCode"] == "session_error":
-                    self.login()
+                    if self.account_info:
+                        self.login()
                     if retry_after_error:
                         return self.call_pjsk_api(endpoint, method, body)
 
