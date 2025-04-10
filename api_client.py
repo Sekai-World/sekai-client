@@ -8,7 +8,7 @@ from time import sleep
 
 from utils.constants import initial_api_headers, base_pjsk_api_url, pjsk_cookie_post_url, pjsk_region, app_id_regions
 from utils.crypto import encrypt, decrypt, encrypt_msgpack, decrypt_msgpack
-from utils.get_app_ver import get_app_ver_qooapp, get_app_ver_and_hash_jp
+from utils.get_app_ver import get_app_ver_qooapp, get_app_ver_and_hash_jp, get_app_ver_and_hash_en
 
 LOGLEVEL = getenv('LOGLEVEL', 'INFO').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(asctime)s %(message)s')
@@ -146,6 +146,11 @@ class APIClient:
                 # update app version as well
                 if self.region in ["jp"]:
                     ver_data = get_app_ver_and_hash_jp()
+                    self.headers["x-app-version"] = ver_data["appVersion"]
+                    self.headers["x-app-hash"] = ver_data["appHash"]
+                    self.version_info["appHash"] = ver_data["appHash"]
+                elif self.region in ["en"]:
+                    ver_data = get_app_ver_and_hash_en()
                     self.headers["x-app-version"] = ver_data["appVersion"]
                     self.headers["x-app-hash"] = ver_data["appHash"]
                     self.version_info["appHash"] = ver_data["appHash"]
