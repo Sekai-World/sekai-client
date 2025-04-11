@@ -35,21 +35,10 @@ structures = {
         "honorRarity",
         "name",
         "description",
-        [
-            "levels",
-            [
-                "id",
-                "bondsHonorId",
-                "level",
-                "description"
-            ]
-        ],
-        "configurableUnitVirtualSinger"
+        ["levels", ["id", "bondsHonorId", "level", "description"]],
+        "configurableUnitVirtualSinger",
     ],
-    "cardCostume3ds": [
-        "cardId",
-        "costume3dId"
-    ],
+    "cardCostume3ds": ["cardId", "costume3dId"],
     "cardEpisodes": [
         "id",
         "cardId",
@@ -59,16 +48,8 @@ structures = {
         "power1BonusFixed",
         "power2BonusFixed",
         "power3BonusFixed",
-        [
-            "costs",
-            [
-                "resourceId",
-                "resourceType",
-                "resourceLevel",
-                "quantity"
-            ]
-        ],
-        "cardEpisodePartType"
+        ["costs", ["resourceId", "resourceType", "resourceLevel", "quantity"]],
+        "cardEpisodePartType",
     ],
     "cards": [
         "id",
@@ -93,44 +74,26 @@ structures = {
             [
                 "cardId",
                 "seq",
-                [
-                    "cost",
-                    (
-                        "resourceId",
-                        "resourceType",
-                        "resourceLevel",
-                        "quantity"
-                    )
-                ]
-            ]
+                ["cost", ("resourceId", "resourceType", "resourceLevel", "quantity")],
+            ],
         ],
-        [
-            "masterLessonAchieveResources",
-            [
-                "masterRank",
-                "resources"
-            ]
-        ],
-        "releaseAt"
+        ["masterLessonAchieveResources", ["masterRank", "resources"]],
+        "releaseAt",
     ],
     "challengeLiveHighScoreRewards": [
         "id",
         "characterId",
         "highScore",
-        "resourceBoxId"
+        "resourceBoxId",
     ],
-    "challengeLiveStages": [
-        "characterId",
-        "rank",
-        "nextStageChallengePoint"
-    ],
+    "challengeLiveStages": ["characterId", "rank", "nextStageChallengePoint"],
     "character3ds": [
         "id",
         "characterId",
         "unit",
         "headCostume3dId",
         "hairCostume3dId",
-        "bodyCostume3dId"
+        "bodyCostume3dId",
     ],
     "characterArchiveVoices": [
         "id",
@@ -144,7 +107,7 @@ structures = {
         "externalId",
         "assetName",
         "isNextGrade",
-        "displayStartAt"
+        "displayStartAt",
     ],
     "characterRanks": [
         "id",
@@ -154,12 +117,7 @@ structures = {
         "power2BonusRate",
         "power3BonusRate",
         "rewardResourceBoxIds",
-        [
-            "characterRankAchieveResources",
-            [
-                "resources"
-            ]
-        ]
+        ["characterRankAchieveResources", ["resources"]],
     ],
     "cheerfulCarnivalPartyNames": [
         "id",
@@ -168,21 +126,15 @@ structures = {
         "gameCharacterUnitId2",
         "gameCharacterUnitId3",
         "gameCharacterUnitId4",
-        "gameCharacterUnitId5"
+        "gameCharacterUnitId5",
     ],
-    "episodeCharacters": [
-        "id",
-        "seq",
-        "character2dId",
-        "storyType",
-        "episodeId"
-    ],
+    "episodeCharacters": ["id", "seq", "character2dId", "storyType", "episodeId"],
     "eventDeckBonuses": [
         "id",
         "eventId",
         "gameCharacterUnitId",
         "cardAttr",
-        "bonusRate"
+        "bonusRate",
     ],
     "eventExchangeSummaries": [
         "id",
@@ -198,14 +150,9 @@ structures = {
                 "seq",
                 "resourceBoxId",
                 "exchangeLimit",
-                [
-                    "eventExchangeCost",
-                    (
-                        "resourceQuantity"
-                    )
-                ]
-            ]
-        ]
+                ["eventExchangeCost", ("resourceQuantity")],
+            ],
+        ],
     ],
     "events": [
         "id",
@@ -225,17 +172,8 @@ structures = {
         "unit",
         [
             "eventRankingRewardRanges",
-            [
-                "fromRank",
-                "toRank",
-                [
-                    "eventRankingRewards",
-                    [
-                        "resourceBoxId"
-                    ]
-                ]
-            ]
-        ]
+            ["fromRank", "toRank", ["eventRankingRewards", ["resourceBoxId"]]],
+        ],
     ],
     "eventStories": [
         "id",
@@ -254,16 +192,9 @@ structures = {
                 "assetbundleName",
                 "scenarioId",
                 "releaseConditionId",
-                [
-                    "episodeRewards",
-                    [
-                        "startAt",
-                        "endAt",
-                        "resourceBoxId"
-                    ]
-                ]
-            ]
-        ]
+                ["episodeRewards", ["startAt", "endAt", "resourceBoxId"]],
+            ],
+        ],
     ],
     "gachaCeilExchangeSummaries": [
         "id",
@@ -281,25 +212,13 @@ structures = {
                 "exchangeLimit",
                 "gachaCeilExchangeLabelType",
                 "substituteLimit",
-                [
-                    "gachaCeilExchangeCost",
-                    (
-                        "quantity",
-                        "resourceType",
-                        "resourceId"
-                    )
-                ],
+                ["gachaCeilExchangeCost", ("quantity", "resourceType", "resourceId")],
                 [
                     "gachaCeilExchangeSubstituteCosts",
-                    [
-                        "id",
-                        "resourceType",
-                        "resourceId",
-                        "substituteQuantity"
-                    ]
-                ]
-            ]
-        ]
+                    ["id", "resourceType", "resourceId", "substituteQuantity"],
+                ],
+            ],
+        ],
     ],
     "gachas": [
         "id",
@@ -317,14 +236,7 @@ structures = {
         "wishLimitedSelectCount",
         "gachaBonusId",
         "drawableGachaHour",
-        [
-            "gachaCardRarityRates",
-            [
-                "cardRarityType",
-                "lotteryType",
-                "rate"
-            ]
-        ],
+        ["gachaCardRarityRates", ["cardRarityType", "lotteryType", "rate"]],
         [
             "gachaDetails",
             [
@@ -334,8 +246,8 @@ structures = {
                 "weight",
                 "fixedBonusWeight",
                 "isWish",
-                "gachaDetailWishType"
-            ]
+                "gachaDetailWishType",
+            ],
         ],
         [
             "gachaBehaviors",
@@ -352,24 +264,11 @@ structures = {
                 "groupId",
                 "priority",
                 "resourceCategory",
-                "gachaSpinnableType"
-            ]
+                "gachaSpinnableType",
+            ],
         ],
-        [
-            "gachaPickups",
-            [
-                "gachaId",
-                "cardId"
-            ]
-        ],
-        [
-            "gachaInformation",
-            (
-                "gachaId",
-                "summary",
-                "description"
-            )
-        ]
+        ["gachaPickups", ["gachaId", "cardId"]],
+        ["gachaInformation", ("gachaId", "summary", "description")],
     ],
     "honors": [
         "id",
@@ -389,28 +288,18 @@ structures = {
                 "description",
                 "startAt",
                 "assetbundleName",
-                "honorRarity"
-            ]
-        ]
+                "honorRarity",
+            ],
+        ],
     ],
     "liveMissions": [
         "id",
         "liveMissionPeriodId",
         "liveMissionType",
         "requirement",
-        [
-            "rewards",
-            [
-                "resourceBoxId"
-            ]
-        ]
+        ["rewards", ["resourceBoxId"]],
     ],
-    "masterLessonRewards": [
-        "cardId",
-        "masterRank",
-        "resourceBoxId",
-        "id"
-    ],
+    "masterLessonRewards": ["cardId", "masterRank", "resourceBoxId", "id"],
     "materialExchangeSummaries": [
         "id",
         "seq",
@@ -442,11 +331,11 @@ structures = {
                         "costGroupId",
                         "seq",
                         "resourceId",
-                        "quantity"
-                    ]
-                ]
-            ]
-        ]
+                        "quantity",
+                    ],
+                ],
+            ],
+        ],
     ],
     "musicDifficulties": [
         "id",
@@ -454,19 +343,13 @@ structures = {
         "musicDifficulty",
         "playLevel",
         "releaseConditionId",
-        "totalNoteCount"
+        "totalNoteCount",
     ],
     "musics": [
         "id",
         "seq",
         "releaseConditionId",
-        [
-            "categories",
-            [
-                "musicCategoryName",
-                "startAt"
-            ]
-        ],
+        ["categories", ["musicCategoryName", "startAt"]],
         "title",
         "pronunciation",
         "creatorArtistId",
@@ -479,24 +362,12 @@ structures = {
         "publishedAt",
         "releasedAt",
         "fillerSec",
-        [
-            "infos",
-            [
-                "creator",
-                "title",
-                "lyricist",
-                "composer",
-                "arranger"
-            ]
-        ],
+        ["infos", ["title", "creator", "lyricist", "composer", "arranger"]],
         "musicCollaborationId",
         "isNewlyWrittenMusic",
-        "isFullLength"
+        "isFullLength",
     ],
-    "musicTags": [
-        "musicId",
-        "musicTag"
-    ],
+    "musicTags": ["musicId", "musicTag"],
     "musicVocals": [
         "id",
         "musicId",
@@ -506,23 +377,14 @@ structures = {
         "caption",
         [
             "characters",
-            [
-                "id",
-                "musicId",
-                "musicVocalId",
-                "characterType",
-                "characterId",
-                "seq"
-            ]
+            ["id", "musicId", "musicVocalId", "characterType", "characterId", "seq"],
         ],
         "assetbundleName",
         "specialSeasonId",
         "archiveDisplayType",
-        "archivePublishedAt"
+        "archivePublishedAt",
     ],
-    "ngWords": [
-        "word"
-    ],
+    "ngWords": ["word"],
     "releaseConditions": [
         "id",
         "sentence",
@@ -530,7 +392,7 @@ structures = {
         "releaseConditionTypeId",
         "releaseConditionTypeId2",
         "releaseConditionTypeLevel",
-        "releaseConditionTypeQuantity"
+        "releaseConditionTypeQuantity",
     ],
     "returnMissions": [
         "returnMissionGroupId",
@@ -539,7 +401,7 @@ structures = {
         "returnMissionType",
         "requirement",
         "sentence",
-        "resourceBoxId"
+        "resourceBoxId",
     ],
     "shopItems": [
         "id",
@@ -549,20 +411,10 @@ structures = {
         "resourceBoxId",
         [
             "costs",
-            [
-                [
-                    "cost",
-                    (
-                        "resourceId",
-                        "resourceType",
-                        "resourceLevel",
-                        "quantity"
-                    )
-                ]
-            ]
+            [["cost", ("resourceId", "resourceType", "resourceLevel", "quantity")]],
         ],
         "startAt",
-        "endAt"
+        "endAt",
     ],
     "stamps": [
         "id",
@@ -579,14 +431,9 @@ structures = {
         "gameCharacterUnitId",
         "archiveDisplayType",
         "archivePublishedAt",
-        "description"
+        "description",
     ],
-    "topics": [
-        "id",
-        "topicType",
-        "topicTypeId",
-        "releaseConditionId"
-    ],
+    "topics": ["id", "topicType", "topicTypeId", "releaseConditionId"],
     "virtualItems": [
         "id",
         "virtualItemCategory",
@@ -600,7 +447,7 @@ structures = {
         "effectExpressionType",
         "virtualItemLabelType",
         "gameCharacterUnitId",
-        "unit"
+        "unit",
     ],
     "virtualLives": [
         "id",
@@ -630,52 +477,20 @@ structures = {
                 "character3dId5",
                 "character3dId6",
                 "virtualLiveId",
-                "musicId"
-            ]
+                "musicId",
+            ],
         ],
         [
             "virtualLiveBeginnerSchedules",
-            [
-                "id",
-                "virtualLiveId",
-                "dayOfWeek",
-                "startTime",
-                "endTime"
-            ]
+            ["id", "virtualLiveId", "dayOfWeek", "startTime", "endTime"],
         ],
         [
             "virtualLiveSchedules",
-            [
-                "id",
-                "virtualLiveId",
-                "seq",
-                "startAt",
-                "endAt",
-                "noticeGroupId"
-            ]
+            ["id", "virtualLiveId", "seq", "startAt", "endAt", "noticeGroupId"],
         ],
-        [
-            "virtualLiveCharacters",
-            [
-                "gameCharacterUnitId"
-            ]
-        ],
-        [
-            "virtualLiveRewards",
-            [
-                "virtualLiveType",
-                "resourceBoxId"
-            ]
-        ],
-        [
-            "virtualLiveWaitingRoom",
-            (
-                "id",
-                "lobbyAssetbundleName",
-                "startAt",
-                "endAt"
-            )
-        ],
+        ["virtualLiveCharacters", ["gameCharacterUnitId"]],
+        ["virtualLiveRewards", ["virtualLiveType", "resourceBoxId"]],
+        ["virtualLiveWaitingRoom", ("id", "lobbyAssetbundleName", "startAt", "endAt")],
         [
             "virtualItems",
             [
@@ -691,39 +506,17 @@ structures = {
                 "effectExpressionType",
                 "virtualItemLabelType",
                 "gameCharacterUnitId",
-                "unit"
-            ]
+                "unit",
+            ],
         ],
         [
             "virtualLiveAppeals",
-            [
-                "id",
-                "virtualLiveId",
-                "virtualLiveStageStatus",
-                "appealText"
-            ]
+            ["id", "virtualLiveId", "virtualLiveStageStatus", "appealText"],
         ],
-        [
-            "virtualLiveBackgroundMusics",
-            [
-                "id",
-                "virtualLiveId",
-                "backgroundMusicId"
-            ]
-        ],
-        [
-            "virtualLiveInformation",
-            (
-                "virtualLiveId",
-                "summary",
-                "description"
-            )
-        ]
+        ["virtualLiveBackgroundMusics", ["id", "virtualLiveId", "backgroundMusicId"]],
+        ["virtualLiveInformation", ("virtualLiveId", "summary", "description")],
     ],
-    "wordings": [
-        "wordingKey",
-        "value"
-    ],
+    "wordings": ["wordingKey", "value"],
     "sekaiEchoStories": [
         "id",
         "groupId",
@@ -736,12 +529,9 @@ structures = {
         "stampId",
         "startAt",
         "unit",
-        "assetBundleName"
+        "assetBundleName",
     ],
-    "sekaiEchoStoryGroups": [
-        "groupId",
-        "groupName"
-    ],
+    "sekaiEchoStoryGroups": ["groupId", "groupName"],
     "sekaiEchoUnitCharacters": [
         "gameCharacterId",
         "unit",
@@ -761,12 +551,7 @@ structures = {
         "seq",
         "sentence",
         "requirement",
-        [
-            "rewards",
-            [
-                "resourceBoxId"
-            ]
-        ],
+        ["rewards", ["resourceBoxId"]],
     ],
     "sekaiEchoCardMissions": [
         "cardGroup",
@@ -776,24 +561,15 @@ structures = {
         "keyMission",
         "resourceBoxId",
     ],
-    "sekaiEchoHonors": [
-        "eventId",
-        "sekaiLevel",
-        "honorId"
-    ],
+    "sekaiEchoHonors": ["eventId", "sekaiLevel", "honorId"],
     "sekaiEchoHonorMissions": [
         "sekaiLevel",
         "sekaiEchoHonorMissionType",
         "seq",
         "requirement",
-        "sentence"
+        "sentence",
     ],
-    "sekaiEchoPointExchanges": [
-        "resourceType",
-        "resourceId",
-        "quantity",
-        "echoPoint"
-    ],
+    "sekaiEchoPointExchanges": ["resourceType", "resourceId", "quantity", "echoPoint"],
     "shiningExchanges": [
         "id",
         "shiningExchangeType",
@@ -803,27 +579,27 @@ structures = {
         "refreshCycle",
         "exchangeLimit",
         "startAt",
-        "endAt"
+        "endAt",
     ],
     "billingShopItems": [
         "id",
         "seq",
         "billingShopItemType",
         "billingProductGroupId",
+        "saleType",
         "name",
         "description",
-        "assetBundleName",
-        "resourceBoxId",
-        "bonusResourceBoxId",
-        "startAt",
-        "endAt",
         "billableLimitType",
         "billableLimitValue",
         "billableLimitResetIntervalType",
         "billableLimitResetIntervalValue",
+        "assetbundleName",
+        "resourceBoxId",
+        "bonusResourceBoxId",
         "label",
+        "startAt",
+        "endAt",
         "purchaseOption",
-        "saleType"
     ],
     "ongoingMissions": [
         "id",
@@ -831,19 +607,14 @@ structures = {
         "ongoingMissionType",
         "requirement",
         "sentence",
-        [
-            "rewards",
-            [
-                "resourceBoxId"
-            ]
-        ],
+        ["rewards", ["resourceBoxId"]],
         "startAt",
-        "endAt"
-    ]
+        "endAt",
+    ],
 }
 
 
-def convert_array_to_dict(array_data: list, key_structure: list):
+def convert_array_to_dict(array_data: list, key_structure: list) -> dict:
     """
     convert array to dict with given structure
     :param array_data: array data
@@ -862,13 +633,40 @@ def convert_array_to_dict(array_data: list, key_structure: list):
                 # if key is list and the second element is list, then it is a nested list
                 result[key[0]] = [
                     convert_array_to_dict(sub_array, key[1])
-                    for sub_array in array_data[i] if sub_array is not None
+                    for sub_array in array_data[i]
+                    if sub_array is not None
                 ]
             elif isinstance(key[1], tuple):
                 # if key is list and the second element is tuple, then it is a dict
                 result[key[0]] = {
-                    key[1][i]: v
-                    for i, v in enumerate(array_data[i]) if v is not None
+                    key[1][i]: v for i, v in enumerate(array_data[i]) if v is not None
                 }
 
+    return result
+
+
+def restore_compact_data(data: dict) -> list:
+    """
+    Original Author: TWY
+    convert compact data to original data structure
+    :param data: dict
+    :return: result: list
+    """
+    enum = data.get("__ENUM__", {})
+    column_labels = []
+    columns = []
+    for column in data:
+        if column == "__ENUM__":
+            continue
+        column_labels.append(column)
+        if column in enum:
+            columns.append([(None if i is None else enum[column][i]) for i in data[column]])
+        else:
+            columns.append(data[column])
+    num_entries = min(len(column) for column in columns)
+    result = []
+    for i in range(num_entries):
+        result.append({
+            key: column[i]
+            for key, column in zip(column_labels, columns)})
     return result
