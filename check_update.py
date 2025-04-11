@@ -1,23 +1,27 @@
 import logging
+import re
 import shutil
 import sys
-import ujson as json
-import requests
-import re
 import traceback
-
-from os import path, getenv
+from os import getenv, path
 from time import sleep
-from pytz import timezone
-from git.repo import Repo
-from git.util import Actor
+
+import requests
+import ujson as json
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
+from git.repo import Repo
+from git.util import Actor
+from pytz import timezone
 
-from utils.jsonrpc_client import JSONRPCClient
-from utils.constants import remote_git_url_base, local_git_folder_names, strapi_base_url, strapi_token, update_options, pjsk_region, nuverse_master_data_base_url
+from utils.array_to_dict import (convert_array_to_dict, restore_compact_data,
+                                 structures)
+from utils.constants import (local_git_folder_names,
+                             nuverse_master_data_base_url, pjsk_region,
+                             remote_git_url_base, strapi_base_url,
+                             strapi_token, update_options)
 from utils.git import check_git_folder
-from utils.array_to_dict import structures, convert_array_to_dict
+from utils.jsonrpc_client import JSONRPCClient
 
 LOGLEVEL = getenv('LOGLEVEL', 'INFO').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(asctime)s %(message)s')
@@ -410,6 +414,14 @@ def refresh_version():
                     file_data.sort(key=lambda x: x[id_key])
             with open(file_path, 'w') as f:
                 json.dump(file_data, f, ensure_ascii=False, indent=2)
+                
+            if pjsk_region in ["cn", "tw", "kr"] and key.startswith("compact"):
+                new_key = key[len("compact"):]
+                new_file_path = path.join(masterdb_diff_folder_path,
+                                         f'{new_key}.json')
+                new_file_data = restore_compact_data(file_data)
+                with open(new_file_path, 'w') as f:
+                    json.dump(new_file_data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             # logger.debug(json.dumps(value))
             raise e
