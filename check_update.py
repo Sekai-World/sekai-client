@@ -417,6 +417,7 @@ def refresh_version():
                 
             if pjsk_region in ["cn", "tw", "kr"] and key.startswith("compact"):
                 new_key = key[len("compact"):]
+                new_key = new_key[:1].lower() + new_key[1:]
                 new_file_path = path.join(masterdb_diff_folder_path,
                                          f'{new_key}.json')
                 new_file_data = restore_compact_data(file_data)
