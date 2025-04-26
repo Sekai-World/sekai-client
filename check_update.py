@@ -349,8 +349,9 @@ def refresh_version():
             f'[refresh_version] pulled repository {local_git_folder_names["i18n"]}'
         )
 
-    logger.debug('[refresh_version] write version info to json file')
-    if pjsk_region == "jp":
+    logger.info(
+        f'[refresh_version] fetching version info from {pjsk_region} server')
+    if pjsk_region in ("jp", "en"):
         if not jsonrpc_client.request("is_login"):
             jsonrpc_client.request("login")
         else:
@@ -360,19 +361,21 @@ def refresh_version():
             jsonrpc_client.request("relogin")
     global version_info
     version_info = jsonrpc_client.request("version_info")
+    logger.debug(
+        f'[refresh_version] fetched version info: {version_info}')
     with open(path.join(masterdb_diff_folder_path, "versions.json"), 'w') as f:
         json.dump(version_info, f, indent=2)
         f.truncate()
 
     logger.debug('[refresh_version] fetching master db')
-    if pjsk_region in ["jp"]:
+    if pjsk_region in ("jp", "en"):
         # ask apiclient to relogin and refresh the splitted master data list
         # logger.debug('[refresh_version] relogin to refresh splitted master data list')
         # jsonrpc_client.request("relogin")
         master_data: dict[str, list] = get_splitted_master_data()
-    elif pjsk_region in ["en"]:
-        master_data: dict[str,
-                          list] = jsonrpc_client.request("fetch_master_data")
+    # elif pjsk_region in ["en"]:
+    #     master_data: dict[str,
+    #                       list] = jsonrpc_client.request("fetch_master_data")
     else:
         master_data: dict[str,
                           list] = download_nuverse_master_data(version_info["cdnVersion"])
