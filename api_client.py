@@ -246,6 +246,11 @@ class APIClient:
                 self.headers["x-app-version"] = ver_data["appVersion"]
                 self.headers["x-app-hash"] = ver_data["appHash"]
                 self.version_info["appHash"] = ver_data["appHash"]
+            elif self.region in ["en"]:
+                ver_data = get_app_ver_and_hash_en()
+                self.headers["x-app-version"] = ver_data["appVersion"]
+                self.headers["x-app-hash"] = ver_data["appHash"]
+                self.version_info["appHash"] = ver_data["appHash"]
 
             self.logger.info(
                 f'{self.region} server fetched a new available version: appVersion={self.headers["x-app-version"]}, appHash={self.headers.get("x-app-hash", "N/A")} dataVersion={self.headers.get("x-data-version","N/A")}, assetVersion={self.headers["x-asset-version"]}'
@@ -288,8 +293,7 @@ class APIClient:
                 f"/user/{user_id}/auth?refreshUpdatedResources=False", "put",
                 {"credential": credential})
 
-            if self.region == "jp":
-                self.master_split_paths = auth_data["suiteMasterSplitPath"]
+            self.master_split_paths = auth_data["suiteMasterSplitPath"]
         elif self.region in ("cn", "tw", "kr"):
             access_token = self.account_info["loginInfo"]["accessToken"]
 
@@ -328,7 +332,7 @@ class APIClient:
                 "appVersionStatus": "available",
                 "cdnVersion": auth_data["cdnVersion"]
             }
-        if self.region in ("jp"):
+        if self.region in ("jp", "en"):
             self.version_info["appVersion"] = app_ver
             self.version_info["assetVersion"] = asset_ver
             self.version_info["dataVersion"] = data_ver
