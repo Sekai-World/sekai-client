@@ -29,6 +29,8 @@ curr_event_url = f'{strapi_base_url}/sekai-current-event' if pjsk_region == "jp"
 
 def get_current_world_link_character(event_id, curr_time):
     json_url_base = 'https://sekai-world.github.io/sekai-master-db-diff' if pjsk_region == "jp" else f'https://sekai-world.github.io/sekai-master-db-{pjsk_region}-diff'
+    if pjsk_region == "tw":
+        json_url_base = 'https://sekai-world.github.io/sekai-master-db-tc-diff'
     json_url = f'{json_url_base}/worldBlooms.json'
     json_data = requests.get(json_url).json()
 
