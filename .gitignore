@@ -193,3 +193,6 @@ test*
 
 # Built Visual Studio Code Extensions
 *.vsix
+
+event-*.json
+profile-*.json
