@@ -156,7 +156,7 @@ structures = {
                 "seq",
                 "resourceBoxId",
                 "exchangeLimit",
-                ["eventExchangeCost", ("resourceQuantity")],
+                ["eventExchangeCost", ("resourceQuantity",)],
             ],
         ],
     ],
