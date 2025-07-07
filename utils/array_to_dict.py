@@ -651,6 +651,8 @@ def convert_array_to_dict(array_data: list, key_structure: list) -> dict:
     for i, key in enumerate(key_structure):
         if isinstance(key, str):
             # if key is string, then assign the value to the key
+            if i >= len(array_data):
+                continue
             if array_data[i] is not None:
                 result[key] = array_data[i]
         elif isinstance(key, list):
