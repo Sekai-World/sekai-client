@@ -6,7 +6,6 @@ structures = {
         "isNextGrade",
         "scriptId",
         "scenarioId",
-        # "specialSeasonId",
         "characterIds",
         "archiveDisplayType",
         "archivePublishedAt",
@@ -79,6 +78,9 @@ structures = {
         ],
         ["masterLessonAchieveResources", ["masterRank", "resources"]],
         "releaseAt",
+        "specialTrainingSkillId",
+        "specialTrainingSkillName",
+        "cardSupplyId",
     ],
     "challengeLiveHighScoreRewards": [
         "id",
@@ -94,6 +96,10 @@ structures = {
         "headCostume3dId",
         "hairCostume3dId",
         "bodyCostume3dId",
+        "bodyCostume3dId",
+        "lookAtLimitX",
+        "lookAtLimitY",
+        "name",
     ],
     "characterArchiveVoices": [
         "id",
@@ -219,6 +225,7 @@ structures = {
                 ],
             ],
         ],
+        "gachaCeilItemId",
     ],
     "gachas": [
         "id",
@@ -256,7 +263,7 @@ structures = {
                 "gachaId",
                 "gachaBehaviorType",
                 "costResourceType",
-                "unknown",
+                "costResourceId",
                 "costResourceQuantity",
                 "spinCount",
                 "executeLimit",
@@ -269,6 +276,9 @@ structures = {
         ],
         ["gachaPickups", ["gachaId", "cardId"]],
         ["gachaInformation", ("gachaId", "summary", "description")],
+        "dailySpinLimit",
+        "gachaBonusItemReceivableRewardGroupId",
+        "gachaFreebieGroupId",
     ],
     "honors": [
         "id",
@@ -336,6 +346,10 @@ structures = {
                 ],
             ],
         ],
+        "materialExchangeDisplayResourceGroupId",
+        "materialExchangeDisplayResourceGroups",
+        "materialExchangeFreebieGroupJson",
+        "materialExchangeFreebies",
     ],
     "musicDifficulties": [
         "id",
@@ -486,9 +500,20 @@ structures = {
         ],
         [
             "virtualLiveSchedules",
-            ["id", "virtualLiveId", "seq", "startAt", "endAt", "noticeGroupId"],
+            [
+                "id",
+                "virtualLiveId",
+                "seq",
+                "startAt",
+                "endAt",
+                "noticeGroupId",
+                "isAfterEvent",
+            ],
         ],
-        ["virtualLiveCharacters", ["gameCharacterUnitId"]],
+        [
+            "virtualLiveCharacters",
+            ["gameCharacterUnitId", "virtualLivePerformanceType"],
+        ],
         ["virtualLiveRewards", ["virtualLiveType", "resourceBoxId"]],
         ["virtualLiveWaitingRoom", ("id", "lobbyAssetbundleName", "startAt", "endAt")],
         [
@@ -603,10 +628,10 @@ structures = {
     ],
     "ongoingMissions": [
         "id",
-        "seq",
         "ongoingMissionType",
-        "requirement",
+        "seq",
         "sentence",
+        "requirement",
         ["rewards", ["resourceBoxId"]],
         "startAt",
         "endAt",
@@ -660,13 +685,13 @@ def restore_compact_data(data: dict) -> list:
             continue
         column_labels.append(column)
         if column in enum:
-            columns.append([(None if i is None else enum[column][i]) for i in data[column]])
+            columns.append(
+                [(None if i is None else enum[column][i]) for i in data[column]]
+            )
         else:
             columns.append(data[column])
     num_entries = min(len(column) for column in columns)
     result = []
     for i in range(num_entries):
-        result.append({
-            key: column[i]
-            for key, column in zip(column_labels, columns)})
+        result.append({key: column[i] for key, column in zip(column_labels, columns)})
     return result
