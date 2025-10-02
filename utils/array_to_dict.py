@@ -4,8 +4,8 @@ structures = {
         "areaId",
         "actionSetType",
         "isNextGrade",
-        "scriptId",
         "scenarioId",
+        "scriptId",
         "characterIds",
         "archiveDisplayType",
         "archivePublishedAt",
@@ -33,6 +33,7 @@ structures = {
         "gameCharacterUnitId2",
         "honorRarity",
         "name",
+        "pronunciation",
         "description",
         ["levels", ["id", "bondsHonorId", "level", "description"]],
         "configurableUnitVirtualSinger",
@@ -96,7 +97,6 @@ structures = {
         "headCostume3dId",
         "hairCostume3dId",
         "bodyCostume3dId",
-        "bodyCostume3dId",
         "lookAtLimitX",
         "lookAtLimitY",
         "name",
@@ -159,6 +159,7 @@ structures = {
                 ["eventExchangeCost", ("resourceQuantity",)],
             ],
         ],
+        "assetbundleName",
     ],
     "events": [
         "id",
@@ -180,6 +181,7 @@ structures = {
             "eventRankingRewardRanges",
             ["fromRank", "toRank", ["eventRankingRewards", ["resourceBoxId"]]],
         ],
+        "distributionEndAt",
     ],
     "eventStories": [
         "id",
@@ -275,7 +277,16 @@ structures = {
             ],
         ],
         ["gachaPickups", ["gachaId", "cardId"]],
-        ["gachaInformation", ("gachaId", "summary", "description")],
+        [
+            "gachaInformation",
+            (
+                "gachaId",
+                "summary",
+                "description",
+                "bubbleAssetbundleName",
+                "bubbleText",
+            ),
+        ],
         "dailySpinLimit",
         "gachaBonusItemReceivableRewardGroupId",
         "gachaFreebieGroupId",
@@ -462,6 +473,7 @@ structures = {
         "virtualItemLabelType",
         "gameCharacterUnitId",
         "unit",
+        "subGameCharacterId",
     ],
     "virtualLives": [
         "id",
@@ -512,7 +524,11 @@ structures = {
         ],
         [
             "virtualLiveCharacters",
-            ["gameCharacterUnitId", "virtualLivePerformanceType"],
+            [
+                "gameCharacterUnitId",
+                "virtualLivePerformanceType",
+                "subGameCharacter2dId",
+            ],
         ],
         ["virtualLiveRewards", ["virtualLiveType", "resourceBoxId"]],
         ["virtualLiveWaitingRoom", ("id", "lobbyAssetbundleName", "startAt", "endAt")],
@@ -532,6 +548,7 @@ structures = {
                 "virtualItemLabelType",
                 "gameCharacterUnitId",
                 "unit",
+                "subGameCharacterId",
             ],
         ],
         [
@@ -540,6 +557,7 @@ structures = {
         ],
         ["virtualLiveBackgroundMusics", ["id", "virtualLiveId", "backgroundMusicId"]],
         ["virtualLiveInformation", ("virtualLiveId", "summary", "description")],
+        "subGameCharacterPenlightColorGroupId",
     ],
     "wordings": ["wordingKey", "value"],
     "sekaiEchoStories": [
@@ -555,6 +573,7 @@ structures = {
         "startAt",
         "unit",
         "assetBundleName",
+        "showGameCharacterId",
     ],
     "sekaiEchoStoryGroups": ["groupId", "groupName"],
     "sekaiEchoUnitCharacters": [
@@ -594,7 +613,13 @@ structures = {
         "requirement",
         "sentence",
     ],
-    "sekaiEchoPointExchanges": ["resourceType", "resourceId", "quantity", "echoPoint"],
+    "sekaiEchoPointExchanges": [
+        "resourceType",
+        "resourceId",
+        "quantity",
+        "echoPoint",
+        "seq",
+    ],
     "shiningExchanges": [
         "id",
         "shiningExchangeType",
@@ -625,6 +650,7 @@ structures = {
         "startAt",
         "endAt",
         "purchaseOption",
+        "billingShopTabChildId",
     ],
     "ongoingMissions": [
         "id",
