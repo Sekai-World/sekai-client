@@ -166,7 +166,7 @@ def track_event_scores(curr_time):
             json=ranking_data,
             headers={"X-API-Key": sekai_api_key},
             params={"region": pjsk_region},
-            timeout=30)
+            timeout=60)
         r.raise_for_status()
         logger.debug("[track_event_scores] event ranking posted")
     except requests.Timeout as err:
@@ -209,7 +209,7 @@ def track_event_scores(curr_time):
                     json=chapter_ranking_data,
                     headers={"X-API-Key": sekai_api_key},
                     params={"region": pjsk_region},
-                    timeout=30)
+                    timeout=60)
                 r.raise_for_status()
                 logger.debug("[track_event_scores] event chapter ranking posted")
             except requests.Timeout as err:
@@ -246,7 +246,7 @@ def track_event_scores(curr_time):
                     json=aggregated_chapter_ranking_data,
                     headers={"X-API-Key": sekai_api_key},
                     params={"region": pjsk_region},
-                    timeout=30)
+                    timeout=60)
                 r.raise_for_status()
                 logger.debug("[track_event_scores] event chapter ranking posted")
             except requests.Timeout as err:
