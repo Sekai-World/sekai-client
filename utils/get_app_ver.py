@@ -39,7 +39,8 @@ def get_app_ver_and_hash_jp() -> dict:
     return data
 
 def get_app_ver_and_hash_en() -> dict:
-    url = 'https://storage.sekai.best/sekai-best-assets/app-en-app-hash.json'
+    # url = 'https://storage.sekai.best/sekai-best-assets/app-en-app-hash.json'
+    url = 'https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-en-master/refs/heads/main/versions/current_version.json'
     
     try:
         r = requests.get(url, timeout=10)
