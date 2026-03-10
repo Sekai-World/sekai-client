@@ -14,8 +14,10 @@ from git.repo import Repo
 from git.util import Actor
 from pytz import timezone
 
-from utils.array_to_dict import (convert_array_to_dict, restore_compact_data,
-                                 structures)
+from utils.array_to_dict import (convert_array_to_dict,
+                                 get_structures_for_app_ver,
+                                 resolve_structure_compatibility_version,
+                                 restore_compact_data)
 from utils.constants import (local_git_folder_names,
                              nuverse_master_data_base_url, pjsk_region,
                              remote_git_url_base, strapi_base_url,
@@ -381,6 +383,16 @@ def refresh_version():
                           list] = download_nuverse_master_data(version_info["cdnVersion"])
     logger.debug(
         '[refresh_version] write master db to separate json files by keys')
+    structures_app_ver = version_info.get("appVersion") or getenv("APP_VER", "")
+    current_structures = get_structures_for_app_ver(structures_app_ver)
+    current_structure_version = resolve_structure_compatibility_version(
+        structures_app_ver)
+    if pjsk_region in ["cn", "tw", "kr"]:
+        logger.info(
+            '[refresh_version] using %s structures for appVersion=%s',
+            current_structure_version or "base",
+            structures_app_ver or "N/A",
+        )
     for key, value in master_data.items():
         file_path = path.join(masterdb_diff_folder_path, f'{key}.json')
         file_data = value
@@ -395,8 +407,11 @@ def refresh_version():
                 id_key = "id"
             elif (pjsk_region in ["cn", "tw", "kr"] and key == "eventCards"):
                 id_key = "cardId"
-            if pjsk_region in ["cn", "tw", "kr"] and key in structures:
-                file_data = [convert_array_to_dict(file_datum, structures[key]) for file_datum in file_data]
+            if pjsk_region in ["cn", "tw", "kr"] and key in current_structures:
+                file_data = [
+                    convert_array_to_dict(file_datum, current_structures[key])
+                    for file_datum in file_data
+                ]
             if id_key is not None and path.exists(file_path):
                 with open(file_path, 'r') as f:
                     try:
