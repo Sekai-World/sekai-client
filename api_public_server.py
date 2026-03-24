@@ -1,4 +1,5 @@
 from os import getenv
+from threading import Lock
 from flask import Flask, jsonify, request, json
 from werkzeug.exceptions import BadRequest
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -18,6 +19,8 @@ client_map = {
     "kr": JSONRPCClient(f'http://localhost:{getenv("KR_PORT", "39393")}/'),
     "cn": JSONRPCClient(f'http://localhost:{getenv("CN_PORT", "39394")}/'),
 }
+bootstrap_lock = Lock()
+bootstrapped = False
 
 
 @app.errorhandler(BadRequest)
@@ -54,13 +57,27 @@ def is_regional_client_inited(region):
     return client_map[region].request("is_init", [])
 
 
-@app.before_first_request
 def bootstrap():
-    for region in client_map:
-        try:
-            init_regional_client(region)
-        except:
-            print(f"skip {region} region for bootstrap", flush=True)
+    global bootstrapped
+    if bootstrapped:
+        return
+
+    with bootstrap_lock:
+        if bootstrapped:
+            return
+
+        for region in client_map:
+            try:
+                init_regional_client(region)
+            except:
+                print(f"skip {region} region for bootstrap", flush=True)
+
+        bootstrapped = True
+
+
+@app.before_request
+def ensure_bootstrap():
+    bootstrap()
 
 
 @app.route('/health', methods=['GET'])

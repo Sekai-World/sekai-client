@@ -3,6 +3,7 @@ import jwt
 
 from pytz import timezone
 from os import path, getenv
+from threading import Lock
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from flask import Flask
@@ -19,6 +20,8 @@ api_client: APIClient = None
 client_region = pjsk_region
 user_logged_in = False
 user_info = None
+scheduler_start_lock = Lock()
+scheduler_started = False
 
 
 def get_answer():
@@ -56,7 +59,7 @@ def get_account_info():
             with open(filepath, 'r') as f:
                 return yaml.safe_load(f)
         else:
-            app.logger.warn(
+            app.logger.warning(
                 f'no {client_region} account found, registering a new one')
             register_info = api_client.register_new_account()
             credential = register_info["credential"]
@@ -274,6 +277,19 @@ app = Flask(__name__)
 app.register_blueprint(api.as_blueprint())
 
 
-@app.before_first_request
 def start_scheduler():
-    scheduler.start()
+    global scheduler_started
+    if scheduler_started:
+        return
+
+    with scheduler_start_lock:
+        if scheduler_started:
+            return
+        if not scheduler.running:
+            scheduler.start()
+        scheduler_started = True
+
+
+@app.before_request
+def ensure_scheduler_started():
+    start_scheduler()

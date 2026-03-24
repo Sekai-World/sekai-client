@@ -4,16 +4,15 @@ Unofficial API client for Project Sekai feat. Hatsune Miku and several useful to
 
 ## Bootstrap
 
-This repo use [`pipenv`][pipenv_url] to create the virtual environment for running python scripts.
+This repo uses [`uv`][uv_url] to create the virtual environment and manage dependencies for running python scripts. The project targets Python 3.12.
 
-To start, install `python` (version >= 3.10) and `pipenv` and run
+To start, install `uv` and run
 
 ```sh
-$ pipenv --python 3.10
-$ pipenv install
+$ uv sync
 ```
 
-[pipenv_url]: https://pipenv.pypa.io/en/latest/
+[uv_url]: https://docs.astral.sh/uv/
 
 ## Tools
 

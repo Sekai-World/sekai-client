@@ -1,0 +1,50 @@
+[project]
+name = "sekai-client"
+version = "0.1.0"
+description = "Unofficial API client for Project Sekai feat. Hatsune Miku and related tooling."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "apscheduler",
+    "certifi",
+    "cffi",
+    "charset-normalizer",
+    "click",
+    "cryptography",
+    "deprecated",
+    "flask",
+    "gitdb",
+    "gitpython",
+    "idna",
+    "itsdangerous",
+    "jinja2",
+    "json-rpc",
+    "jsonrpcclient",
+    "jwcrypto",
+    "markupsafe",
+    "pycparser",
+    "pycryptodome",
+    "pyjwt",
+    "pytz",
+    "pytz-deprecation-shim",
+    "pyyaml",
+    "requests",
+    "setuptools",
+    "six",
+    "smmap",
+    "tzdata",
+    "tzlocal",
+    "u-msgpack-python",
+    "urllib3",
+    "werkzeug",
+    "wrapt",
+    "yapf",
+    "gunicorn",
+    "beautifulsoup4",
+    "lxml",
+    "ujson",
+    "gevent",
+]
+
+[tool.uv]
+package = false
