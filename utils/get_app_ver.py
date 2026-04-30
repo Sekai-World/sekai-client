@@ -22,7 +22,7 @@ def get_app_ver_qooapp(appid) -> str:
     return var_text
 
 def get_app_ver_and_hash_jp() -> dict:
-    url = 'https://storage.sekai.best/sekai-best-assets/app-5EFRqzeWn5VDsWgq.json'
+    url = 'https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-master/refs/heads/main/versions/current_version.json'
     
     try:
         r = requests.get(url, timeout=10)
