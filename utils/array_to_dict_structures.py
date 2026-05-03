@@ -694,6 +694,19 @@ BASE_STRUCTURES = {
 STRUCTURE_COMPATIBILITY: dict[str, dict[str, list | None]] = {
     "5.0.0": {},
     "6.0.0": {
+        "actionSets": [
+            "id",
+            "areaId",
+            "actionSetType",
+            "isNextGrade",
+            "scenarioId",
+            "scriptId",
+            "specialSeasonId",
+            "characterIds",
+            "archiveDisplayType",
+            "archivePublishedAt",
+            "releaseConditionId",
+        ],
         "cards": [
             "id",
             "seq",
