@@ -104,6 +104,10 @@ update_options = {
     getenv("ENABLE_SEKAI_UPDATE_I18N", "false") in ("true", "True", "1"),
 }
 
+check_update_simple_mode = getenv("CHECK_UPDATE_SIMPLE_MODE",
+                                  "false") in ("true", "True", "1")
+check_update_versions_url = getenv("CHECK_UPDATE_VERSIONS_URL", "")
+
 local_git_folder_names = {
     "i18n": getenv("GIT_FOLDER_SEKAI_I18N", "sekai-i18n"),
     "masterDBDiff": getenv("GIT_FOLDER_SEKAI_MASTER_DB_DIFF", "sekai-master-db-diff")
