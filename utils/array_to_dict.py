@@ -41,8 +41,8 @@ def _build_context_error(
         details.append(f"array_len={len(array_data)}")
     except TypeError:
         details.append("array_len=N/A")
-    details.append(f"array_preview={_format_debug_value(array_data)}")
-    details.append(f"structure_preview={_format_debug_value(key_structure)}")
+    details.append(f"array_data={repr(array_data)}")
+    details.append(f"key_structure={repr(key_structure)}")
     return error_type(" | ".join(details))
 
 
