@@ -43,6 +43,8 @@ Some files need to have specific environment variables, listed below
 | `ENABLE_SEKAI_UPDATE_MASTER` | whether to update sekai master db | | ✅ | | |
 | `ENABLE_SEKAI_UPDATE_USER_INFO` | whether to update sekai user info | | ✅ | | |
 | `ENABLE_SEKAI_UPDATE_I18N` | whether to update sekai i18n files | | ✅ | | |
+| `CHECK_UPDATE_SIMPLE_MODE` | use versions.json without shared client for Nuverse servers | | ✅ | | |
+| `CHECK_UPDATE_VERSIONS_URL` | versions.json URL for simple check_update mode | | ✅ | | |
 | `GIT_FOLDER_SEKAI_I18N` | sekai i18n git project name (default: sekai-i18n) | | ✅ | | |
 | `GIT_FOLDER_SEKAI_MASTER_DB_DIFF` | sekai master db diff git project name (default: sekai-master-db-diff) | | ✅ | | |
 | `REMOTE_GIT_BASE_URL` | git remote base url | | ✅ | | |

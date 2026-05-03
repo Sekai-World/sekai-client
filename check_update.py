@@ -21,7 +21,10 @@ from utils.array_to_dict import (convert_array_to_dict,
 from utils.constants import (local_git_folder_names,
                              nuverse_master_data_base_url, pjsk_region,
                              remote_git_url_base, strapi_base_url,
-                             strapi_token, update_options)
+                             strapi_token, update_options,
+                             check_update_simple_mode,
+                             check_update_versions_url)
+from utils.crypto import decrypt_msgpack
 from utils.git import check_git_folder
 from utils.jsonrpc_client import JSONRPCClient
 
@@ -50,12 +53,16 @@ def day_change_func():
     masterdb_diff_repo.remote().pull()
 
     refresh_version()
-    if not is_in_maintenance and update_options["userInfo"]:
+    if not check_update_simple_mode and not is_in_maintenance and update_options["userInfo"]:
         save_info_from_suite_user()
 
 
 def try_update_func():
     logger.info("Check update triggered by cron job")
+
+    if check_update_simple_mode:
+        try_update_simple_func()
+        return
 
     ver_res = None
     try:
@@ -86,6 +93,37 @@ def try_update_func():
 
     if update_options["userInfo"]:
         refresh_information()
+
+    if commit_master_diff():
+        logger.info("Updated and committed master data")
+        if update_options["i18n"]:
+            if commit_i18n_files():
+                logger.info("Updated and committed i18n data")
+
+
+def try_update_simple_func():
+    global version_info
+    global is_in_maintenance
+
+    ver_res = check_versions_simple()
+    is_in_maintenance = False
+
+    logger.debug(
+        f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes'
+    )
+    masterdb_diff_repo.remote().pull()
+    if update_options["i18n"]:
+        logger.debug(
+            f'[bootstrap] Pull {local_git_folder_names["i18n"]} repo remote changes before making any local changes'
+        )
+        i18n_diff_repo.remote().pull()
+
+    if ver_res["new_version"] and update_options["master"]:
+        logger.info("Got a new version during checking update")
+        refresh_version()
+
+    if update_options["userInfo"]:
+        logger.warning("Simple check-update mode does not support userInfo")
 
     if commit_master_diff():
         logger.info("Updated and committed master data")
@@ -333,11 +371,48 @@ def get_splitted_master_data():
 
 def download_nuverse_master_data(cdn_version: int):
     base_url = nuverse_master_data_base_url[pjsk_region]
-    
+
+    if check_update_simple_mode:
+        res = requests.get(f'{base_url}/master-data-{cdn_version}.info',
+                           timeout=150)
+        res.raise_for_status()
+        return decrypt_msgpack(res.content)
+
     return jsonrpc_client.request("request_and_decrypt", [f'{base_url}/master-data-{cdn_version}.info'])
 
 
+def fetch_simple_version_info():
+    if not check_update_versions_url:
+        raise RuntimeError(
+            "CHECK_UPDATE_VERSIONS_URL is required in simple check-update mode"
+        )
+
+    res = requests.get(check_update_versions_url, timeout=150)
+    res.raise_for_status()
+    return res.json()
+
+
+def check_versions_simple():
+    global version_info
+
+    curr_ver_info = fetch_simple_version_info()
+    if version_info is None:
+        version_info = curr_ver_info
+        return {"maintenance": False, "new_version": True}
+
+    new_version = (
+        version_info.get("dataVersion") != curr_ver_info.get("dataVersion")
+        or version_info.get("assetVersion") != curr_ver_info.get("assetVersion")
+        or version_info.get("appVersion") != curr_ver_info.get("appVersion")
+        or version_info.get("cdnVersion") != curr_ver_info.get("cdnVersion"))
+    version_info = curr_ver_info
+
+    return {"maintenance": False, "new_version": new_version}
+
+
 def refresh_version():
+    global version_info
+
     logger.debug("[refresh_version] called")
 
     if update_options["i18n"]:
@@ -353,7 +428,9 @@ def refresh_version():
 
     logger.info(
         f'[refresh_version] fetching version info from {pjsk_region} server')
-    if pjsk_region in ("jp", "en"):
+    if check_update_simple_mode:
+        version_info = fetch_simple_version_info()
+    elif pjsk_region in ("jp", "en"):
         if not jsonrpc_client.request("is_login"):
             jsonrpc_client.request("login")
         else:
@@ -361,8 +438,8 @@ def refresh_version():
                 '[refresh_version] relogin to refresh full version info and splitted master data list'
             )
             jsonrpc_client.request("relogin")
-    global version_info
-    version_info = jsonrpc_client.request("version_info")
+    if not check_update_simple_mode:
+        version_info = jsonrpc_client.request("version_info")
     logger.debug(
         f'[refresh_version] fetched version info: {version_info}')
     with open(path.join(masterdb_diff_folder_path, "versions.json"), 'w') as f:
@@ -576,6 +653,10 @@ def commit_i18n_files():
 
 
 def bootstrap():
+    if check_update_simple_mode:
+        bootstrap_simple()
+        return
+
     if not jsonrpc_client.request("is_init") and not jsonrpc_client.request(
             "init", [pjsk_region]):
         sys.exit(1)
@@ -619,6 +700,57 @@ def bootstrap():
         )
         sleep(10 * 60)
         bootstrap()
+        return
+    logger.info("[bootstrap] Fetched current available version info")
+
+    if commit_master_diff():
+        logger.info("Updated and committed master data")
+        if update_options["i18n"]:
+            commit_i18n_files()
+            logger.info("Updated and committed i18n data")
+
+    logger.info(
+        "[bootstrap] Finished, will look for new PJSK game data version at every 0/30 minutes of the hours"
+    )
+    scheduler.start()
+
+
+def bootstrap_simple():
+    if pjsk_region not in ("cn", "tw", "kr"):
+        raise RuntimeError(
+            "Simple check-update mode only supports Nuverse servers: cn, tw, kr"
+        )
+    if not check_update_versions_url:
+        raise RuntimeError(
+            "CHECK_UPDATE_VERSIONS_URL is required in simple check-update mode"
+        )
+    if update_options["userInfo"]:
+        logger.warning("Simple check-update mode does not support userInfo")
+
+    global masterdb_diff_repo
+    masterdb_diff_repo = check_git_folder(masterdb_diff_folder_path,
+                                          remote_git_url_base)
+    global i18n_diff_repo
+    if update_options["i18n"]:
+        i18n_diff_repo = check_git_folder(i18n_diff_folder_path,
+                                          remote_git_url_base)
+    logger.info("[bootstrap] Local git folders checked")
+
+    try:
+        logger.debug(
+            f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes'
+        )
+        masterdb_diff_repo.remote().pull()
+
+        if update_options["master"]:
+            refresh_version()
+    except Exception:
+        logging.error(traceback.format_exc())
+        logger.error(
+            "[bootstrap] Failed to bootstrap simple mode. Retry after 10 minutes."
+        )
+        sleep(10 * 60)
+        bootstrap_simple()
         return
     logger.info("[bootstrap] Fetched current available version info")
 
