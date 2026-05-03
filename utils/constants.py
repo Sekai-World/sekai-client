@@ -84,7 +84,7 @@ base_pjsk_api_url = {
     "tw": "https://mk-zian-obt-cdn.bytedgame.com/api",
     "en": "https://n-production-game-api.sekai-en.com/api",
     "kr": "https://mkkorea-obt-prod01-cdn.bytedgame.com/api",
-    "cn": "https://mkcn-prod-public-30001-1.dailygn.com/api"
+    "cn": "https://mkcn-prod-public-60001-1.dailygn.com/api"
 }
 
 pjsk_region = getenv("SEKAI_REGION", "jp")
@@ -131,6 +131,6 @@ app_id_regions = {
 nuverse_master_data_base_url = {
     "tw": "https://lf16-mkovscdn-sg.bytedgame.com/obj/sf-game-alisg/gdl_app_5245/MasterData/60001",
     "kr": "https://lf19-mkkr.bytedgame.com/obj/sf-game-alisg/gdl_app_292248/MasterData/60001",
-    "cn": "https://lf9-mkcncdn-tos.dailygn.com/obj/sf-game-lf/gdl_app_5236/MasterData/30001"
+    "cn": "https://lf9-mkcncdn-tos.dailygn.com/obj/sf-game-lf/gdl_app_5236/MasterData/60001"
 }
 ### END check_update & event_tracker constants ###
