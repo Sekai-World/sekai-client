@@ -1177,9 +1177,21 @@ def _compare_semantic_versions(left: str, right: str) -> int:
             return -1
         if left_part[0] > right_part[0]:
             return 1
-        if left_part[1] < right_part[1]:
-            return -1
-        if left_part[1] > right_part[1]:
+        left_val = left_part[1]
+        right_val = right_part[1]
+        if isinstance(left_val, int) and isinstance(right_val, int):
+            if left_val < right_val:
+                return -1
+            if left_val > right_val:
+                return 1
+        elif isinstance(left_val, str) and isinstance(right_val, str):
+            if left_val < right_val:
+                return -1
+            if left_val > right_val:
+                return 1
+        else:
+            if isinstance(left_val, int):
+                return -1
             return 1
 
     return 0
