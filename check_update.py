@@ -476,6 +476,7 @@ def refresh_version():
         logger.debug(f'[refresh_version] start writing master db {key}.json')
 
         try:
+            last_record_idx = None
             id_key = None
             if any(x in key for x in [
                     "event", "gacha", "virtual", "cheerfulCarnival", "tips",
@@ -485,10 +486,18 @@ def refresh_version():
             elif (pjsk_region in ["cn", "tw", "kr"] and key == "eventCards"):
                 id_key = "cardId"
             if pjsk_region in ["cn", "tw", "kr"] and key in current_structures:
-                file_data = [
-                    convert_array_to_dict(file_datum, current_structures[key])
-                    for file_datum in file_data
-                ]
+                converted_file_data = []
+                for record_idx, file_datum in enumerate(file_data):
+                    last_record_idx = record_idx
+                    converted_file_data.append(
+                        convert_array_to_dict(
+                            file_datum,
+                            current_structures[key],
+                            structure_name=key,
+                            node_path=f"{key}[{record_idx}]",
+                        )
+                    )
+                file_data = converted_file_data
             if id_key is not None and path.exists(file_path):
                 with open(file_path, 'r') as f:
                     try:
@@ -519,8 +528,14 @@ def refresh_version():
                 with open(new_file_path, 'w') as f:
                     json.dump(new_file_data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            # logger.debug(json.dumps(value))
-            raise e
+            logger.exception(
+                '[refresh_version] failed writing master db key=%s appVersion=%s structureVersion=%s last_record_idx=%s',
+                key,
+                structures_app_ver or "N/A",
+                current_structure_version or "base",
+                last_record_idx,
+            )
+            raise
 
         logger.debug(f'[refresh_version] wrote master db {key}.json')
 
