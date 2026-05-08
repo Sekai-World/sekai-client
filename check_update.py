@@ -56,6 +56,12 @@ def day_change_func():
     if not check_update_simple_mode and not is_in_maintenance and update_options["userInfo"]:
         save_info_from_suite_user()
 
+    if commit_master_diff():
+        logger.info("Updated and committed master data")
+        if update_options["i18n"]:
+            if commit_i18n_files():
+                logger.info("Updated and committed i18n data")
+
 
 def try_update_func():
     logger.info("Check update triggered by cron job")
