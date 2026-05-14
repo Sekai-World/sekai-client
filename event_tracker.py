@@ -32,7 +32,7 @@ def get_current_world_link_character(event_id, curr_time):
     if pjsk_region == "tw":
         json_url_base = 'https://sekai-world.github.io/sekai-master-db-tc-diff'
     json_url = f'{json_url_base}/worldBlooms.json'
-    json_data = requests.get(json_url).json()
+    json_data = requests.get(json_url, timeout=60).json()
 
     # find the current world link character by event_id and current time
     curr_id = -1
@@ -57,9 +57,12 @@ def track_event_func():
     try:
         logger.info("[track_event_func] Check game versions")
         ver_res = jsonrpc_client.request("check_versions", [version_info])
-    except:
+    except Exception:
+        logger.exception(
+            "[track_event_func] Failed to execute check_versions, restart bootstrapping"
+        )
         logger.warning(
-            "[track_event_func] Failed to execute check_versions, restart bootstraping..."
+            "[track_event_func] Failed to execute check_versions, restart bootstrapping..."
         )
         bootstrap()
         ver_res = jsonrpc_client.request("check_versions", [version_info])
@@ -81,7 +84,8 @@ def track_event_func():
         f'[track_event_func] call track_event_scores now at {curr_time}')
     try:
         track_event_scores(curr_time)
-    except:
+    except Exception:
+        logger.exception("[track_event_func] Failed to track event scores")
         logger.warning(
             '[W] Failed to track event scores, refresh version info and retrying...'
         )
@@ -112,10 +116,10 @@ scheduler.add_listener(scheduler_listener, EVENT_JOB_MAX_INSTANCES)
 
 
 def refresh_version():
-    logger.info("Refersh version info")
+    logger.info("Refresh version info")
 
     global event_data
-    event_data = requests.get(curr_event_url).json()["eventJson"]
+    event_data = requests.get(curr_event_url, timeout=60).json()["eventJson"]
 
     global version_info
     version_info = jsonrpc_client.request("version_info")
@@ -262,24 +266,23 @@ def bootstrap():
         sys.exit(1)
     logger.info("[bootstrap] PJSK client inited")
 
-    try:
-        check_version_res = jsonrpc_client.request("check_versions")
-        if check_version_res["maintenance"]:
-            logger.warning(
-                "[bootstrap] Server in maintenance, retry after 10 minutes")
-            time.sleep(10 * 60)
-            bootstrap()
-            return
+    while True:
+        try:
+            check_version_res = jsonrpc_client.request("check_versions")
+            if check_version_res["maintenance"]:
+                logger.warning(
+                    "[bootstrap] Server in maintenance, retry after 10 minutes")
+                time.sleep(10 * 60)
+                continue
 
-        jsonrpc_client.request("login")
-        refresh_version()
-    except:
-        logger.error(
-            "[bootstrap] Failed to bootstrap, possible reasons: connection error or account info expired (for tw and kr servers). Retry after 10 minutes."
-        )
-        time.sleep(10 * 60)
-        bootstrap()
-        return
+            jsonrpc_client.request("login")
+            refresh_version()
+            break
+        except Exception:
+            logger.exception(
+                "[bootstrap] Failed to bootstrap, possible reasons: connection error or account info expired (for tw and kr servers). Retry after 10 minutes."
+            )
+            time.sleep(10 * 60)
     logger.info("[bootstrap] Fetched current available version info")
 
     logger.info(

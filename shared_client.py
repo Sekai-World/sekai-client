@@ -1,5 +1,7 @@
+import logging
 import yaml
 import jwt
+import queue
 
 from pytz import timezone
 from os import path, getenv
@@ -11,11 +13,12 @@ from jsonrpc.exceptions import JSONRPCInternalError
 
 from utils.constants import pjsk_region
 from utils.crypto import decrypt_msgpack
-from utils.task_queue import job_queue, answer_queue
+from utils.task_queue import job_queue
 from utils.ujsonrpcapi import api
 from api_client import APIClient
 
 dirname = path.dirname(__file__)
+logger = logging.getLogger(__name__)
 api_client: APIClient = None
 client_region = pjsk_region
 user_logged_in = False
@@ -24,17 +27,54 @@ scheduler_start_lock = Lock()
 scheduler_started = False
 
 
-def get_answer():
-    res = answer_queue.get()
+def _read_timeout_env(name: str, default: float) -> float:
+    raw = getenv(name, str(default))
+    try:
+        value = float(raw)
+        if value <= 0:
+            raise ValueError('timeout must be positive')
+        return value
+    except (TypeError, ValueError):
+        logger.warning(
+            'Invalid %s value=%r, falling back to %.1f', name, raw, default)
+        return default
+
+
+job_queue_timeout = _read_timeout_env('JOB_QUEUE_TIMEOUT', 30.0)
+answer_queue_timeout = _read_timeout_env('ANSWER_QUEUE_TIMEOUT', 180.0)
+
+
+def enqueue_job(job):
+    response_queue = queue.Queue(maxsize=1)
+    try:
+        job_queue.put((job, response_queue), timeout=job_queue_timeout)
+    except queue.Full:
+        return None, JSONRPCInternalError(
+            data='Job queue is full, please retry later')
+    return response_queue, None
+
+
+def get_answer(response_queue: queue.Queue):
+    try:
+        res = response_queue.get(timeout=answer_queue_timeout)
+    except queue.Empty:
+        return JSONRPCInternalError(data='Timed out waiting for worker response')
+
     if isinstance(res, RuntimeError):
-        answer_queue.task_done()
-        return JSONRPCInternalError(data=res.args[1])
+        err_data = str(res)
+        if len(res.args) > 1:
+            err_data = str(res.args[1])
+        return JSONRPCInternalError(data=err_data)
     elif isinstance(res, Exception):
-        answer_queue.task_done()
         return JSONRPCInternalError(data=str(res))
-    else:
-        answer_queue.task_done()
-        return res
+    return res
+
+
+def run_job(job):
+    response_queue, err = enqueue_job(job)
+    if err:
+        return err
+    return get_answer(response_queue)
 
 
 def day_change_func():
@@ -140,14 +180,12 @@ def is_login():
 
 @api.dispatcher.add_method
 def login():
-    job_queue.put(lambda: login_account())
-    return get_answer()
+    return run_job(lambda: login_account())
 
 
 @api.dispatcher.add_method
 def relogin():
-    job_queue.put(lambda: login_account(True))
-    return get_answer()
+    return run_job(lambda: login_account(True))
 
 
 @api.dispatcher.add_method
@@ -155,8 +193,7 @@ def check_versions(input_ver_info=None):
     if not api_client:
         raise RuntimeError("Init before calling this method")
 
-    job_queue.put(lambda: api_client.check_versions(input_ver_info))
-    return get_answer()
+    return run_job(lambda: api_client.check_versions(input_ver_info))
 
 
 @api.dispatcher.add_method
@@ -188,8 +225,7 @@ def fetch_user_profile(user_id):
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    job_queue.put(lambda: api_client.fetch_user_profile(user_id))
-    return get_answer()
+    return run_job(lambda: api_client.fetch_user_profile(user_id))
 
 
 @api.dispatcher.add_method
@@ -197,9 +233,8 @@ def fetch_user_event_ranking(target_user_id, event_id):
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    job_queue.put(
+    return run_job(
         lambda: api_client.fetch_user_event_ranking(target_user_id, event_id))
-    return get_answer()
 
 
 @api.dispatcher.add_method
@@ -207,8 +242,7 @@ def fetch_master_data():
     if not api_client:
         raise RuntimeError("Init before calling this method")
 
-    job_queue.put(lambda: api_client.call_pjsk_api("/suite/master"))
-    return get_answer()
+    return run_job(lambda: api_client.call_pjsk_api("/suite/master"))
 
 
 @api.dispatcher.add_method
@@ -216,8 +250,7 @@ def fetch_system_data():
     if not api_client:
         raise RuntimeError("Init before calling this method")
 
-    job_queue.put(lambda: api_client.fetch_system_data())
-    return get_answer()
+    return run_job(lambda: api_client.fetch_system_data())
 
 
 @api.dispatcher.add_method
@@ -225,8 +258,7 @@ def fetch_information():
     if not api_client:
         raise RuntimeError("Init before calling this method")
 
-    job_queue.put(lambda: api_client.fetch_information())
-    return get_answer()
+    return run_job(lambda: api_client.fetch_information())
 
 
 @api.dispatcher.add_method
@@ -234,8 +266,7 @@ def fetch_event_rank_first_100(event_id):
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    job_queue.put(lambda: api_client.fetch_event_rank_first_100(event_id))
-    return get_answer()
+    return run_job(lambda: api_client.fetch_event_rank_first_100(event_id))
 
 
 @api.dispatcher.add_method
@@ -243,8 +274,7 @@ def fetch_event_rank_border(event_id):
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    job_queue.put(lambda: api_client.fetch_event_rank_border(event_id))
-    return get_answer()
+    return run_job(lambda: api_client.fetch_event_rank_border(event_id))
 
 
 @api.dispatcher.add_method
@@ -252,8 +282,7 @@ def call_pjsk_api(endpoint: str, method="get", body: str | dict = ""):
     if not api_client:
         raise RuntimeError("Init before calling this method")
 
-    job_queue.put(lambda: api_client.call_pjsk_api(endpoint, method, body))
-    return get_answer()
+    return run_job(lambda: api_client.call_pjsk_api(endpoint, method, body))
 
 
 @api.dispatcher.add_method
@@ -269,8 +298,7 @@ def request_and_decrypt(url: str, method="get", body: str | dict = ""):
     if not api_client:
         raise RuntimeError("Init before calling this method")
 
-    job_queue.put(lambda: api_client.request_and_decrypt(url, method, body))
-    return get_answer()
+    return run_job(lambda: api_client.request_and_decrypt(url, method, body))
 
 
 app = Flask(__name__)

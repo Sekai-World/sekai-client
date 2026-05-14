@@ -1,11 +1,14 @@
 from os import getenv
 from threading import Lock
+import logging
 from flask import Flask, jsonify, request, json
 from werkzeug.exceptions import BadRequest
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from utils.jsonrpc_client import JSONRPCClient
 from utils.decorators import require_apikey
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(
@@ -39,7 +42,8 @@ def get_regional_client(region):
     if not is_regional_client_inited(region):
         try:
             init_regional_client(region)
-        except:
+        except Exception:
+            logger.exception("Failed to init regional client: %s", region)
             raise BadRequest(f"Failed to init {region} client")
 
     return client
@@ -69,8 +73,8 @@ def bootstrap():
         for region in client_map:
             try:
                 init_regional_client(region)
-            except:
-                print(f"skip {region} region for bootstrap", flush=True)
+            except Exception:
+                logger.exception("skip %s region for bootstrap", region)
 
         bootstrapped = True
 
@@ -82,12 +86,23 @@ def ensure_bootstrap():
 
 @app.route('/health', methods=['GET'])
 def health():
-    is_healthy = all([(not not client_map.get(region)
-                       and is_regional_client_inited(region))
-                      for region in client_map])
+    region_status = {}
+    for region in client_map:
+        try:
+            region_status[region] = bool(client_map.get(region)
+                                         and is_regional_client_inited(region))
+        except Exception:
+            region_status[region] = False
 
-    return jsonify({"status": "success" if is_healthy else "error"
-                    }), 200 if is_healthy else 500
+    healthy_count = sum(1 for ok in region_status.values() if ok)
+    is_healthy = all(region_status.values())
+
+    return jsonify({
+        "status": "success" if is_healthy else "error",
+        "healthyRegions": healthy_count,
+        "totalRegions": len(region_status),
+        "regions": region_status,
+    }), 200 if is_healthy else 500
 
 
 @app.route('/<region>/refresh', methods=['POST'])
