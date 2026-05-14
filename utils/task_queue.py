@@ -1,8 +1,8 @@
 import threading
 import queue
+import logging
 
-from time import sleep
-from random import randint
+logger = logging.getLogger(__name__)
 
 job_queue = queue.Queue(maxsize=1)
 answer_queue = queue.Queue(maxsize=1)
@@ -10,12 +10,12 @@ answer_queue = queue.Queue(maxsize=1)
 def worker():
     while True:
         item = job_queue.get()
-        print(f'Working on {item}')
+        logger.debug('Working on %s', item)
         try:
             res = item()
         except Exception as e:
             res = e
-        print(f'Finished {item}')
+        logger.debug('Finished %s', item)
         answer_queue.put(res)
         job_queue.task_done()
 
