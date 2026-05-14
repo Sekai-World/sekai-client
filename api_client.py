@@ -135,8 +135,9 @@ class APIClient:
 
                 should_retry = False
                 content_type = r.headers.get("content-type", "") if r is not None else ""
+                content_type_l = content_type.lower()
                 error_code = res_data.get("errorCode") if isinstance(res_data, dict) else None
-                if r is not None and r.status_code == 403 and content_type == "text/xml":
+                if r is not None and r.status_code == 403 and content_type_l.startswith("text/xml"):
                     self.logger.warning(
                         f"{self.region} server cookie expired, refreshing...")
                     self.init_cookie()
@@ -171,7 +172,7 @@ class APIClient:
                     should_retry = True
                 elif r is not None and r.status_code == 406 and error_code == 'rule_not_agreement':
                     self.logger.warning(
-                        f"{self.region} server should accept new agreeement")
+                        f"{self.region} server should accept new agreement")
                     self.accept_agreement()
                     if self.account_info:
                         self.login()

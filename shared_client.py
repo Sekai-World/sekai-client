@@ -48,7 +48,7 @@ def enqueue_job(job):
     response_queue = queue.Queue(maxsize=1)
     try:
         job_queue.put((job, response_queue), timeout=job_queue_timeout)
-    except queue.Full as err:
+    except queue.Full:
         return None, JSONRPCInternalError(
             data='Job queue is full, please retry later')
     return response_queue, None
