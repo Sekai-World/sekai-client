@@ -73,7 +73,10 @@ def try_update_func():
     ver_res = None
     try:
         ver_res = jsonrpc_client.request("check_versions", [version_info])
-    except:
+    except Exception:
+        logger.exception(
+            "[try_update_func] check_versions failed, re-bootstrap before retry"
+        )
         bootstrap()
         ver_res = jsonrpc_client.request("check_versions", [version_info])
 
@@ -181,7 +184,8 @@ def update_i18n_files(key: str, data: list):
         if strapi_base_url and strapi_token:
             requests.post(
                 f'{strapi_base_url}/cards/fromDB?token={strapi_token}',
-                json=[elem["id"] for elem in data if elem["id"] > 500])
+                json=[elem["id"] for elem in data if elem["id"] > 500],
+                timeout=60)
 
     elif key == "cardEpisodes":
         with open(
@@ -205,7 +209,8 @@ def update_i18n_files(key: str, data: list):
         if strapi_base_url and strapi_token:
             requests.post(
                 f'{strapi_base_url}/musics/fromDB?token={strapi_token}',
-                json=[elem["id"] for elem in data if elem["id"] > 290])
+                json=[elem["id"] for elem in data if elem["id"] > 290],
+                timeout=60)
 
     elif key == "musicVocals":
         with open(path.join(i18n_diff_folder_path, "ja", "music_vocal.json"),
@@ -251,7 +256,8 @@ def update_i18n_files(key: str, data: list):
         if strapi_base_url and strapi_token:
             requests.post(
                 f'{strapi_base_url}/events/fromDB?token={strapi_token}',
-                json=[elem["id"] for elem in data if elem["id"] > 70])
+                json=[elem["id"] for elem in data if elem["id"] > 70],
+                timeout=60)
 
     elif key == "eventStories":
         with open(
@@ -299,7 +305,8 @@ def update_i18n_files(key: str, data: list):
         if strapi_base_url and strapi_token:
             requests.post(
                 f'{strapi_base_url}/virtual-lives/fromDB?token={strapi_token}',
-                json=[elem["id"] for elem in data if elem["id"] > 180])
+                json=[elem["id"] for elem in data if elem["id"] > 180],
+                timeout=60)
 
     elif key == "beginnerMissions":
         with open(
@@ -617,7 +624,8 @@ def commit_master_diff():
                 f'[commit_master_diff] push commit to origin in {local_git_folder_names["masterDBDiff"]}'
             )
             masterdb_diff_repo.remote().push().raise_if_error()
-        except:
+        except Exception:
+            logger.exception("[commit_master_diff] failed to commit/push, re-cloning repository")
             # reset to last commit
             # masterdb_diff_repo.head.reset(commit="HEAD~1",
             #                               index=True,
@@ -657,7 +665,8 @@ def commit_i18n_files():
                 f'[commit_i18n_files] push commit to origin in {local_git_folder_names["i18n"]}'
             )
             i18n_diff_repo.remote().push().raise_if_error()
-        except:
+        except Exception:
+            logger.exception("[commit_i18n_files] failed to commit/push, re-cloning repository")
             # reset to last commit
             # i18n_diff_repo.head.reset(commit="HEAD~1",
             #                           index=True,
@@ -692,36 +701,35 @@ def bootstrap():
                                           remote_git_url_base)
     logger.info("[bootstrap] Local git folders checked")
 
-    try:
-        check_version_res = jsonrpc_client.request("check_versions")
-        if check_version_res["maintenance"]:
-            logger.warning(
-                "[bootstrap] Server in maintenance, retry after 10 minutes")
+    while True:
+        try:
+            check_version_res = jsonrpc_client.request("check_versions")
+            if check_version_res["maintenance"]:
+                logger.warning(
+                    "[bootstrap] Server in maintenance, retry after 10 minutes")
+                sleep(10 * 60)
+                continue
+
+            logger.debug(
+                f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes'
+            )
+            masterdb_diff_repo.remote().pull()
+            if update_options["userInfo"]:
+                jsonrpc_client.request("login")
+                save_info_from_suite_user()
+
+            global version_info
+            version_info = jsonrpc_client.request("version_info")
+
+            if update_options["master"]:
+                refresh_version()
+            break
+        except Exception:
+            logging.error(traceback.format_exc())
+            logger.error(
+                "[bootstrap] Failed to bootstrap, possible reasons: connection error or account info expired (for tw and kr servers). Retry after 10 minutes."
+            )
             sleep(10 * 60)
-            bootstrap()
-            return
-
-        logger.debug(
-            f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes'
-        )
-        masterdb_diff_repo.remote().pull()
-        if update_options["userInfo"]:
-            jsonrpc_client.request("login")
-            save_info_from_suite_user()
-
-        global version_info
-        version_info = jsonrpc_client.request("version_info")
-
-        if update_options["master"]:
-            refresh_version()
-    except Exception as e:
-        logging.error(traceback.format_exc())
-        logger.error(
-            "[bootstrap] Failed to bootstrap, possible reasons: connection error or account info expired (for tw and kr servers). Retry after 10 minutes."
-        )
-        sleep(10 * 60)
-        bootstrap()
-        return
     logger.info("[bootstrap] Fetched current available version info")
 
     if commit_master_diff():
@@ -757,22 +765,22 @@ def bootstrap_simple():
                                           remote_git_url_base)
     logger.info("[bootstrap] Local git folders checked")
 
-    try:
-        logger.debug(
-            f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes'
-        )
-        masterdb_diff_repo.remote().pull()
+    while True:
+        try:
+            logger.debug(
+                f'[bootstrap] Pull {local_git_folder_names["masterDBDiff"]} repo remote changes before making any local changes'
+            )
+            masterdb_diff_repo.remote().pull()
 
-        if update_options["master"]:
-            refresh_version()
-    except Exception:
-        logging.error(traceback.format_exc())
-        logger.error(
-            "[bootstrap] Failed to bootstrap simple mode. Retry after 10 minutes."
-        )
-        sleep(10 * 60)
-        bootstrap_simple()
-        return
+            if update_options["master"]:
+                refresh_version()
+            break
+        except Exception:
+            logging.error(traceback.format_exc())
+            logger.error(
+                "[bootstrap] Failed to bootstrap simple mode. Retry after 10 minutes."
+            )
+            sleep(10 * 60)
     logger.info("[bootstrap] Fetched current available version info")
 
     if commit_master_diff():
