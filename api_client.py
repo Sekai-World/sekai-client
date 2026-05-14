@@ -14,6 +14,9 @@ LOGLEVEL = getenv('LOGLEVEL', 'INFO').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(asctime)s %(message)s')
 logger = logging.getLogger(__name__)
 
+REQUEST_TIMEOUT = 150
+MAX_API_RETRIES = 3
+
 
 class APIClient:
     _account_info = {}
@@ -24,7 +27,7 @@ class APIClient:
 
     def __init__(self, region=pjsk_region, logger=logger) -> None:
         self.logger = logger
-        self.region = pjsk_region
+        self.region = region
         self.headers = deepcopy(initial_api_headers[region])
 
         self.rate_limited = False
@@ -72,7 +75,7 @@ class APIClient:
         self._master_split_paths = data
 
     def init_cookie(self):
-        r = requests.post(pjsk_cookie_post_url[self.region], timeout=150)
+        r = requests.post(pjsk_cookie_post_url[self.region], timeout=REQUEST_TIMEOUT)
         self.headers["cookie"] = r.headers["set-cookie"]
 
     def call_pjsk_api(self,
@@ -83,9 +86,7 @@ class APIClient:
         if self.rate_limited:
             raise RuntimeError("Cooling down for rate limit...")
 
-        r = None
         data = None
-        res_data = None
         if method.lower() in ("post", "put", "patch"):
             if type(body) == str:
                 data = encrypt(body)
@@ -94,93 +95,106 @@ class APIClient:
             else:
                 raise ValueError("body type should be str or dict.")
 
-        try:
-            self.headers["x-request-id"] = str(uuid4())
-            self.headers["content-type"] = "application/octet-stream"
-            self.logger.debug(
-                f"request url={base_pjsk_api_url[self.region]}{endpoint}, method={method.lower()}, headers={self.headers.items()}"
-            )
-            r = requests.request(
-                method=method.lower(),
-                url=f"{base_pjsk_api_url[self.region]}{endpoint}",
-                headers=self.headers,
-                data=data,
-                timeout=150)
-            self.logger.debug(
-                f"response url={base_pjsk_api_url[self.region]}{endpoint}, method={method.lower()}, headers={r.headers.items()}, status={r.status_code}"
-            )
-            if r.headers.get("x-session-token", None):
-                self.headers["x-session-token"] = r.headers["x-session-token"]
-            if int(
-                    r.headers["content-length"]
-            ) > 0 and "octet-stream" in r.headers["content-type"] and len(
-                    r.content):
-                try:
-                    res_data = decrypt_msgpack(r.content)
-                except:
-                    res_data = decrypt(r.content)
+        max_retries = MAX_API_RETRIES if retry_after_error else 0
+        attempt = 0
+        while True:
+            r = None
+            res_data = None
+            try:
+                self.headers["x-request-id"] = str(uuid4())
+                self.headers["content-type"] = "application/octet-stream"
+                self.logger.debug(
+                    f"request url={base_pjsk_api_url[self.region]}{endpoint}, method={method.lower()}, headers={self.headers.items()}"
+                )
+                r = requests.request(
+                    method=method.lower(),
+                    url=f"{base_pjsk_api_url[self.region]}{endpoint}",
+                    headers=self.headers,
+                    data=data,
+                    timeout=REQUEST_TIMEOUT)
+                self.logger.debug(
+                    f"response url={base_pjsk_api_url[self.region]}{endpoint}, method={method.lower()}, headers={r.headers.items()}, status={r.status_code}"
+                )
+                if r.headers.get("x-session-token", None):
+                    self.headers["x-session-token"] = r.headers["x-session-token"]
 
-            r.raise_for_status()
-        except requests.HTTPError as err:
-            self.logger.error(
-                f"Request PJSK api error, endpoint={endpoint}, method={method}, body={body}, status={r.status_code}"
-            )
+                content_type = r.headers.get("content-type", "")
+                content_len = int(r.headers.get("content-length", "0") or 0)
+                if content_len > 0 and "octet-stream" in content_type and r.content:
+                    try:
+                        res_data = decrypt_msgpack(r.content)
+                    except Exception:
+                        res_data = decrypt(r.content)
 
-            if r.status_code == 403 and r.headers["content-type"] == "text/xml":
-                self.logger.warning(
-                    f"{self.region} server cookie expired, refreshing...")
-                self.init_cookie()
-                if retry_after_error:
-                    return self.call_pjsk_api(endpoint, method, body)
-            elif r.status_code == 429:
-                self.logger.warning(
-                    f"{self.region} server hits rate limit, sleep for 60s")
-                self.rate_limited = True
-                sleep(60.0)
-                self.rate_limited = False
-                if retry_after_error:
-                    return self.call_pjsk_api(endpoint, method, body)
-            elif r.status_code == 426:
-                self.logger.warning(
-                    f"{self.region} server should update version info")
-                # update app version as well
-                if self.region in ["jp"]:
-                    ver_data = get_app_ver_and_hash_jp()
-                    self.headers["x-app-version"] = ver_data["appVersion"]
-                    self.headers["x-app-hash"] = ver_data["appHash"]
-                    self.version_info["appHash"] = ver_data["appHash"]
-                elif self.region in ["en"]:
-                    ver_data = get_app_ver_and_hash_en()
-                    self.headers["x-app-version"] = ver_data["appVersion"]
-                    self.headers["x-app-hash"] = ver_data["appHash"]
-                    self.version_info["appHash"] = ver_data["appHash"]
-                else:
-                    ver_text = get_app_ver_qooapp(app_id_regions[self.region])
-                    self.headers["x-app-version"] = ver_text
-                self.check_versions()
-                if self.account_info:
-                    self.login()
-                if retry_after_error:
-                    return self.call_pjsk_api(endpoint, method, body)
-            elif r.status_code == 406 and res_data[
-                    "errorCode"] == 'rule_not_agreement':
-                self.logger.warning(
-                    f"{self.region} server should accept new agreeement")
-                self.accept_agreement()
-                if self.account_info:
-                    self.login()
-                if retry_after_error:
-                    return self.call_pjsk_api(endpoint, method, body)
-            elif r.status_code == 403:
-                if res_data["errorCode"] == "session_error":
+                r.raise_for_status()
+                return res_data
+            except requests.HTTPError as err:
+                status_code = r.status_code if r is not None else "unknown"
+                self.logger.error(
+                    f"Request PJSK api error, endpoint={endpoint}, method={method}, body={body}, status={status_code}"
+                )
+
+                should_retry = False
+                content_type = r.headers.get("content-type", "") if r is not None else ""
+                error_code = res_data.get("errorCode") if isinstance(res_data, dict) else None
+                if r is not None and r.status_code == 403 and content_type == "text/xml":
+                    self.logger.warning(
+                        f"{self.region} server cookie expired, refreshing...")
+                    self.init_cookie()
+                    should_retry = True
+                elif r is not None and r.status_code == 429:
+                    self.logger.warning(
+                        f"{self.region} server hits rate limit, sleep for 60s")
+                    self.rate_limited = True
+                    sleep(60.0)
+                    self.rate_limited = False
+                    should_retry = True
+                elif r is not None and r.status_code == 426:
+                    self.logger.warning(
+                        f"{self.region} server should update version info")
+                    # update app version as well
+                    if self.region in ["jp"]:
+                        ver_data = get_app_ver_and_hash_jp()
+                        self.headers["x-app-version"] = ver_data["appVersion"]
+                        self.headers["x-app-hash"] = ver_data["appHash"]
+                        self.version_info["appHash"] = ver_data["appHash"]
+                    elif self.region in ["en"]:
+                        ver_data = get_app_ver_and_hash_en()
+                        self.headers["x-app-version"] = ver_data["appVersion"]
+                        self.headers["x-app-hash"] = ver_data["appHash"]
+                        self.version_info["appHash"] = ver_data["appHash"]
+                    else:
+                        ver_text = get_app_ver_qooapp(app_id_regions[self.region])
+                        self.headers["x-app-version"] = ver_text
+                    self.check_versions()
                     if self.account_info:
                         self.login()
-                    if retry_after_error:
-                        return self.call_pjsk_api(endpoint, method, body)
+                    should_retry = True
+                elif r is not None and r.status_code == 406 and error_code == 'rule_not_agreement':
+                    self.logger.warning(
+                        f"{self.region} server should accept new agreeement")
+                    self.accept_agreement()
+                    if self.account_info:
+                        self.login()
+                    should_retry = True
+                elif r is not None and r.status_code == 403 and error_code == "session_error":
+                    if self.account_info:
+                        self.login()
+                    should_retry = True
 
-            raise RuntimeError(r, res_data)
+                if should_retry and attempt < max_retries:
+                    attempt += 1
+                    continue
 
-        return res_data
+                raise RuntimeError(r, res_data) from err
+            except requests.RequestException as err:
+                self.logger.error(
+                    f"Request PJSK api request exception, endpoint={endpoint}, method={method}, error={err}"
+                )
+                if attempt < max_retries:
+                    attempt += 1
+                    continue
+                raise RuntimeError(str(err)) from err
 
     def check_versions(self, input_ver_info=None):
         res = {"maintenance": False, "new_version": False}
@@ -427,7 +441,7 @@ class APIClient:
         })
         
     def request_and_decrypt(self, url: str, method="get", body: str | dict = "") -> dict:
-        res = requests.request(method, url, data=body)
+        res = requests.request(method, url, data=body, timeout=REQUEST_TIMEOUT)
         res.raise_for_status()
 
         return decrypt_msgpack(res.content)
