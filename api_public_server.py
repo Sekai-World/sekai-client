@@ -42,7 +42,7 @@ def get_regional_client(region):
     if not is_regional_client_inited(region):
         try:
             init_regional_client(region)
-        except Exception as err:
+        except Exception:
             logger.exception("Failed to init regional client: %s", region)
             raise BadRequest(f"Failed to init {region} client")
 
@@ -95,14 +95,14 @@ def health():
             region_status[region] = False
 
     healthy_count = sum(1 for ok in region_status.values() if ok)
-    is_healthy = healthy_count > 0
+    is_healthy = all(region_status.values())
 
     return jsonify({
         "status": "success" if is_healthy else "error",
         "healthyRegions": healthy_count,
         "totalRegions": len(region_status),
         "regions": region_status,
-    }), 200 if is_healthy else 503
+    }), 200 if is_healthy else 500
 
 
 @app.route('/<region>/refresh', methods=['POST'])
