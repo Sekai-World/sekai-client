@@ -62,7 +62,7 @@ def track_event_func():
             "[track_event_func] Failed to execute check_versions, restart bootstrapping"
         )
         logger.warning(
-            "[track_event_func] Failed to execute check_versions, restart bootstraping..."
+            "[track_event_func] Failed to execute check_versions, restart bootstrapping..."
         )
         bootstrap()
         ver_res = jsonrpc_client.request("check_versions", [version_info])
@@ -116,7 +116,7 @@ scheduler.add_listener(scheduler_listener, EVENT_JOB_MAX_INSTANCES)
 
 
 def refresh_version():
-    logger.info("Refersh version info")
+    logger.info("Refresh version info")
 
     global event_data
     event_data = requests.get(curr_event_url, timeout=60).json()["eventJson"]

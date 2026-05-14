@@ -1,3 +1,4 @@
+import logging
 import yaml
 import jwt
 import queue
@@ -17,6 +18,7 @@ from utils.ujsonrpcapi import api
 from api_client import APIClient
 
 dirname = path.dirname(__file__)
+logger = logging.getLogger(__name__)
 api_client: APIClient = None
 client_region = pjsk_region
 user_logged_in = False
@@ -33,7 +35,7 @@ def _read_timeout_env(name: str, default: float) -> float:
             raise ValueError('timeout must be positive')
         return value
     except (TypeError, ValueError):
-        app.logger.warning(
+        logger.warning(
             'Invalid %s value=%r, falling back to %.1f', name, raw, default)
         return default
 
