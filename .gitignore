@@ -189,3 +189,4 @@ test_*.sh
 
 event-*.json
 profile-*.json
+strapi-api-token
