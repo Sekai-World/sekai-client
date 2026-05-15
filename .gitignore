@@ -187,3 +187,4 @@ test*
 
 event-*.json
 profile-*.json
+strapi-api-token
