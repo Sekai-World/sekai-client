@@ -1,6 +1,7 @@
+from os import getenv
+
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
-from os import getenv
 from umsgpack import packb, unpackb
 
 KEY = bytes.fromhex(getenv("AES_KEY", ""))

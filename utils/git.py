@@ -1,6 +1,8 @@
 from os import path
-from git.repo import Repo
+
 from git.exc import NoSuchPathError
+from git.repo import Repo
+
 
 def check_git_folder(folder_path: str, remote_git_url_base: str):
     try:
@@ -9,5 +11,5 @@ def check_git_folder(folder_path: str, remote_git_url_base: str):
         return Repo.clone_from(
             f"{remote_git_url_base}/{path.basename(folder_path)}",
             folder_path,
-            branch="main"
+            branch="main",
         )

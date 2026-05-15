@@ -4,12 +4,11 @@ Pytest configuration and fixtures.
 Provides common fixtures for testing sekai-client components.
 """
 
-import pytest
 import logging
-from unittest.mock import Mock, patch
 import queue as queue_module
+from unittest.mock import Mock
 
-from config import Config
+import pytest
 
 
 @pytest.fixture
@@ -34,16 +33,16 @@ def response_queue():
 def config_env():
     """
     Fixture to test configuration parsing.
-    
+
     Provides a clean environment for config tests.
     """
     return {
-        'REQUEST_TIMEOUT': '150',
-        'JOB_QUEUE_TIMEOUT': '30',
-        'ANSWER_QUEUE_TIMEOUT': '180',
-        'MAX_API_RETRIES': '3',
-        'API_TOKEN': 'test_token_123',
-        'LOGLEVEL': 'INFO',
+        "REQUEST_TIMEOUT": "150",
+        "JOB_QUEUE_TIMEOUT": "30",
+        "ANSWER_QUEUE_TIMEOUT": "180",
+        "MAX_API_RETRIES": "3",
+        "API_TOKEN": "test_token_123",
+        "LOGLEVEL": "INFO",
     }
 
 
@@ -51,15 +50,15 @@ def config_env():
 def mock_api_client(mock_logger):
     """Provide a mock API client."""
     from api_client import APIClient
-    
+
     client = Mock(spec=APIClient)
     client.logger = mock_logger
-    client.region = 'jp'
+    client.region = "jp"
     client.account_info = {}
     client.version_info = {}
     client.user_info = {}
     client.rate_limited = False
-    
+
     return client
 
 
@@ -67,7 +66,7 @@ def mock_api_client(mock_logger):
 def mock_flask_app():
     """Provide a mock Flask app."""
     from flask import Flask
-    
+
     app = Flask(__name__)
-    app.config['TESTING'] = True
+    app.config["TESTING"] = True
     return app

@@ -46,6 +46,113 @@ def _build_context_error(
     return error_type(" | ".join(details))
 
 
+def _set_scalar_key(result: dict, key: str, value) -> None:
+    if value is not None:
+        result[key] = value
+
+
+def _set_tuple_key(
+    result: dict,
+    key_name: str,
+    tuple_keys: tuple,
+    values: list,
+) -> None:
+    result[key_name] = {
+        tuple_keys[idx]: item for idx, item in enumerate(values) if item is not None
+    }
+
+
+def _set_nested_list_key(
+    result: dict,
+    key_name: str,
+    nested_structure: list,
+    nested_data: list,
+    *,
+    structure_name: str | None,
+    node_path: str,
+) -> None:
+    nested_result = []
+    for sub_i, sub_array in enumerate(nested_data):
+        if sub_array is None:
+            continue
+        nested_result.append(
+            convert_array_to_dict(
+                sub_array,
+                nested_structure,
+                structure_name=structure_name,
+                node_path=f"{node_path}.{key_name}[{sub_i}]",
+            )
+        )
+    result[key_name] = nested_result
+
+
+def _process_structured_key(
+    result: dict,
+    key,
+    current_value,
+    *,
+    i: int,
+    structure_name: str | None,
+    node_path: str,
+    array_data,
+    key_structure,
+) -> None:
+    if not isinstance(key, list) or len(key) < 2:
+        raise _build_context_error(
+            ValueError,
+            "invalid key_structure item, expected [name, sub_structure]",
+            structure_name=structure_name,
+            node_path=node_path,
+            index=i,
+            key=key,
+            array_data=array_data,
+            key_structure=key_structure,
+        )
+
+    key_name = key[0]
+    key_value = key[1]
+    if isinstance(key_value, list):
+        if current_value is None:
+            result[key_name] = []
+            return
+        if not isinstance(current_value, list):
+            raise _build_context_error(
+                TypeError,
+                "expected nested list data",
+                structure_name=structure_name,
+                node_path=f"{node_path}.{key_name}",
+                index=i,
+                key=key,
+                array_data=array_data,
+                key_structure=key_structure,
+            )
+        _set_nested_list_key(
+            result,
+            key_name,
+            key_value,
+            current_value,
+            structure_name=structure_name,
+            node_path=node_path,
+        )
+        return
+
+    if isinstance(key_value, tuple):
+        if current_value is None:
+            return
+        if not isinstance(current_value, list):
+            raise _build_context_error(
+                TypeError,
+                "expected list data for tuple key mapping",
+                structure_name=structure_name,
+                node_path=f"{node_path}.{key_name}",
+                index=i,
+                key=key,
+                array_data=array_data,
+                key_structure=key_structure,
+            )
+        _set_tuple_key(result, key_name, key_value, current_value)
+
+
 def convert_array_to_dict(
     array_data: list,
     key_structure: list,
@@ -74,25 +181,8 @@ def convert_array_to_dict(
     result = {}
 
     for i, key in enumerate(key_structure):
-        if isinstance(key, str):
-            # if key is string, then assign the value to the key
-            if i >= len(array_data):
-                continue
-            if array_data[i] is not None:
-                result[key] = array_data[i]
-        elif isinstance(key, list):
-            if len(key) < 2:
-                raise _build_context_error(
-                    ValueError,
-                    "invalid key_structure item, expected [name, sub_structure]",
-                    structure_name=structure_name,
-                    node_path=node_path,
-                    index=i,
-                    key=key,
-                    array_data=array_data,
-                    key_structure=key_structure,
-                )
-            if i >= len(array_data):
+        if i >= len(array_data):
+            if isinstance(key, list):
                 raise _build_context_error(
                     IndexError,
                     "missing array element for structured key",
@@ -103,53 +193,21 @@ def convert_array_to_dict(
                     array_data=array_data,
                     key_structure=key_structure,
                 )
-            if isinstance(key[1], list):
-                # if key is list and the second element is list, then it is a nested list
-                if array_data[i] is None:
-                    result[key[0]] = []
-                    continue
-                if not isinstance(array_data[i], list):
-                    raise _build_context_error(
-                        TypeError,
-                        "expected nested list data",
-                        structure_name=structure_name,
-                        node_path=f"{node_path}.{key[0]}",
-                        index=i,
-                        key=key,
-                        array_data=array_data,
-                        key_structure=key_structure,
-                    )
-                nested_result = []
-                for sub_i, sub_array in enumerate(array_data[i]):
-                    if sub_array is None:
-                        continue
-                    nested_result.append(
-                        convert_array_to_dict(
-                            sub_array,
-                            key[1],
-                            structure_name=structure_name,
-                            node_path=f"{node_path}.{key[0]}[{sub_i}]",
-                        )
-                    )
-                result[key[0]] = nested_result
-            elif isinstance(key[1], tuple):
-                # if key is list and the second element is tuple, then it is a dict
-                if array_data[i] is None:
-                    continue
-                if not isinstance(array_data[i], list):
-                    raise _build_context_error(
-                        TypeError,
-                        "expected list data for tuple key mapping",
-                        structure_name=structure_name,
-                        node_path=f"{node_path}.{key[0]}",
-                        index=i,
-                        key=key,
-                        array_data=array_data,
-                        key_structure=key_structure,
-                    )
-                result[key[0]] = {
-                    key[1][i]: v for i, v in enumerate(array_data[i]) if v is not None
-                }
+            continue
+
+        if isinstance(key, str):
+            _set_scalar_key(result, key, array_data[i])
+            continue
+        _process_structured_key(
+            result,
+            key,
+            array_data[i],
+            i=i,
+            structure_name=structure_name,
+            node_path=node_path,
+            array_data=array_data,
+            key_structure=key_structure,
+        )
 
     return result
 
@@ -177,5 +235,10 @@ def restore_compact_data(data: dict) -> list:
     num_entries = min(len(column) for column in columns)
     result = []
     for i in range(num_entries):
-        result.append({key: column[i] for key, column in zip(column_labels, columns)})
+        result.append(
+            {
+                key: column[i]
+                for key, column in zip(column_labels, columns, strict=False)
+            }
+        )
     return result
