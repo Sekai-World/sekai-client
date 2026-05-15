@@ -1,4 +1,22 @@
+"""
+Public Flask API server for sekai-client JSON-RPC functionality.
+
+Provides HTTP REST endpoints that proxy requests to region-specific
+JSON-RPC servers running on localhost. Includes health check,
+user profile fetching, and event ranking endpoints.
+
+Authentication:
+- All endpoints (except /health) require 'x-api-token' header
+- Token is checked against API_TOKEN environment variable
+
+Health Check Semantics:
+- Returns 200 only if ALL regions are healthy (strict AND semantics)
+- Returns 500 if ANY region is down
+- Provides per-region status in response for debugging
+"""
+
 from os import getenv
+from typing import Any
 from threading import Lock
 import logging
 from flask import Flask, jsonify, request, json
@@ -7,6 +25,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from utils.jsonrpc_client import JSONRPCClient
 from utils.decorators import require_apikey
+from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -15,26 +34,61 @@ app.wsgi_app = ProxyFix(
     app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1
 )
 
-client_map = {
-    "jp": JSONRPCClient(f'http://localhost:{getenv("JP_PORT", "39390")}/'),
-    "tw": JSONRPCClient(f'http://localhost:{getenv("TW_PORT", "39391")}/'),
-    "en": JSONRPCClient(f'http://localhost:{getenv("EN_PORT", "39392")}/'),
-    "kr": JSONRPCClient(f'http://localhost:{getenv("KR_PORT", "39393")}/'),
-    "cn": JSONRPCClient(f'http://localhost:{getenv("CN_PORT", "39394")}/'),
+# Initialize region-specific JSON-RPC clients
+client_map: dict[str, JSONRPCClient] = {
+    "jp": JSONRPCClient(
+        f'http://localhost:{Config.JP_PORT}/'
+    ),
+    "tw": JSONRPCClient(
+        f'http://localhost:{Config.TW_PORT}/'
+    ),
+    "en": JSONRPCClient(
+        f'http://localhost:{Config.EN_PORT}/'
+    ),
+    "kr": JSONRPCClient(
+        f'http://localhost:{Config.KR_PORT}/'
+    ),
+    "cn": JSONRPCClient(
+        f'http://localhost:{Config.CN_PORT}/'
+    ),
 }
 bootstrap_lock = Lock()
 bootstrapped = False
 
 
 @app.errorhandler(BadRequest)
-def handle_bad_request(e):
+def handle_bad_request(e: BadRequest) -> tuple[str, int]:
+    """
+    Handle BadRequest exceptions with JSON response.
+    
+    Args:
+        e: BadRequest exception
+        
+    Returns:
+        JSON error response
+    """
     response = e.get_response()
-    response.data = json.dumps({"status": "error", "message": e.description})
+    response.data = json.dumps({
+        "status": "error",
+        "message": e.description
+    })
     response.content_type = "application/json"
     return response
 
 
-def get_regional_client(region):
+def get_regional_client(region: str) -> JSONRPCClient:
+    """
+    Get or initialize a regional JSON-RPC client.
+    
+    Args:
+        region: Region code ('jp', 'en', 'cn', 'tw', 'kr')
+        
+    Returns:
+        Initialized JSONRPCClient for the region
+        
+    Raises:
+        BadRequest: If region not found or initialization fails
+    """
     client = client_map.get(region, None)
 
     if not client:
@@ -49,19 +103,42 @@ def get_regional_client(region):
     return client
 
 
-def init_regional_client(region):
+def init_regional_client(region: str) -> None:
+    """
+    Initialize a regional JSON-RPC client.
+    
+    Calls init, check_versions, and login methods on the client.
+    
+    Args:
+        region: Region code
+    """
     if not is_regional_client_inited(region):
         client_map[region].request("init", [region])
 
     client_map[region].request("check_versions", [])
     client_map[region].request("login", [])
-    
 
-def is_regional_client_inited(region):
+
+def is_regional_client_inited(region: str) -> bool:
+    """
+    Check if a regional client is initialized.
+    
+    Args:
+        region: Region code
+        
+    Returns:
+        True if client is initialized, False otherwise
+    """
     return client_map[region].request("is_init", [])
 
 
-def bootstrap():
+def bootstrap() -> None:
+    """
+    Initialize all regional clients on startup.
+    
+    Uses double-checked locking pattern to ensure initialization
+    happens only once across concurrent requests.
+    """
     global bootstrapped
     if bootstrapped:
         return
@@ -80,17 +157,29 @@ def bootstrap():
 
 
 @app.before_request
-def ensure_bootstrap():
+def ensure_bootstrap() -> None:
+    """Ensure bootstrap has run before handling requests."""
     bootstrap()
 
 
 @app.route('/health', methods=['GET'])
-def health():
-    region_status = {}
+def health() -> tuple[dict[str, Any], int]:
+    """
+    Health check endpoint for monitoring.
+    
+    Returns 200 only if ALL regions are healthy (fail-safe behavior).
+    Returns 500 if ANY region is down.
+    
+    Returns:
+        JSON response with per-region status and health code
+    """
+    region_status: dict[str, bool] = {}
     for region in client_map:
         try:
-            region_status[region] = bool(client_map.get(region)
-                                         and is_regional_client_inited(region))
+            region_status[region] = bool(
+                client_map.get(region) and
+                is_regional_client_inited(region)
+            )
         except Exception:
             region_status[region] = False
 
@@ -107,7 +196,16 @@ def health():
 
 @app.route('/<region>/refresh', methods=['POST'])
 @require_apikey
-def refresh_regional_client(region):
+def refresh_regional_client(region: str) -> dict[str, Any]:
+    """
+    Force relogin for a specific region.
+    
+    Args:
+        region: Region code
+        
+    Returns:
+        Success response
+    """
     client = get_regional_client(region)
     client.request("relogin")
 
@@ -116,7 +214,20 @@ def refresh_regional_client(region):
 
 @app.route('/<region>/user/<user_id>/profile')
 @require_apikey
-def fetch_user_profile_by_user_id(region, user_id):
+def fetch_user_profile_by_user_id(
+    region: str,
+    user_id: str
+) -> dict[str, Any]:
+    """
+    Fetch user profile by user ID.
+    
+    Args:
+        region: Region code
+        user_id: Target user ID
+        
+    Returns:
+        JSON response with user profile
+    """
     client = get_regional_client(region)
     user_profile = client.request("fetch_user_profile", [user_id])
 
@@ -125,9 +236,26 @@ def fetch_user_profile_by_user_id(region, user_id):
 
 @app.route('/<region>/user/<target_user_id>/event/<event_id>/ranking')
 @require_apikey
-def fetch_event_ranking_by_user_id(region, target_user_id, event_id):
+def fetch_event_ranking_by_user_id(
+    region: str,
+    target_user_id: str,
+    event_id: str
+) -> dict[str, Any]:
+    """
+    Fetch user's event ranking.
+    
+    Args:
+        region: Region code
+        target_user_id: Target user ID
+        event_id: Event ID
+        
+    Returns:
+        JSON response with event ranking data
+    """
     client = get_regional_client(region)
-    user_profile = client.request("fetch_user_event_ranking",
-                                  [target_user_id, event_id])
+    user_profile = client.request(
+        "fetch_user_event_ranking",
+        [target_user_id, event_id]
+    )
 
     return jsonify({"status": "success", "data": user_profile})
