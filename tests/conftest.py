@@ -18,7 +18,7 @@ def mock_logger():
 
 
 @pytest.fixture
-def queue():
+def bounded_queue():
     """Provide a fresh queue instance."""
     return queue_module.Queue(maxsize=1)
 

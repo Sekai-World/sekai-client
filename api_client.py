@@ -532,9 +532,7 @@ class APIClient:
         curr_ver_info, fallback_selected = self._find_current_version_info(
             all_ver_infos, curr_app_ver
         )
-        res["new_version"] = fallback_selected or self._is_version_updated(
-            curr_ver_info
-        )
+        res["new_version"] = self._is_version_updated(curr_ver_info)
         if curr_ver_info["appVersionStatus"] == "maintenance" and fallback_selected:
             res["maintenance"] = True
 
@@ -622,7 +620,7 @@ class APIClient:
 
     def fetch_user_profile(self, user_id: str) -> dict:
         my_user_id = self.account_info["userId"]
-        if self.region in ("jp"):
+        if self.region == "jp":
             return self.call_pjsk_api(f"/user/{my_user_id}/{user_id}/profile")
         return self.call_pjsk_api(f"/user/{user_id}/profile")
 

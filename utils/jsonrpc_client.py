@@ -55,12 +55,26 @@ class JSONRPCClient:
             json=request_uuid(func_name, params),
             timeout=Config.REQUEST_TIMEOUT,
         )
-        parsed = parse(r.json())
+        r.raise_for_status()
+
+        try:
+            payload = r.json()
+        except ValueError as err:
+            raise RuntimeError(f"Invalid JSON-RPC response: {r.text}") from err
+
+        parsed = parse(payload)
 
         if isinstance(parsed, Ok):
             return parsed.result
-        else:
-            raise RuntimeError(parsed.message)
+
+        error_message = parsed.message
+        error_code = getattr(parsed, "code", None)
+        error_data = getattr(parsed, "data", None)
+        if error_code is not None:
+            error_message = f"{error_code}: {error_message}"
+        if error_data is not None:
+            error_message = f"{error_message} data={error_data!r}"
+        raise RuntimeError(error_message)
 
     @property
     def url(self) -> str:

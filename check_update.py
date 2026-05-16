@@ -172,6 +172,12 @@ def _post_strapi_ids(endpoint: str, ids: list[int]) -> None:
         )
 
 
+I18N_CARD_ID_THRESHOLD = 500
+I18N_MUSIC_ID_THRESHOLD = 290
+I18N_EVENT_ID_THRESHOLD = 70
+I18N_VIRTUAL_LIVE_ID_THRESHOLD = 180
+
+
 def _update_i18n_cards(data: list) -> None:
     _write_i18n_json("card_prefix.json", {elem["id"]: elem["prefix"] for elem in data})
     _write_i18n_json(
@@ -185,17 +191,26 @@ def _update_i18n_cards(data: list) -> None:
             if elem["gachaPhrase"] != "-"
         },
     )
-    _post_strapi_ids("cards/fromDB", [elem["id"] for elem in data if elem["id"] > 500])
+    _post_strapi_ids(
+        "cards/fromDB",
+        [elem["id"] for elem in data if elem["id"] > I18N_CARD_ID_THRESHOLD],
+    )
 
 
 def _update_i18n_musics(data: list) -> None:
     _write_i18n_json("music_titles.json", {elem["id"]: elem["title"] for elem in data})
-    _post_strapi_ids("musics/fromDB", [elem["id"] for elem in data if elem["id"] > 290])
+    _post_strapi_ids(
+        "musics/fromDB",
+        [elem["id"] for elem in data if elem["id"] > I18N_MUSIC_ID_THRESHOLD],
+    )
 
 
 def _update_i18n_events(data: list) -> None:
     _write_i18n_json("event_name.json", {elem["id"]: elem["name"] for elem in data})
-    _post_strapi_ids("events/fromDB", [elem["id"] for elem in data if elem["id"] > 70])
+    _post_strapi_ids(
+        "events/fromDB",
+        [elem["id"] for elem in data if elem["id"] > I18N_EVENT_ID_THRESHOLD],
+    )
 
 
 def _update_i18n_virtual_lives(data: list) -> None:
@@ -203,7 +218,8 @@ def _update_i18n_virtual_lives(data: list) -> None:
         "virtualLive_name.json", {elem["id"]: elem["name"] for elem in data}
     )
     _post_strapi_ids(
-        "virtual-lives/fromDB", [elem["id"] for elem in data if elem["id"] > 180]
+        "virtual-lives/fromDB",
+        [elem["id"] for elem in data if elem["id"] > I18N_VIRTUAL_LIVE_ID_THRESHOLD],
     )
 
 
@@ -411,6 +427,8 @@ def _fetch_master_data_by_region() -> dict[str, list]:
     return download_nuverse_master_data(version_info["cdnVersion"])
 
 
+# The Python port keeps the broader keyword set used by downstream master-data
+# handling so the same merge path covers tips/music/card records as well.
 def _resolve_master_id_key(key: str) -> str | None:
     if any(
         x in key

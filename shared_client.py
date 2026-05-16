@@ -229,7 +229,7 @@ def init(region: str) -> bool:
 
     global api_client
     api_client = APIClient(region=client_region, logger=logger)
-    if client_region in ("jp"):
+    if client_region == "jp":
         api_client.init_cookie()
 
     logger.info("Initialized API client for %s server", client_region)

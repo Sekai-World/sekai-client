@@ -6,7 +6,6 @@ Tests job enqueueing, worker execution, and timeout handling.
 
 import pytest
 import queue
-import time
 import threading
 from unittest.mock import Mock, patch
 
@@ -68,6 +67,7 @@ class TestTaskQueue:
         from utils.task_queue import job_queue
         import logging
 
+        caplog.set_level(logging.WARNING)
         result_queue = queue.Queue(maxsize=1)
 
         # Fill the queue so put() will fail
@@ -78,12 +78,13 @@ class TestTaskQueue:
 
         job_queue.put((test_job, result_queue), timeout=1)
 
-        # Wait for worker to try putting result
-        time.sleep(0.5)
+        # Wait for the background worker to finish this job.
+        job_queue.join()
 
-        # Check that warning was logged
-        # (This is a basic check - in real tests you'd capture logs)
-        # The important thing is that the worker doesn't crash
+        assert any(
+            "Dropping stale worker result" in record.message
+            for record in caplog.records
+        )
 
 
 class TestQueueTimeout:
