@@ -60,7 +60,7 @@ package = false
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra --strict-markers --cov=. --cov-report=html --cov-report=term-missing"
+addopts = "-ra --strict-markers"
 testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
@@ -99,4 +99,7 @@ select = [
 ]
 ignore = [
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 

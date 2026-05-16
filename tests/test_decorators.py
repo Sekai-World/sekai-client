@@ -66,8 +66,8 @@ class TestRequireApiKey:
                 )
                 assert response.status_code == 401
     
-    def test_token_comparison_constant_time(self, app):
-        """Test uses constant-time comparison to prevent timing attacks."""
+    def test_wrong_tokens_consistently_rejected(self, app):
+        """Test wrong tokens are consistently rejected."""
         with app.test_client() as client:
             with patch.dict('os.environ', {'API_TOKEN': 'test_token_123'}):
                 # Both should return 401 with same timing behavior

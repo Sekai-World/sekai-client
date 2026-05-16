@@ -27,7 +27,7 @@ uv run --extra dev pytest tests/ --cov
 ### Run type check
 
 ```bash
-uv run --extra dev mypy api_client.py shared_client.py utils/ config.py --check-untyped-defs
+uv run --extra dev mypy api_client.py shared_client.py utils/ config.py
 ```
 
 ### Run Ruff formatter

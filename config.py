@@ -11,12 +11,6 @@ from os import getenv
 
 logger = logging.getLogger(__name__)
 
-# Type aliases for configuration values
-type IntConfig = int
-type FloatConfig = float
-type StrConfig = str
-
-
 def _parse_float_env(name: str, default: float) -> float:
     """
     Parse a float environment variable with validation.
@@ -96,42 +90,42 @@ class Config:
     """
 
     # ============ Request & Timeout Configuration ============
-    REQUEST_TIMEOUT: FloatConfig = _parse_float_env("REQUEST_TIMEOUT", 150.0)
+    REQUEST_TIMEOUT: float = _parse_float_env("REQUEST_TIMEOUT", 150.0)
     """Timeout for all external HTTP requests (in seconds)"""
 
-    JOB_QUEUE_TIMEOUT: FloatConfig = _parse_float_env("JOB_QUEUE_TIMEOUT", 30.0)
+    JOB_QUEUE_TIMEOUT: float = _parse_float_env("JOB_QUEUE_TIMEOUT", 30.0)
     """Timeout for enqueuing jobs to the worker (in seconds)"""
 
-    ANSWER_QUEUE_TIMEOUT: FloatConfig = _parse_float_env("ANSWER_QUEUE_TIMEOUT", 180.0)
+    ANSWER_QUEUE_TIMEOUT: float = _parse_float_env("ANSWER_QUEUE_TIMEOUT", 180.0)
     """Timeout for waiting for worker response (in seconds)"""
 
-    WORKER_RESPONSE_TIMEOUT: FloatConfig = 1.0
+    WORKER_RESPONSE_TIMEOUT: float = 1.0
     """Timeout for worker to put response in queue (in seconds)"""
 
     # ============ Retry Configuration ============
-    MAX_API_RETRIES: IntConfig = _parse_int_env("MAX_API_RETRIES", 3)
+    MAX_API_RETRIES: int = _parse_int_env("MAX_API_RETRIES", 3)
     """Maximum number of retries for API calls"""
 
-    BOOTSTRAP_MAX_RETRIES: IntConfig = _parse_int_env("BOOTSTRAP_MAX_RETRIES", 3)
+    BOOTSTRAP_MAX_RETRIES: int = _parse_int_env("BOOTSTRAP_MAX_RETRIES", 3)
     """Maximum number of bootstrap retries"""
 
     # ============ Region Port Configuration ============
     REGIONS: list[str] = ["jp", "en", "cn", "tw", "kr"]
     """List of supported game regions"""
 
-    JP_PORT: IntConfig = _parse_int_env("JP_PORT", 39390)
+    JP_PORT: int = _parse_int_env("JP_PORT", 39390)
     """Port for Japan region JSON-RPC server"""
 
-    EN_PORT: IntConfig = _parse_int_env("EN_PORT", 39392)
+    EN_PORT: int = _parse_int_env("EN_PORT", 39392)
     """Port for English region JSON-RPC server"""
 
-    CN_PORT: IntConfig = _parse_int_env("CN_PORT", 39394)
+    CN_PORT: int = _parse_int_env("CN_PORT", 39394)
     """Port for China region JSON-RPC server"""
 
-    TW_PORT: IntConfig = _parse_int_env("TW_PORT", 39391)
+    TW_PORT: int = _parse_int_env("TW_PORT", 39391)
     """Port for Taiwan region JSON-RPC server"""
 
-    KR_PORT: IntConfig = _parse_int_env("KR_PORT", 39393)
+    KR_PORT: int = _parse_int_env("KR_PORT", 39393)
     """Port for Korea region JSON-RPC server"""
 
     @classmethod
@@ -160,10 +154,10 @@ class Config:
         return port_map[region]
 
     # ============ API & Security Configuration ============
-    API_TOKEN: StrConfig = _DynamicStrConfig("API_TOKEN", "")
+    API_TOKEN: str = _DynamicStrConfig("API_TOKEN", "")
     """API token for request authentication"""
 
-    LOGLEVEL: StrConfig = _parse_str_env("LOGLEVEL", "INFO").upper()
+    LOGLEVEL: str = _parse_str_env("LOGLEVEL", "INFO").upper()
     """Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"""
 
     @classmethod
