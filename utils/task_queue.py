@@ -20,6 +20,8 @@ job_queue: queue.Queue[tuple[Callable[[], Any], queue.Queue[Any]]] = queue.Queue
 )
 """Queue of (callable_job, response_queue) tuples to be processed"""
 
+_worker_thread: threading.Thread | None = None
+
 
 def worker() -> None:
     """
@@ -48,5 +50,11 @@ def worker() -> None:
             job_queue.task_done()
 
 
-# Start the worker daemon thread
-threading.Thread(target=worker, daemon=True).start()
+def start_worker() -> None:
+    """Start the worker daemon thread once."""
+    global _worker_thread
+    if _worker_thread and _worker_thread.is_alive():
+        return
+
+    _worker_thread = threading.Thread(target=worker, daemon=True)
+    _worker_thread.start()

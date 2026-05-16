@@ -169,13 +169,8 @@ def _post_event_ranking(event_id: int, ranking_data: dict) -> None:
         )
         response.raise_for_status()
         logger.debug("[track_event_scores] event ranking posted")
-    except requests.Timeout as err:
-        logger.error(f"Error posting event ranking result to api, {err}")
-    except requests.HTTPError:
-        logger.error(
-            "Error posting event ranking result to api, %s",
-            response.content,
-        )
+    except requests.RequestException as err:
+        logger.error("Error posting event ranking result to api, %s", err)
 
 
 def _build_chapter_ranking_data(
@@ -215,13 +210,8 @@ def _post_world_bloom_chapter_ranking(
         )
         response.raise_for_status()
         logger.debug("[track_event_scores] event chapter ranking posted")
-    except requests.Timeout as err:
-        logger.error(f"Error posting event ranking result to api, {err}")
-    except requests.HTTPError:
-        logger.error(
-            "Error posting event ranking result to api, %s",
-            response.content,
-        )
+    except requests.RequestException as err:
+        logger.error("Error posting event ranking result to api, %s", err)
 
 
 def _track_world_bloom_chapters(

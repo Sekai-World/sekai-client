@@ -523,6 +523,7 @@ def refresh_version():
         file_path = path.join(masterdb_diff_folder_path, f"{key}.json")
         file_data = value
         logger.debug(f"[refresh_version] start writing master db {key}.json")
+        last_record_idx: int | None = None
 
         try:
             file_data, last_record_idx = _convert_master_records_for_region(

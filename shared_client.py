@@ -32,11 +32,13 @@ from pytz import timezone
 from api_client import APIClient
 from config import Config
 from utils.constants import pjsk_region
-from utils.task_queue import job_queue
+from utils.task_queue import job_queue, start_worker
 from utils.ujsonrpcapi import api
 
 dirname = path.dirname(__file__)
 logger = logging.getLogger(__name__)
+
+start_worker()
 
 # Global state for the JSON-RPC server
 api_client: APIClient | None = None

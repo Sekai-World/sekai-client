@@ -9,17 +9,18 @@ reloading without process restart.
 from collections.abc import Callable
 from functools import wraps
 from hmac import compare_digest
-from os import getenv
 from typing import Any
 
 from flask import abort, request
+
+from config import Config
 
 
 def require_apikey(view_function: Callable[..., Any]) -> Callable[..., Any]:
     """
     Decorator to enforce API key authentication on Flask routes.
 
-    Reads API_TOKEN from environment at request time (not import time).
+    Reads API_TOKEN from Config at request time.
     Uses constant-time comparison to prevent timing attacks.
     Implements fail-closed semantics: returns 500 if API_TOKEN not configured,
     returns 401 if token doesn't match.
@@ -39,11 +40,9 @@ def require_apikey(view_function: Callable[..., Any]) -> Callable[..., Any]:
 
     @wraps(view_function)
     def decorated_function(*args: Any, **kwargs: Any) -> Any:
-        api_token = getenv("API_TOKEN", "")
+        api_token = Config.API_TOKEN
         if not api_token:
-            # Fail closed when server is misconfigured instead of
-            # allowing empty-token access.
-            abort(500, description="API_TOKEN is not configured")
+            abort(500)
 
         request_token = request.headers.get("x-api-token", "")
         if request_token and compare_digest(request_token, api_token):

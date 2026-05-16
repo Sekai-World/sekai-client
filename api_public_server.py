@@ -19,7 +19,7 @@ import logging
 from threading import Lock
 from typing import Any
 
-from flask import Flask, json, jsonify
+from flask import Flask, Response, json, jsonify
 from werkzeug.exceptions import BadRequest
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -45,7 +45,7 @@ bootstrapped = False
 
 
 @app.errorhandler(BadRequest)
-def handle_bad_request(e: BadRequest) -> tuple[str, int]:
+def handle_bad_request(e: BadRequest) -> Response:
     """
     Handle BadRequest exceptions with JSON response.
 
@@ -182,7 +182,7 @@ def health() -> tuple[dict[str, Any], int]:
 
 @app.route("/<region>/refresh", methods=["POST"])
 @require_apikey
-def refresh_regional_client(region: str) -> dict[str, Any]:
+def refresh_regional_client(region: str) -> Response:
     """
     Force relogin for a specific region.
 
@@ -198,9 +198,9 @@ def refresh_regional_client(region: str) -> dict[str, Any]:
     return jsonify({"status": "success"})
 
 
-@app.route("/<region>/user/<user_id>/profile")
+@app.route("/<region>/user/<user_id>/profile", methods=["GET"])
 @require_apikey
-def fetch_user_profile_by_user_id(region: str, user_id: str) -> dict[str, Any]:
+def fetch_user_profile_by_user_id(region: str, user_id: str) -> Response:
     """
     Fetch user profile by user ID.
 
@@ -217,11 +217,11 @@ def fetch_user_profile_by_user_id(region: str, user_id: str) -> dict[str, Any]:
     return jsonify({"status": "success", "data": user_profile})
 
 
-@app.route("/<region>/user/<target_user_id>/event/<event_id>/ranking")
+@app.route("/<region>/user/<target_user_id>/event/<event_id>/ranking", methods=["GET"])
 @require_apikey
 def fetch_event_ranking_by_user_id(
     region: str, target_user_id: str, event_id: str
-) -> dict[str, Any]:
+) -> Response:
     """
     Fetch user's event ranking.
 

@@ -78,6 +78,15 @@ def _parse_str_env(name: str, default: str = "") -> str:
     return getenv(name, default)
 
 
+class _DynamicStrConfig:
+    def __init__(self, name: str, default: str = "") -> None:
+        self.name = name
+        self.default = default
+
+    def __get__(self, instance: object, owner: type | None = None) -> str:
+        return _parse_str_env(self.name, self.default)
+
+
 class Config:
     """
     Configuration container for sekai-client.
@@ -151,7 +160,7 @@ class Config:
         return port_map[region]
 
     # ============ API & Security Configuration ============
-    API_TOKEN: StrConfig = _parse_str_env("API_TOKEN", "")
+    API_TOKEN: StrConfig = _DynamicStrConfig("API_TOKEN", "")
     """API token for request authentication"""
 
     LOGLEVEL: StrConfig = _parse_str_env("LOGLEVEL", "INFO").upper()

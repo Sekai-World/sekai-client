@@ -1,6 +1,6 @@
 from os import getenv
 
-### BEGIN api_client constansts ###
+### BEGIN api_client constants ###
 initial_api_headers = {
     "jp": {
         "x-devicemodel": "iPad13,16",
@@ -92,7 +92,7 @@ base_pjsk_api_url = {
 pjsk_region = getenv("SEKAI_REGION", "jp")
 
 pjsk_cookie_post_url = {"jp": "https://issue.sekai.colorfulpalette.org/api/signature"}
-### END api_client constansts ###
+### END api_client constants ###
 
 ### START check_update & event_tracker constants ###
 update_options = {
