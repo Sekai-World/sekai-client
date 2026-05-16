@@ -28,12 +28,20 @@ def _parse_float_env(name: str, default: float) -> float:
     raw = getenv(name, str(default))
     try:
         value = float(raw)
-        if value <= 0:
-            raise ValueError("timeout must be positive")
-        return value
     except (TypeError, ValueError):
         logger.warning("Invalid %s value=%r, falling back to %.1f", name, raw, default)
         return default
+
+    if value <= 0:
+        logger.warning(
+            "Invalid %s value=%r, falling back to %.1f because it must be positive",
+            name,
+            raw,
+            default,
+        )
+        return default
+
+    return value
 
 
 def _parse_int_env(name: str, default: int) -> int:
