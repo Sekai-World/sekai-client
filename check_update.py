@@ -14,6 +14,7 @@ from git.repo import Repo
 from git.util import Actor
 from pytz import timezone
 
+from logging_config import configure_logging
 from utils.array_to_dict import (
     convert_array_to_dict,
     get_structures_for_app_ver,
@@ -36,7 +37,7 @@ from utils.git import check_git_folder
 from utils.jsonrpc_client import JSONRPCClient
 
 LOGLEVEL = getenv("LOGLEVEL", "INFO").upper()
-logging.basicConfig(level=LOGLEVEL, format="%(asctime)s %(message)s")
+configure_logging(level=LOGLEVEL)
 logger = logging.getLogger(__name__)
 
 jsonrpc_client = JSONRPCClient(f"http://localhost:{getenv('JSONRPC_PORT', '3939')}/")
@@ -56,7 +57,7 @@ i18n_diff_repo: Repo | None = None
 
 def day_change_func():
     logger.debug(
-        "[bootstrap] Pull %s repo remote changes before making any local changes",
+        "[day_change_func] Pull %s repo remote changes before making any local changes",
         local_git_folder_names["masterDBDiff"],
     )
     masterdb_diff_repo.remote().pull()
@@ -101,13 +102,13 @@ def try_update_func():
 
     is_in_maintenance = False
     logger.debug(
-        "[bootstrap] Pull %s repo remote changes before making any local changes",
+        "[try_update_func] Pull %s repo remote changes before making any local changes",
         local_git_folder_names["masterDBDiff"],
     )
     masterdb_diff_repo.remote().pull()
     if update_options["i18n"]:
         logger.debug(
-            "[bootstrap] Pull %s repo remote changes before making any local changes",
+            "[try_update_func] Pull %s repo remote changes before local updates",
             local_git_folder_names["i18n"],
         )
         i18n_diff_repo.remote().pull()
@@ -133,13 +134,13 @@ def try_update_simple_func():
     is_in_maintenance = False
 
     logger.debug(
-        "[bootstrap] Pull %s repo remote changes before making any local changes",
+        "[try_update_simple_func] Pull %s repo remote changes before local updates",
         local_git_folder_names["masterDBDiff"],
     )
     masterdb_diff_repo.remote().pull()
     if update_options["i18n"]:
         logger.debug(
-            "[bootstrap] Pull %s repo remote changes before making any local changes",
+            "[try_update_simple_func] Pull %s repo remote changes before local updates",
             local_git_folder_names["i18n"],
         )
         i18n_diff_repo.remote().pull()
@@ -548,7 +549,9 @@ def refresh_version():
                 key, file_data, current_structures
             )
             id_key = _resolve_master_id_key(key)
-            file_data = _merge_existing_file_data(file_path, file_data, id_key, value)
+            file_data = _merge_existing_file_data(
+                file_path, file_data, id_key, file_data
+            )
             with open(file_path, "w") as f:
                 json.dump(file_data, f, ensure_ascii=False, indent=2)
             _write_compact_master_alias_if_needed(key, file_data)

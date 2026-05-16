@@ -532,9 +532,13 @@ class APIClient:
         curr_ver_info, fallback_selected = self._find_current_version_info(
             all_ver_infos, curr_app_ver
         )
-        res["new_version"] = self._is_version_updated(curr_ver_info)
         if curr_ver_info["appVersionStatus"] == "maintenance" and fallback_selected:
             res["maintenance"] = True
+            res["new_version"] = False
+        elif fallback_selected:
+            res["new_version"] = True
+        else:
+            res["new_version"] = self._is_version_updated(curr_ver_info)
 
         if res["new_version"]:
             self._apply_new_version_info(curr_ver_info)
@@ -655,8 +659,11 @@ class APIClient:
         )
 
     def request_and_decrypt(
-        self, url: str, method="get", body: str | dict = ""
-    ) -> dict:
+        self,
+        url: str,
+        method: str = "get",
+        body: str | dict[str, Any] = "",
+    ) -> dict[str, Any]:
         res = requests.request(method, url, data=body, timeout=Config.REQUEST_TIMEOUT)
         res.raise_for_status()
 

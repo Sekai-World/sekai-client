@@ -10,11 +10,12 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from pytz import timezone
 
+from logging_config import configure_logging
 from utils.constants import pjsk_region, sekai_api_key, strapi_base_url
 from utils.jsonrpc_client import JSONRPCClient
 
 LOGLEVEL = getenv("LOGLEVEL", "INFO").upper()
-logging.basicConfig(level=LOGLEVEL, format="%(asctime)s %(message)s")
+configure_logging(level=LOGLEVEL)
 logger = logging.getLogger(__name__)
 
 jsonrpc_client = JSONRPCClient(f"http://localhost:{getenv('JSONRPC_PORT', '3939')}/")

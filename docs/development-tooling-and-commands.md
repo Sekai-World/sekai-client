@@ -3,6 +3,9 @@
 ## Tooling Policy
 This project is configured to use Ruff as the single formatting/linting tool.
 
+The `dev` extra includes broader developer tooling as well
+(`pytest`, `pytest-cov`, `pytest-mock`, `mypy`, and `ruff`).
+
 Configured in [pyproject.toml](pyproject.toml):
 
 - Ruff formatter: `ruff format`

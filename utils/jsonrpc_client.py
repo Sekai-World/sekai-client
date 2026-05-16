@@ -55,16 +55,17 @@ class JSONRPCClient:
             json=request_uuid(func_name, params),
             timeout=Config.REQUEST_TIMEOUT,
         )
-        r.raise_for_status()
 
         try:
             payload = r.json()
         except ValueError as err:
+            r.raise_for_status()
             raise RuntimeError(f"Invalid JSON-RPC response: {r.text}") from err
 
         parsed = parse(payload)
 
         if isinstance(parsed, Ok):
+            r.raise_for_status()
             return parsed.result
 
         error_message = parsed.message

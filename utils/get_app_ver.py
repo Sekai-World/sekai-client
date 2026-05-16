@@ -1,7 +1,10 @@
+import logging
 from os import environ
 
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 
 def get_app_ver_qooapp(appid) -> str:
@@ -33,7 +36,8 @@ def get_app_ver_and_hash_jp() -> dict:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         data = r.json()
-    except Exception:
+    except (requests.RequestException, ValueError) as err:
+        logger.warning("Primary JP version endpoint failed: %s", err)
         # try to get from github repo
 
         url = "https://sekai-world.github.io/sekai-master-db-diff/versions.json"
@@ -52,7 +56,8 @@ def get_app_ver_and_hash_en() -> dict:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         data = r.json()
-    except Exception:
+    except (requests.RequestException, ValueError) as err:
+        logger.warning("Primary EN version endpoint failed: %s", err)
         # try to get from github repo
 
         url = "https://sekai-world.github.io/sekai-master-db-en-diff/versions.json"

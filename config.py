@@ -11,6 +11,7 @@ from os import getenv
 
 logger = logging.getLogger(__name__)
 
+
 def _parse_float_env(name: str, default: float) -> float:
     """
     Parse a float environment variable with validation.
@@ -20,10 +21,8 @@ def _parse_float_env(name: str, default: float) -> float:
         default: Default value if not set or invalid
 
     Returns:
-        Parsed float value or default
-
-    Raises:
-        ValueError: If value is not positive
+        Parsed float value or default. Invalid or non-positive values
+        are logged and replaced by the default.
     """
     raw = getenv(name, str(default))
     try:
@@ -53,7 +52,8 @@ def _parse_int_env(name: str, default: int) -> int:
         default: Default value if not set or invalid
 
     Returns:
-        Parsed int value or default
+        Parsed int value or default. Negative values are invalid and
+        fall back to the default; zero is allowed.
     """
     raw = getenv(name, str(default))
     try:
@@ -78,15 +78,6 @@ def _parse_str_env(name: str, default: str = "") -> str:
         Environment variable value or default
     """
     return getenv(name, default)
-
-
-class _DynamicStrConfig:
-    def __init__(self, name: str, default: str = "") -> None:
-        self.name = name
-        self.default = default
-
-    def __get__(self, instance: object, owner: type | None = None) -> str:
-        return _parse_str_env(self.name, self.default)
 
 
 class Config:
@@ -162,8 +153,10 @@ class Config:
         return port_map[region]
 
     # ============ API & Security Configuration ============
-    API_TOKEN: str = _DynamicStrConfig("API_TOKEN", "")
-    """API token for request authentication"""
+    @classmethod
+    def get_api_token(cls) -> str:
+        """Read API token from environment on each access."""
+        return _parse_str_env("API_TOKEN", "")
 
     LOGLEVEL: str = _parse_str_env("LOGLEVEL", "INFO").upper()
     """Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"""
@@ -178,7 +171,7 @@ class Config:
         """
         warnings = []
 
-        if not cls.API_TOKEN:
+        if not cls.get_api_token():
             warnings.append("API_TOKEN not set; requests will return 500 (fail-closed)")
 
         if cls.REQUEST_TIMEOUT <= 0:
@@ -191,9 +184,3 @@ class Config:
             warnings.append("ANSWER_QUEUE_TIMEOUT must be positive")
 
         return warnings
-
-
-# Log validation warnings at module load
-_validation_warnings = Config.validate()
-for warning in _validation_warnings:
-    logger.warning("Config validation: %s", warning)

@@ -62,6 +62,7 @@ def enqueue_job(
         Tuple of (response_queue, error). If error is not None,
         the job was not enqueued and response_queue is None.
     """
+    start_worker()
     response_queue: queue.Queue[Any] = queue.Queue(maxsize=1)
     try:
         job_queue.put((job, response_queue), timeout=Config.JOB_QUEUE_TIMEOUT)

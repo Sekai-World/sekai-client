@@ -13,7 +13,9 @@ from config import Config
 from utils.task_queue import start_worker
 
 
-start_worker()
+@pytest.fixture(autouse=True, scope="session")
+def ensure_worker_started():
+    start_worker()
 
 
 class TestTaskQueue:

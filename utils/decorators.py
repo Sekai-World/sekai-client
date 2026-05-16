@@ -40,9 +40,9 @@ def require_apikey(view_function: Callable[..., Any]) -> Callable[..., Any]:
 
     @wraps(view_function)
     def decorated_function(*args: Any, **kwargs: Any) -> Any:
-        api_token = Config.API_TOKEN
+        api_token = Config.get_api_token()
         if not api_token:
-            abort(500)
+            abort(500, description="API_TOKEN is not configured")
 
         request_token = request.headers.get("x-api-token", "")
         if request_token and compare_digest(request_token, api_token):
