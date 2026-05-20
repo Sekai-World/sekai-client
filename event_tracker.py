@@ -268,7 +268,7 @@ def track_event_scores(curr_time):
         raise RuntimeError("Current event will expire soon")
 
     user_id = jsonrpc_client.request("account_info")["userId"]
-    logger.debug(f"[track_event_scores] got user id {user_id}")
+    logger.debug("[track_event_scores] got user id %s", user_id)
 
     ranking_data = {"time": curr_time}
     event_id = event_data["id"]

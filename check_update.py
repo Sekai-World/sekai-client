@@ -333,7 +333,7 @@ def get_splitted_master_data():
     # download every split
     master_data_raw = []
     for split_path in master_split_paths:
-        logger.debug(f"[get_splitted_master_data] fetch split {split_path}")
+        logger.debug("[get_splitted_master_data] fetch split %s", split_path)
         master_data_raw.append(
             jsonrpc_client.request("call_pjsk_api", [f"/{split_path}"])
         )
@@ -406,7 +406,7 @@ def _pull_i18n_repo_before_refresh() -> None:
 
 
 def _refresh_version_info_from_source() -> dict:
-    logger.info(f"[refresh_version] fetching version info from {pjsk_region} server")
+    logger.info("[refresh_version] fetching version info from %s server", pjsk_region)
     if check_update_simple_mode:
         return fetch_simple_version_info()
 
@@ -518,7 +518,7 @@ def refresh_version():
 
     _pull_i18n_repo_before_refresh()
     version_info = _refresh_version_info_from_source()
-    logger.debug(f"[refresh_version] fetched version info: {version_info}")
+    logger.debug("[refresh_version] fetched version info: %s", version_info)
     with open(path.join(masterdb_diff_folder_path, "versions.json"), "w") as f:
         json.dump(version_info, f, indent=2)
         f.truncate()
@@ -541,7 +541,7 @@ def refresh_version():
     for key, value in master_data.items():
         file_path = path.join(masterdb_diff_folder_path, f"{key}.json")
         file_data = value
-        logger.debug(f"[refresh_version] start writing master db {key}.json")
+        logger.debug("[refresh_version] start writing master db %s.json", key)
         last_record_idx: int | None = None
 
         try:
@@ -568,7 +568,7 @@ def refresh_version():
             )
             raise
 
-        logger.debug(f"[refresh_version] wrote master db {key}.json")
+        logger.debug("[refresh_version] wrote master db %s.json", key)
 
         if update_options["i18n"]:
             logger.debug(
