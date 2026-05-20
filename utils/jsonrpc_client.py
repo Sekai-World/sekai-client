@@ -22,10 +22,10 @@ class JSONRPCClient:
     handling with automatic timeout configuration.
 
     Attributes:
-        url: Base URL of the JSON-RPC server (e.g., 'http://localhost:3939/')
+        url: Base URL of the JSON-RPC server (e.g., 'http://localhost:39390/')
     """
 
-    def __init__(self, url: str = "http://localhost:3939/") -> None:
+    def __init__(self, url: str = "http://localhost:39390/") -> None:
         """
         Initialize a JSON-RPC client.
 
@@ -65,7 +65,6 @@ class JSONRPCClient:
         parsed = parse(payload)
 
         if isinstance(parsed, Ok):
-            r.raise_for_status()
             return parsed.result
 
         error_message = parsed.message

@@ -97,7 +97,10 @@ def _process_structured_key(
     array_data,
     key_structure,
 ) -> None:
-    if not isinstance(key, list) or len(key) < 2:
+    if not isinstance(key, list):
+        return
+
+    if len(key) < 2:
         raise _build_context_error(
             ValueError,
             "invalid key_structure item, expected [name, sub_structure]",

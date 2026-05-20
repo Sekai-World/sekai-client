@@ -84,8 +84,8 @@ class Config:
     """
     Configuration container for sekai-client.
 
-    All settings are parsed at module load time with proper validation.
-    Provides defaults for all parameters to ensure graceful degradation.
+    Most settings are parsed at module load time with proper validation.
+    API_TOKEN is read dynamically through get_api_token().
     """
 
     # ============ Request & Timeout Configuration ============

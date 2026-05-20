@@ -339,10 +339,13 @@ class APIClient:
             self.master_split_paths = auth_data["suiteMasterSplitPath"]
             return auth_data
 
-        access_token = self.account_info["loginInfo"]["accessToken"]
-        return self.call_pjsk_api(
-            "/user/auth", "post", {"userID": 0, "accessToken": access_token}
-        )
+        if self.region in ("cn", "tw", "kr"):
+            access_token = self.account_info["loginInfo"]["accessToken"]
+            return self.call_pjsk_api(
+                "/user/auth", "post", {"userID": 0, "accessToken": access_token}
+            )
+
+        raise ValueError(f"Unsupported region: {self.region}")
 
     def _apply_auth_headers_and_version_info(self, auth_data: dict[str, Any]) -> None:
         session_token = auth_data["sessionToken"]
@@ -663,7 +666,7 @@ class APIClient:
         url: str,
         method: str = "get",
         body: str | dict[str, Any] = "",
-    ) -> dict[str, Any]:
+    ) -> Any:
         res = requests.request(method, url, data=body, timeout=Config.REQUEST_TIMEOUT)
         res.raise_for_status()
 

@@ -38,8 +38,6 @@ from utils.ujsonrpcapi import api
 dirname = path.dirname(__file__)
 logger = logging.getLogger(__name__)
 
-start_worker()
-
 # Global state for the JSON-RPC server
 api_client: APIClient | None = None
 client_region: str = pjsk_region
