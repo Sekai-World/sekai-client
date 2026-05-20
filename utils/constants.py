@@ -1,6 +1,6 @@
 from os import getenv
 
-### BEGIN api_client constansts ###
+### BEGIN api_client constants ###
 initial_api_headers = {
     "jp": {
         "x-devicemodel": "iPad13,16",
@@ -32,8 +32,9 @@ initial_api_headers = {
         "accept-encoding": "gzip, deflate, br",
         "content-type": "application/octet-stream",
         # 'X-Request-Id': '8c3aa6b3-a505-4974-afca-b2e911c85434',
-        "user-agent":
-        "%E4%B8%96%E7%95%8C%E8%A8%88%E7%95%AB/1258 CFNetwork/1494.0.7 Darwin/23.4.0",
+        "user-agent": (
+            "%E4%B8%96%E7%95%8C%E8%A8%88%E7%95%AB/1258 CFNetwork/1494.0.7 Darwin/23.4.0"
+        ),
         "device_id": getenv("SEKAI_TW_DEVICE_ID", "7013473306716718998"),
         "x-app-version": getenv("APP_VER", "3.6.0"),
         "x-platform": "iOS",
@@ -69,14 +70,15 @@ initial_api_headers = {
         "x-asset-version": "",
         "x-install-id": "3e9d5364-1c68-4f53-aae8-2824e08e993f",
         "x-data-version": "",
-        "user-agent":
-        "%ED%94%84%EB%A1%9C%EC%84%B8%EC%B9%B4/5011 CFNetwork/1494.0.7 Darwin/23.4.0",
+        "user-agent": (
+            "%ED%94%84%EB%A1%9C%EC%84%B8%EC%B9%B4/5011 CFNetwork/1494.0.7 Darwin/23.4.0"
+        ),
         "x-app-version": getenv("APP_VER", "3.6.0"),
         # "X-Session-Token": "",
         "x-platform": "iOS",
         "x-operatingsystem": "iPadOS 17.4",
         "device_id": getenv("SEKAI_KR_DEVICE_ID", "7013473306716718593"),
-    }
+    },
 }
 
 base_pjsk_api_url = {
@@ -84,53 +86,46 @@ base_pjsk_api_url = {
     "tw": "https://mk-zian-obt-cdn.bytedgame.com/api",
     "en": "https://n-production-game-api.sekai-en.com/api",
     "kr": "https://mkkorea-obt-prod01-cdn.bytedgame.com/api",
-    "cn": "https://mkcn-prod-public-60001-1.dailygn.com/api"
+    "cn": "https://mkcn-prod-public-60001-1.dailygn.com/api",
 }
 
 pjsk_region = getenv("SEKAI_REGION", "jp")
 
-pjsk_cookie_post_url = {
-    "jp": "https://issue.sekai.colorfulpalette.org/api/signature"
-}
-### END api_client constansts ###
+pjsk_cookie_post_url = {"jp": "https://issue.sekai.colorfulpalette.org/api/signature"}
+### END api_client constants ###
 
 ### START check_update & event_tracker constants ###
 update_options = {
-    "master":
-    getenv("ENABLE_SEKAI_UPDATE_MASTER", "false") in ("true", "True", "1"),
-    "userInfo":
-    getenv("ENABLE_SEKAI_UPDATE_USER_INFO", "false") in ("true", "True", "1"),
-    "i18n":
-    getenv("ENABLE_SEKAI_UPDATE_I18N", "false") in ("true", "True", "1"),
+    "master": getenv("ENABLE_SEKAI_UPDATE_MASTER", "false") in ("true", "True", "1"),
+    "userInfo": getenv("ENABLE_SEKAI_UPDATE_USER_INFO", "false")
+    in ("true", "True", "1"),
+    "i18n": getenv("ENABLE_SEKAI_UPDATE_I18N", "false") in ("true", "True", "1"),
 }
 
-check_update_simple_mode = getenv("CHECK_UPDATE_SIMPLE_MODE",
-                                  "false") in ("true", "True", "1")
+check_update_simple_mode = getenv("CHECK_UPDATE_SIMPLE_MODE", "false") in (
+    "true",
+    "True",
+    "1",
+)
 check_update_versions_url = getenv("CHECK_UPDATE_VERSIONS_URL", "")
 
 local_git_folder_names = {
     "i18n": getenv("GIT_FOLDER_SEKAI_I18N", "sekai-i18n"),
-    "masterDBDiff": getenv("GIT_FOLDER_SEKAI_MASTER_DB_DIFF", "sekai-master-db-diff")
+    "masterDBDiff": getenv("GIT_FOLDER_SEKAI_MASTER_DB_DIFF", "sekai-master-db-diff"),
 }
 
-remote_git_url_base = getenv("REMOTE_GIT_BASE_URL",
-                             "https://github.com/Sekai-World")
+remote_git_url_base = getenv("REMOTE_GIT_BASE_URL", "https://github.com/Sekai-World")
 
 strapi_base_url = getenv("STRAPI_BASE_URL", "http://localhost:3000")
 strapi_token = getenv("STRAPI_TOKEN", "")
 
 sekai_api_key = getenv("SEKAI_API_KEY", "")
 
-app_id_regions = {
-    "jp": "9038",
-    "tw": "18298",
-    "en": "18337",
-    "kr": "20082"
-}
+app_id_regions = {"jp": "9038", "tw": "18298", "en": "18337", "kr": "20082"}
 
 nuverse_master_data_base_url = {
     "tw": "https://lf16-mkovscdn-sg.bytedgame.com/obj/sf-game-alisg/gdl_app_5245/MasterData/60001",
     "kr": "https://lf19-mkkr.bytedgame.com/obj/sf-game-alisg/gdl_app_292248/MasterData/60001",
-    "cn": "https://lf9-mkcncdn-tos.dailygn.com/obj/sf-game-lf/gdl_app_5236/MasterData/60001"
+    "cn": "https://lf9-mkcncdn-tos.dailygn.com/obj/sf-game-lf/gdl_app_5236/MasterData/60001",
 }
 ### END check_update & event_tracker constants ###

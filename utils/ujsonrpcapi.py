@@ -1,19 +1,24 @@
-from jsonrpc.backend.flask import JSONRPCAPI, JSONRPCRequest, JSONRPCInvalidRequestException, JSONRPCResponseManager, Response
 import ujson as json
+from jsonrpc.backend.flask import (
+    JSONRPCAPI,
+    JSONRPCInvalidRequestException,
+    JSONRPCRequest,
+    JSONRPCResponseManager,
+    Response,
+)
 
 
 class UJSONRPCAPI(JSONRPCAPI):
-
     def jsonrpc(self):
         request_str = self._get_request_str()
         try:
             jsonrpc_request = JSONRPCRequest.from_json(request_str)
         except (TypeError, ValueError, JSONRPCInvalidRequestException):
-            response = JSONRPCResponseManager.handle(request_str,
-                                                     self.dispatcher)
+            response = JSONRPCResponseManager.handle(request_str, self.dispatcher)
         else:
             response = JSONRPCResponseManager.handle_request(
-                jsonrpc_request, self.dispatcher)
+                jsonrpc_request, self.dispatcher
+            )
 
         if response:
             response.serialize = self._serialize

@@ -171,7 +171,9 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-test*
+# Ignore local test scripts but allow tests/ folder for unit tests
+test_*.py
+test_*.sh
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json

@@ -1,7 +1,7 @@
 """Array-to-dict key structures and APP_VER compatibility helpers."""
 
 from copy import deepcopy
-from functools import cmp_to_key, lru_cache
+from functools import cache, cmp_to_key, lru_cache
 from itertools import zip_longest
 from os import getenv
 
@@ -1162,16 +1162,47 @@ def _parse_semantic_version(
     return core_version, tuple(prerelease_version)
 
 
-def _compare_semantic_versions(left: str, right: str) -> int:
-    left_core, left_prerelease = _parse_semantic_version(left)
-    right_core, right_prerelease = _parse_semantic_version(right)
-
+def _compare_core_versions(
+    left_core: tuple[int, ...], right_core: tuple[int, ...]
+) -> int:
     for left_part, right_part in zip_longest(left_core, right_core, fillvalue=0):
         if left_part < right_part:
             return -1
         if left_part > right_part:
             return 1
+    return 0
 
+
+def _compare_prerelease_part(
+    left_part: tuple[int, int | str] | None,
+    right_part: tuple[int, int | str] | None,
+) -> int:
+    if left_part is None:
+        return -1
+    if right_part is None:
+        return 1
+
+    type_order_compare = (left_part[0] > right_part[0]) - (left_part[0] < right_part[0])
+    if type_order_compare != 0:
+        return type_order_compare
+
+    left_val = left_part[1]
+    right_val = right_part[1]
+    same_type = (isinstance(left_val, int) and isinstance(right_val, int)) or (
+        isinstance(left_val, str) and isinstance(right_val, str)
+    )
+    if same_type:
+        return (left_val > right_val) - (left_val < right_val)
+
+    if isinstance(left_val, int):
+        return -1
+    return 1
+
+
+def _compare_prerelease_versions(
+    left_prerelease: tuple[tuple[int, int | str], ...],
+    right_prerelease: tuple[tuple[int, int | str], ...],
+) -> int:
     if not left_prerelease and not right_prerelease:
         return 0
     if not left_prerelease:
@@ -1182,32 +1213,19 @@ def _compare_semantic_versions(left: str, right: str) -> int:
     for left_part, right_part in zip_longest(
         left_prerelease, right_prerelease, fillvalue=None
     ):
-        if left_part is None:
-            return -1
-        if right_part is None:
-            return 1
-        if left_part[0] < right_part[0]:
-            return -1
-        if left_part[0] > right_part[0]:
-            return 1
-        left_val = left_part[1]
-        right_val = right_part[1]
-        if isinstance(left_val, int) and isinstance(right_val, int):
-            if left_val < right_val:
-                return -1
-            if left_val > right_val:
-                return 1
-        elif isinstance(left_val, str) and isinstance(right_val, str):
-            if left_val < right_val:
-                return -1
-            if left_val > right_val:
-                return 1
-        else:
-            if isinstance(left_val, int):
-                return -1
-            return 1
-
+        part_compare = _compare_prerelease_part(left_part, right_part)
+        if part_compare != 0:
+            return part_compare
     return 0
+
+
+def _compare_semantic_versions(left: str, right: str) -> int:
+    left_core, left_prerelease = _parse_semantic_version(left)
+    right_core, right_prerelease = _parse_semantic_version(right)
+    core_compare = _compare_core_versions(left_core, right_core)
+    if core_compare != 0:
+        return core_compare
+    return _compare_prerelease_versions(left_prerelease, right_prerelease)
 
 
 @lru_cache(maxsize=1)
@@ -1237,7 +1255,7 @@ def resolve_structure_compatibility_version(app_ver: str | None = None) -> str |
         return None
 
 
-@lru_cache(maxsize=None)
+@cache
 def _build_structures_for_app_ver(app_ver: str) -> dict[str, list]:
     result = deepcopy(BASE_STRUCTURES)
 
