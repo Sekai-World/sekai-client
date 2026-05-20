@@ -38,7 +38,6 @@ dependencies = [
     "urllib3",
     "werkzeug",
     "wrapt",
-    "yapf",
     "gunicorn",
     "beautifulsoup4",
     "lxml",
@@ -102,4 +101,3 @@ ignore = [
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
-

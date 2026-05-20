@@ -6,7 +6,7 @@ This project is configured to use Ruff as the single formatting/linting tool.
 The `dev` extra includes broader developer tooling as well
 (`pytest`, `pytest-cov`, `pytest-mock`, `mypy`, and `ruff`).
 
-Configured in [pyproject.toml](pyproject.toml):
+Configured in [pyproject.toml](../pyproject.toml):
 
 - Ruff formatter: `ruff format`
 - Ruff linter: `ruff check`
@@ -59,4 +59,4 @@ uv run --extra dev pytest tests/
 
 1. Add CI workflow to enforce Ruff, mypy, and pytest checks.
 2. Expand integration tests for JSON-RPC endpoints.
-3. Add deployment and troubleshooting docs under [docs](docs).
+3. Add deployment and troubleshooting docs under [docs](.).
