@@ -64,3 +64,23 @@ def test_day_change_logs_queued_relogin_failure(monkeypatch, caplog):
 
     run_job.assert_called_once()
     assert "Scheduled daily relogin failed: daily refresh failed" in caplog.text
+
+
+def test_failed_split_path_refresh_restores_active_session(
+    monkeypatch, logged_in_client
+):
+    def fail_after_clearing_session():
+        logged_in_client.headers.pop("x-session-token")
+        logged_in_client.master_split_paths = ["replacement-path"]
+        raise RuntimeError("split path refresh failed")
+
+    logged_in_client.refresh_master_split_paths.side_effect = (
+        fail_after_clearing_session
+    )
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+
+    with pytest.raises(RuntimeError, match="split path refresh failed"):
+        shared_client.refresh_master_split_paths()
+
+    assert logged_in_client.headers["x-session-token"] == "active-token"
+    assert logged_in_client.master_split_paths == ["current-path"]

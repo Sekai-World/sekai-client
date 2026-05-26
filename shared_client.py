@@ -138,6 +138,24 @@ def require_api_client() -> APIClient:
     return api_client
 
 
+def _snapshot_client_state(client: APIClient) -> dict[str, Any]:
+    return {
+        "headers": deepcopy(client.headers),
+        "account_info": deepcopy(client.account_info),
+        "version_info": deepcopy(client.version_info),
+        "master_split_paths": deepcopy(client.master_split_paths),
+        "user_info": deepcopy(client.user_info),
+    }
+
+
+def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
+    client.headers = state["headers"]
+    client.account_info = state["account_info"]
+    client.version_info = state["version_info"]
+    client.master_split_paths = state["master_split_paths"]
+    client.user_info = state["user_info"]
+
+
 def get_account_info() -> dict[str, Any]:
     """
     Load or generate account credentials for the current region.
@@ -214,13 +232,7 @@ def login_account(forced: bool = False) -> dict[str, Any]:
     client = require_api_client()
     previous_state: dict[str, Any] | None = None
     if user_logged_in:
-        previous_state = {
-            "headers": deepcopy(client.headers),
-            "account_info": deepcopy(client.account_info),
-            "version_info": deepcopy(client.version_info),
-            "master_split_paths": deepcopy(client.master_split_paths),
-            "user_info": deepcopy(client.user_info),
-        }
+        previous_state = _snapshot_client_state(client)
 
     day_change_job.pause()
     try:
@@ -230,11 +242,7 @@ def login_account(forced: bool = False) -> dict[str, Any]:
         return user_info
     except Exception:
         if previous_state is not None:
-            client.headers = previous_state["headers"]
-            client.account_info = previous_state["account_info"]
-            client.version_info = previous_state["version_info"]
-            client.master_split_paths = previous_state["master_split_paths"]
-            client.user_info = previous_state["user_info"]
+            _restore_client_state(client, previous_state)
         raise
     finally:
         day_change_job.resume()
@@ -458,6 +466,25 @@ def master_split_paths() -> list[str]:
         raise RuntimeError("Login before calling this method")
 
     return require_api_client().master_split_paths
+
+
+@api.dispatcher.add_method
+def refresh_master_split_paths() -> Any:
+    """Refresh master split paths without running the full login workflow."""
+    if not user_logged_in:
+        raise RuntimeError("Login before calling this method")
+
+    client = require_api_client()
+
+    def refresh() -> list[str]:
+        previous_state = _snapshot_client_state(client)
+        try:
+            return client.refresh_master_split_paths()
+        except Exception:
+            _restore_client_state(client, previous_state)
+            raise
+
+    return run_job(refresh)
 
 
 @api.dispatcher.add_method

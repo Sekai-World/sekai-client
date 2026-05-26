@@ -425,10 +425,10 @@ def _refresh_version_info_from_source() -> dict[str, Any]:
             jsonrpc_client.request("login")
         else:
             logger.debug(
-                "[refresh_version] relogin to refresh full version info and "
-                "splitted master data list"
+                "[refresh_version] refresh split master data list without "
+                "running full login workflow"
             )
-            jsonrpc_client.request("relogin")
+            jsonrpc_client.request("refresh_master_split_paths")
     return _require_dict_response(
         jsonrpc_client.request("version_info"), "fetch version info"
     )

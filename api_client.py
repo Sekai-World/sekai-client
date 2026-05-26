@@ -631,6 +631,15 @@ class APIClient:
         self.user_info = user_info
         return user_info
 
+    def refresh_master_split_paths(self) -> list[str]:
+        """Refresh authentication metadata without running post-login user requests."""
+        if self.region not in ("jp", "en"):
+            raise ValueError("Split master paths are only available for jp and en")
+
+        auth_data = self._authenticate()
+        self._apply_auth_headers_and_version_info(auth_data)
+        return self.master_split_paths
+
     def fetch_suite_user(self, update_user_info: bool = False) -> dict[str, Any]:
         user_id = self.account_info["userId"]
         endpoint = f"/suite/user/{user_id}"
