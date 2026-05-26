@@ -172,8 +172,8 @@ cython_debug/
 #.idea/
 
 # Ignore local test scripts but allow tests/ folder for unit tests
-test_*.py
-test_*.sh
+/test_*.py
+/test_*.sh
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json

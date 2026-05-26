@@ -17,6 +17,7 @@ Regional Ports (configurable via environment):
 import logging
 import queue
 from collections.abc import Callable
+from copy import deepcopy
 from os import getenv, path
 from threading import Lock
 from typing import Any
@@ -107,15 +108,19 @@ def run_job(job: Callable[[], Any]) -> Any | JSONRPCInternalError:
         Job result, or JSONRPCInternalError if job failed or timed out
     """
     response_queue, err = enqueue_job(job)
-    if err:
+    if err is not None:
         return err
+    if response_queue is None:
+        return JSONRPCInternalError(data="Job was not enqueued")
     return get_answer(response_queue)
 
 
 def day_change_func() -> None:
     """Scheduled job to relogin once per day (at 4 AM JST)."""
     if user_logged_in:
-        login_account(True)
+        result = run_job(lambda: login_account(True))
+        if isinstance(result, JSONRPCInternalError):
+            logger.error("Scheduled daily relogin failed: %s", result.data)
 
 
 # Background scheduler for daily account refresh
@@ -124,6 +129,13 @@ cron_trigger = CronTrigger(
     hour="4", minute="0", second="0", timezone=timezone("Asia/Tokyo")
 )
 day_change_job = scheduler.add_job(day_change_func, cron_trigger, name="day_change_job")
+
+
+def require_api_client() -> APIClient:
+    """Return the initialized API client or fail with the public API error."""
+    if api_client is None:
+        raise RuntimeError("Init before calling this method")
+    return api_client
 
 
 def get_account_info() -> dict[str, Any]:
@@ -146,10 +158,13 @@ def get_account_info() -> dict[str, Any]:
         filepath = path.join(dirname, f"sharedAccount.{client_region}.yaml")
         if path.exists(filepath):
             with open(filepath, encoding="utf-8") as f:
-                return yaml.safe_load(f)
+                account_info = yaml.safe_load(f)
+            if not isinstance(account_info, dict):
+                raise ValueError(f"Invalid account info file: {filepath}")
+            return account_info
         else:
             logger.warning("no %s account found, registering a new one", client_region)
-            register_info = api_client.register_new_account()
+            register_info = require_api_client().register_new_account()
             credential = register_info["credential"]
             signature = register_info["userRegistration"]["signature"]
             user_id = jwt.decode(credential, options={"verify_signature": False})[
@@ -190,23 +205,39 @@ def login_account(forced: bool = False) -> dict[str, Any]:
     Returns:
         User profile information from the server
     """
-    global user_logged_in
-    if (not user_logged_in) or forced:
-        day_change_job.pause()
+    global user_logged_in, user_info
+    if user_logged_in and not forced:
+        if user_info is None:
+            raise RuntimeError("Logged in client has no user info")
+        return user_info
 
-        global api_client
-        api_client.account_info = get_account_info()
-        global user_info
-        user_info = api_client.login()
+    client = require_api_client()
+    previous_state: dict[str, Any] | None = None
+    if user_logged_in:
+        previous_state = {
+            "headers": deepcopy(client.headers),
+            "account_info": deepcopy(client.account_info),
+            "version_info": deepcopy(client.version_info),
+            "master_split_paths": deepcopy(client.master_split_paths),
+            "user_info": deepcopy(client.user_info),
+        }
+
+    day_change_job.pause()
+    try:
+        client.account_info = get_account_info()
+        user_info = client.login()
         user_logged_in = True
-
+        return user_info
+    except Exception:
+        if previous_state is not None:
+            client.headers = previous_state["headers"]
+            client.account_info = previous_state["account_info"]
+            client.version_info = previous_state["version_info"]
+            client.master_split_paths = previous_state["master_split_paths"]
+            client.user_info = previous_state["user_info"]
+        raise
+    finally:
         day_change_job.resume()
-
-        return user_info
-    elif user_logged_in:
-        return user_info
-
-    return {}
 
 
 @api.dispatcher.add_method
@@ -227,9 +258,10 @@ def init(region: str) -> bool:
         client_region = region
 
     global api_client
-    api_client = APIClient(region=client_region, logger=logger)
+    client = APIClient(region=client_region, logger=logger)
     if client_region == "jp":
-        api_client.init_cookie()
+        client.init_cookie()
+    api_client = client
 
     logger.info("Initialized API client for %s server", client_region)
     return True
@@ -280,19 +312,14 @@ def check_versions(input_ver_info: dict[str, Any] | None = None) -> Any:
     Returns:
         Version status or JSONRPCInternalError
     """
-    if not api_client:
-        raise RuntimeError("Init before calling this method")
-
-    return run_job(lambda: api_client.check_versions(input_ver_info))
+    client = require_api_client()
+    return run_job(lambda: client.check_versions(input_ver_info))
 
 
 @api.dispatcher.add_method
 def version_info() -> dict[str, Any]:
     """Get current game version information."""
-    if not api_client:
-        raise RuntimeError("Init before calling this method")
-
-    return api_client.version_info
+    return require_api_client().version_info
 
 
 @api.dispatcher.add_method
@@ -301,7 +328,7 @@ def account_info() -> dict[str, Any]:
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    return api_client.account_info
+    return require_api_client().account_info
 
 
 @api.dispatcher.add_method
@@ -327,7 +354,8 @@ def fetch_user_profile(user_id: str) -> Any:
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    return run_job(lambda: api_client.fetch_user_profile(user_id))
+    client = require_api_client()
+    return run_job(lambda: client.fetch_user_profile(user_id))
 
 
 @api.dispatcher.add_method
@@ -345,36 +373,29 @@ def fetch_user_event_ranking(target_user_id: str, event_id: int) -> Any:
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    return run_job(
-        lambda: api_client.fetch_user_event_ranking(target_user_id, event_id)
-    )
+    client = require_api_client()
+    return run_job(lambda: client.fetch_user_event_ranking(target_user_id, event_id))
 
 
 @api.dispatcher.add_method
 def fetch_master_data() -> Any:
     """Fetch game master data."""
-    if not api_client:
-        raise RuntimeError("Init before calling this method")
-
-    return run_job(lambda: api_client.call_pjsk_api("/suite/master"))
+    client = require_api_client()
+    return run_job(lambda: client.call_pjsk_api("/suite/master"))
 
 
 @api.dispatcher.add_method
 def fetch_system_data() -> Any:
     """Fetch system data (versions, maintenance status, etc)."""
-    if not api_client:
-        raise RuntimeError("Init before calling this method")
-
-    return run_job(lambda: api_client.fetch_system_data())
+    client = require_api_client()
+    return run_job(lambda: client.fetch_system_data())
 
 
 @api.dispatcher.add_method
 def fetch_information() -> Any:
     """Fetch in-game information/notices."""
-    if not api_client:
-        raise RuntimeError("Init before calling this method")
-
-    return run_job(lambda: api_client.fetch_information())
+    client = require_api_client()
+    return run_job(lambda: client.fetch_information())
 
 
 @api.dispatcher.add_method
@@ -391,7 +412,8 @@ def fetch_event_rank_first_100(event_id: int) -> Any:
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    return run_job(lambda: api_client.fetch_event_rank_first_100(event_id))
+    client = require_api_client()
+    return run_job(lambda: client.fetch_event_rank_first_100(event_id))
 
 
 @api.dispatcher.add_method
@@ -408,7 +430,8 @@ def fetch_event_rank_border(event_id: int) -> Any:
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    return run_job(lambda: api_client.fetch_event_rank_border(event_id))
+    client = require_api_client()
+    return run_job(lambda: client.fetch_event_rank_border(event_id))
 
 
 @api.dispatcher.add_method
@@ -424,10 +447,8 @@ def call_pjsk_api(endpoint: str, method: str = "get", body: str | dict = "") -> 
     Returns:
         API response or JSONRPCInternalError
     """
-    if not api_client:
-        raise RuntimeError("Init before calling this method")
-
-    return run_job(lambda: api_client.call_pjsk_api(endpoint, method, body))
+    client = require_api_client()
+    return run_job(lambda: client.call_pjsk_api(endpoint, method, body))
 
 
 @api.dispatcher.add_method
@@ -436,7 +457,7 @@ def master_split_paths() -> list[str]:
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    return api_client.master_split_paths
+    return require_api_client().master_split_paths
 
 
 @api.dispatcher.add_method
@@ -452,9 +473,8 @@ def request_and_decrypt(url: str, method: str = "get", body: str | dict = "") ->
     Returns:
         Decrypted response or JSONRPCInternalError
     """
-    if not api_client:
-        raise RuntimeError("Init before calling this method")
-    return run_job(lambda: api_client.request_and_decrypt(url, method, body))
+    client = require_api_client()
+    return run_job(lambda: client.request_and_decrypt(url, method, body))
 
 
 app = Flask(__name__)
