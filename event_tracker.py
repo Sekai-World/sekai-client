@@ -2,6 +2,7 @@ import logging
 import sys
 import time
 from os import getenv
+from typing import Any
 
 import requests
 from apscheduler.events import JobEvent
@@ -20,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 jsonrpc_client = JSONRPCClient(f"http://localhost:{getenv('JSONRPC_PORT', '3939')}/")
 
-version_info = None
-event_data = None
+version_info: dict[str, Any] | None = None
+event_data: dict[str, Any] | None = None
 is_in_maintenance = False
 
 curr_event_url = (
@@ -141,7 +142,9 @@ def refresh_version():
 
 
 def _is_tracking_window_closed(curr_time: int) -> bool:
-    return curr_time >= (event_data["closedAt"] - 15 * 60 * 1000)
+    if not event_data:
+        return True
+    return bool(curr_time >= (event_data["closedAt"] - 15 * 60 * 1000))
 
 
 def _should_skip_event_tracking(curr_time: int) -> bool:
@@ -180,7 +183,7 @@ def _build_chapter_ranking_data(
     first100_data: dict,
     border_data: dict,
 ) -> dict:
-    chapter_ranking_data = {"time": curr_time}
+    chapter_ranking_data: dict[str, Any] = {"time": curr_time}
     chapter_ranking_data["first100"] = [
         x
         for x in first100_data["userWorldBloomChapterRankings"]

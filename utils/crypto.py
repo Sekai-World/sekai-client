@@ -1,8 +1,15 @@
 from os import getenv
+from typing import Any, Protocol, cast
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 from umsgpack import packb, unpackb
+
+
+class _Cipher(Protocol):
+    def encrypt(self, data: bytes) -> bytes: ...
+
+    def decrypt(self, data: bytes) -> bytes: ...
 
 
 def _load_hex_env(name: str) -> bytes:
@@ -12,10 +19,10 @@ def _load_hex_env(name: str) -> bytes:
     return bytes.fromhex(value)
 
 
-def _build_cipher() -> AES:
+def _build_cipher() -> _Cipher:
     key = _load_hex_env("AES_KEY")
     iv = _load_hex_env("AES_IV")
-    return AES.new(key, AES.MODE_CBC, iv)
+    return cast(_Cipher, AES.new(key, AES.MODE_CBC, iv))
 
 
 def encrypt(plaintext: bytes) -> bytes:
@@ -30,13 +37,15 @@ def decrypt(ciphertext: bytes) -> bytes:
     return unpad(cipher.decrypt(ciphertext), AES.block_size)
 
 
-def encrypt_msgpack(plaindict: dict) -> bytes:
+def encrypt_msgpack(plaindict: dict[str, Any]) -> bytes:
     cipher = _build_cipher()
 
     return cipher.encrypt(pad(packb(plaindict), AES.block_size))
 
 
-def decrypt_msgpack(ciphertext: bytes) -> dict:
+def decrypt_msgpack(ciphertext: bytes) -> dict[str, Any]:
     cipher = _build_cipher()
 
-    return unpackb(unpad(cipher.decrypt(ciphertext), AES.block_size))
+    return cast(
+        dict[str, Any], unpackb(unpad(cipher.decrypt(ciphertext), AES.block_size))
+    )

@@ -34,6 +34,8 @@ from utils.get_app_ver import (
 
 logger = logging.getLogger(__name__)
 
+type APIResponse = bytes | dict[str, Any] | None
+
 
 class APIClient:
     """
@@ -147,7 +149,7 @@ class APIClient:
         if method.lower() not in ("post", "put", "patch"):
             return None
         if isinstance(body, str):
-            return encrypt(body)
+            return encrypt(body.encode())
         if isinstance(body, dict):
             return encrypt_msgpack(body)
         raise ValueError("body type should be str or dict.")
@@ -186,7 +188,7 @@ class APIClient:
             self.headers["x-session-token"] = response.headers["x-session-token"]
         return response
 
-    def _decrypt_response_data(self, response: requests.Response) -> Any:
+    def _decrypt_response_data(self, response: requests.Response) -> APIResponse:
         content_type = response.headers.get("content-type", "")
         if not response.content or "octet-stream" not in content_type:
             return None
@@ -194,6 +196,12 @@ class APIClient:
             return decrypt_msgpack(response.content)
         except Exception:
             return decrypt(response.content)
+
+    @staticmethod
+    def _require_dict_response(response: APIResponse, endpoint: str) -> dict[str, Any]:
+        if not isinstance(response, dict):
+            raise RuntimeError(f"Expected object response from {endpoint}")
+        return response
 
     def _update_version_after_426(self) -> None:
         if self.region in ["jp"]:
@@ -296,7 +304,7 @@ class APIClient:
         raise RuntimeError(f"{self.region} server failed to fetch valid version info")
 
     def _is_version_updated(self, curr_ver_info: dict[str, Any]) -> bool:
-        return (
+        return bool(
             (
                 "dataVersion" in curr_ver_info
                 and self.headers["x-data-version"] != curr_ver_info["dataVersion"]
@@ -336,13 +344,17 @@ class APIClient:
                 "put",
                 {"credential": credential},
             )
+            auth_data = self._require_dict_response(auth_data, "/user/auth")
             self.master_split_paths = auth_data["suiteMasterSplitPath"]
             return auth_data
 
         if self.region in ("cn", "tw", "kr"):
             access_token = self.account_info["loginInfo"]["accessToken"]
-            return self.call_pjsk_api(
-                "/user/auth", "post", {"userID": 0, "accessToken": access_token}
+            return self._require_dict_response(
+                self.call_pjsk_api(
+                    "/user/auth", "post", {"userID": 0, "accessToken": access_token}
+                ),
+                "/user/auth",
             )
 
         raise ValueError(f"Unsupported region: {self.region}")
@@ -438,7 +450,7 @@ class APIClient:
         method: str = "get",
         body: str | dict = "",
         retry_after_error: bool = True,
-    ) -> bytes | dict[str, Any]:
+    ) -> APIResponse:
         """
         Make an encrypted API call to the PJSK game server.
 
@@ -468,7 +480,7 @@ class APIClient:
         attempt = 0
         while True:
             r = None
-            res_data: Any = None
+            res_data: APIResponse = None
             try:
                 r = self._send_api_request(endpoint, method, data)
                 res_data = self._decrypt_response_data(r)
@@ -580,14 +592,17 @@ class APIClient:
         Returns:
             Account registration response including credential and signature
         """
-        return self.call_pjsk_api(
+        return self._require_dict_response(
+            self.call_pjsk_api(
+                "/user",
+                "post",
+                {
+                    "platform": "iOS",
+                    "deviceModel": "iPad13,16",
+                    "operatingSystem": "iPadOS 17.4",
+                },
+            ),
             "/user",
-            "post",
-            {
-                "platform": "iOS",
-                "deviceModel": "iPad13,16",
-                "operatingSystem": "iPadOS 17.4",
-            },
         )
 
     def login(self) -> dict[str, Any]:
@@ -616,41 +631,50 @@ class APIClient:
         self.user_info = user_info
         return user_info
 
-    def fetch_suite_user(self, update_user_info: bool = False) -> dict:
+    def fetch_suite_user(self, update_user_info: bool = False) -> dict[str, Any]:
         user_id = self.account_info["userId"]
-        res = self.call_pjsk_api(f"/suite/user/{user_id}")
+        endpoint = f"/suite/user/{user_id}"
+        res = self._require_dict_response(self.call_pjsk_api(endpoint), endpoint)
 
         if update_user_info:
             self.user_info = res
 
         return res
 
-    def fetch_user_profile(self, user_id: str) -> dict:
+    def fetch_user_profile(self, user_id: str) -> dict[str, Any]:
         my_user_id = self.account_info["userId"]
         if self.region == "jp":
-            return self.call_pjsk_api(f"/user/{my_user_id}/{user_id}/profile")
-        return self.call_pjsk_api(f"/user/{user_id}/profile")
+            endpoint = f"/user/{my_user_id}/{user_id}/profile"
+        else:
+            endpoint = f"/user/{user_id}/profile"
+        return self._require_dict_response(self.call_pjsk_api(endpoint), endpoint)
 
-    def fetch_user_event_ranking(self, target_user_id: str, event_id: str) -> dict:
+    def fetch_user_event_ranking(
+        self, target_user_id: str, event_id: int
+    ) -> dict[str, Any]:
         user_id = self.account_info["userId"]
-        return self.call_pjsk_api(
+        endpoint = (
             f"/user/{user_id}/event/{event_id}/ranking?targetUserId={target_user_id}"
         )
+        return self._require_dict_response(self.call_pjsk_api(endpoint), endpoint)
 
     def fetch_information(self):
         return self.call_pjsk_api("/information")
 
-    def fetch_system_data(self):
-        return self.call_pjsk_api("/system")
+    def fetch_system_data(self) -> dict[str, Any]:
+        return self._require_dict_response(self.call_pjsk_api("/system"), "/system")
 
-    def fetch_event_rank_first_100(self, event_id: str) -> dict:
+    def fetch_event_rank_first_100(self, event_id: int) -> dict[str, Any]:
         user_id = self.account_info["userId"]
-        return self.call_pjsk_api(
-            f"/user/{user_id}/event/{event_id}/ranking?rankingViewType=top100"
+        endpoint = f"/user/{user_id}/event/{event_id}/ranking?rankingViewType=top100"
+        return self._require_dict_response(
+            self.call_pjsk_api(endpoint),
+            endpoint,
         )
 
-    def fetch_event_rank_border(self, event_id: str) -> dict:
-        return self.call_pjsk_api(f"/event/{event_id}/ranking-border")
+    def fetch_event_rank_border(self, event_id: int) -> dict[str, Any]:
+        endpoint = f"/event/{event_id}/ranking-border"
+        return self._require_dict_response(self.call_pjsk_api(endpoint), endpoint)
 
     def accept_agreement(self):
         user_id = self.account_info["userId"]

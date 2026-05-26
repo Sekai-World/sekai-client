@@ -9,7 +9,7 @@ from typing import Any
 
 import requests
 from jsonrpcclient.requests import request_uuid
-from jsonrpcclient.responses import Ok, parse
+from jsonrpcclient.responses import Error, Ok, parse
 
 from config import Config
 
@@ -35,7 +35,9 @@ class JSONRPCClient:
         self.url = url
 
     def request(
-        self, func_name: str, params: tuple[Any, ...] | dict[str, Any] | None = None
+        self,
+        func_name: str,
+        params: list[Any] | tuple[Any, ...] | dict[str, Any] | None = None,
     ) -> Any:
         """
         Make a JSON-RPC method call.
@@ -50,9 +52,10 @@ class JSONRPCClient:
         Raises:
             RuntimeError: If the JSON-RPC response is an error
         """
+        request_params = tuple(params) if isinstance(params, list) else params
         r = requests.post(
             self.url,
-            json=request_uuid(func_name, params),
+            json=request_uuid(func_name, request_params),
             timeout=Config.REQUEST_TIMEOUT,
         )
 
@@ -66,6 +69,9 @@ class JSONRPCClient:
 
         if isinstance(parsed, Ok):
             return parsed.result
+
+        if not isinstance(parsed, Error):
+            raise RuntimeError("Batch JSON-RPC responses are not supported")
 
         error_message = parsed.message
         error_code = getattr(parsed, "code", None)

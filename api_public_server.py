@@ -17,11 +17,11 @@ Health Check Semantics:
 
 import logging
 from threading import Lock
-from typing import Any
 
 from flask import Flask, Response, json, jsonify
 from werkzeug.exceptions import BadRequest
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.wrappers import Response as WerkzeugResponse
 
 from config import Config
 from utils.decorators import require_apikey
@@ -30,7 +30,9 @@ from utils.jsonrpc_client import JSONRPCClient
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
+    app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1
+)
 
 # Initialize region-specific JSON-RPC clients
 client_map: dict[str, JSONRPCClient] = {
@@ -45,7 +47,7 @@ bootstrapped = False
 
 
 @app.errorhandler(BadRequest)
-def handle_bad_request(e: BadRequest) -> Response:
+def handle_bad_request(e: BadRequest) -> WerkzeugResponse:
     """
     Handle BadRequest exceptions with JSON response.
 
@@ -114,7 +116,7 @@ def is_regional_client_inited(region: str) -> bool:
     Returns:
         True if client is initialized, False otherwise
     """
-    return client_map[region].request("is_init", [])
+    return bool(client_map[region].request("is_init", []))
 
 
 def bootstrap() -> None:
@@ -148,7 +150,7 @@ def ensure_bootstrap() -> None:
 
 
 @app.route("/health", methods=["GET"])
-def health() -> tuple[dict[str, Any], int]:
+def health() -> tuple[Response, int]:
     """
     Health check endpoint for monitoring.
 

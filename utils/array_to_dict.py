@@ -181,7 +181,7 @@ def convert_array_to_dict(
             key_structure=key_structure,
         )
 
-    result = {}
+    result: dict = {}
 
     for i, key in enumerate(key_structure):
         if i >= len(array_data):

@@ -4,8 +4,9 @@ from copy import deepcopy
 from functools import cache, cmp_to_key, lru_cache
 from itertools import zip_longest
 from os import getenv
+from typing import Any
 
-BASE_STRUCTURES = {
+BASE_STRUCTURES: dict[str, list[Any]] = {
     "actionSets": [
         "id",
         "areaId",
@@ -691,7 +692,7 @@ BASE_STRUCTURES = {
 # Each entry applies from the specified APP_VER onwards.
 # Only include structures that changed in that app version.
 # Use None to explicitly disable a structure key from that version onwards.
-STRUCTURE_COMPATIBILITY: dict[str, dict[str, list | None]] = {
+STRUCTURE_COMPATIBILITY: dict[str, dict[str, list[Any] | None]] = {
     "5.0.0": {},
     "6.0.0": {
         "actionSets": [
@@ -1150,7 +1151,7 @@ def _parse_semantic_version(
     version_without_build = normalized_version.split("+", 1)[0]
     core_part, _, prerelease_part = version_without_build.partition("-")
     core_version = tuple(int(part) for part in core_part.split("."))
-    prerelease_version = []
+    prerelease_version: list[tuple[int, int | str]] = []
 
     if prerelease_part:
         for part in prerelease_part.split("."):
@@ -1188,10 +1189,9 @@ def _compare_prerelease_part(
 
     left_val = left_part[1]
     right_val = right_part[1]
-    same_type = (isinstance(left_val, int) and isinstance(right_val, int)) or (
-        isinstance(left_val, str) and isinstance(right_val, str)
-    )
-    if same_type:
+    if isinstance(left_val, int) and isinstance(right_val, int):
+        return (left_val > right_val) - (left_val < right_val)
+    if isinstance(left_val, str) and isinstance(right_val, str):
         return (left_val > right_val) - (left_val < right_val)
 
     if isinstance(left_val, int):
@@ -1239,7 +1239,7 @@ def _sorted_compatibility_versions() -> tuple[str, ...]:
 
 
 def resolve_structure_compatibility_version(app_ver: str | None = None) -> str | None:
-    target_app_ver = (app_ver or getenv("APP_VER", "")).strip()
+    target_app_ver = (app_ver or getenv("APP_VER") or "").strip()
     if not target_app_ver:
         return None
 
@@ -1256,7 +1256,7 @@ def resolve_structure_compatibility_version(app_ver: str | None = None) -> str |
 
 
 @cache
-def _build_structures_for_app_ver(app_ver: str) -> dict[str, list]:
+def _build_structures_for_app_ver(app_ver: str) -> dict[str, list[Any]]:
     result = deepcopy(BASE_STRUCTURES)
 
     for version in _sorted_compatibility_versions():
@@ -1272,8 +1272,8 @@ def _build_structures_for_app_ver(app_ver: str) -> dict[str, list]:
     return result
 
 
-def get_structures_for_app_ver(app_ver: str | None = None) -> dict[str, list]:
-    target_app_ver = (app_ver or getenv("APP_VER", "")).strip()
+def get_structures_for_app_ver(app_ver: str | None = None) -> dict[str, list[Any]]:
+    target_app_ver = (app_ver or getenv("APP_VER") or "").strip()
     if not target_app_ver:
         return deepcopy(BASE_STRUCTURES)
 

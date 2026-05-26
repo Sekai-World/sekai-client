@@ -5,6 +5,7 @@ import sys
 import traceback
 from os import getenv, path
 from time import sleep
+from typing import Any
 
 import requests
 import ujson as json
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 jsonrpc_client = JSONRPCClient(f"http://localhost:{getenv('JSONRPC_PORT', '3939')}/")
 
-version_info = None
+version_info: dict[str, Any] | None = None
 is_in_maintenance = False
 
 masterdb_diff_folder_path = path.join(
@@ -324,7 +325,13 @@ def update_i18n_files(key: str, data: list):
     _write_i18n_json(filename, payload_builder(data))
 
 
-def get_splitted_master_data():
+def _require_dict_response(value: Any, operation: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{operation} returned invalid object data")
+    return value
+
+
+def get_splitted_master_data() -> dict[str, Any]:
     global pjsk_region
     global version_info
 
@@ -338,17 +345,17 @@ def get_splitted_master_data():
             jsonrpc_client.request("call_pjsk_api", [f"/{split_path}"])
         )
 
-    master_data: dict[str, list] = {}
+    master_data: dict[str, Any] = {}
     for idx, split_data_raw in enumerate(master_data_raw):
         logger.debug(
             f"[get_splitted_master_data] merging split {master_split_paths[idx]}"
         )
-        master_data |= split_data_raw
+        master_data |= _require_dict_response(split_data_raw, "fetch master split")
 
     return master_data
 
 
-def download_nuverse_master_data(cdn_version: int):
+def download_nuverse_master_data(cdn_version: int) -> dict[str, Any]:
     base_url = nuverse_master_data_base_url[pjsk_region]
 
     if check_update_simple_mode:
@@ -356,12 +363,15 @@ def download_nuverse_master_data(cdn_version: int):
         res.raise_for_status()
         return decrypt_msgpack(res.content)
 
-    return jsonrpc_client.request(
-        "request_and_decrypt", [f"{base_url}/master-data-{cdn_version}.info"]
+    return _require_dict_response(
+        jsonrpc_client.request(
+            "request_and_decrypt", [f"{base_url}/master-data-{cdn_version}.info"]
+        ),
+        "download Nuverse master data",
     )
 
 
-def fetch_simple_version_info():
+def fetch_simple_version_info() -> dict[str, Any]:
     if not check_update_versions_url:
         raise RuntimeError(
             "CHECK_UPDATE_VERSIONS_URL is required in simple check-update mode"
@@ -369,7 +379,7 @@ def fetch_simple_version_info():
 
     res = requests.get(check_update_versions_url, timeout=150)
     res.raise_for_status()
-    return res.json()
+    return _require_dict_response(res.json(), "fetch simple version info")
 
 
 def check_versions_simple():
@@ -405,7 +415,7 @@ def _pull_i18n_repo_before_refresh() -> None:
     )
 
 
-def _refresh_version_info_from_source() -> dict:
+def _refresh_version_info_from_source() -> dict[str, Any]:
     logger.info("[refresh_version] fetching version info from %s server", pjsk_region)
     if check_update_simple_mode:
         return fetch_simple_version_info()
@@ -419,12 +429,16 @@ def _refresh_version_info_from_source() -> dict:
                 "splitted master data list"
             )
             jsonrpc_client.request("relogin")
-    return jsonrpc_client.request("version_info")
+    return _require_dict_response(
+        jsonrpc_client.request("version_info"), "fetch version info"
+    )
 
 
-def _fetch_master_data_by_region() -> dict[str, list]:
+def _fetch_master_data_by_region() -> dict[str, Any]:
     if pjsk_region in ("jp", "en"):
         return get_splitted_master_data()
+    if version_info is None:
+        raise RuntimeError("Refresh version info before fetching master data")
     return download_nuverse_master_data(version_info["cdnVersion"])
 
 
@@ -451,11 +465,13 @@ def _resolve_master_id_key(key: str) -> str | None:
 
 def _convert_master_records_for_region(
     key: str,
-    file_data: list,
+    file_data: Any,
     current_structures: dict[str, list],
-) -> tuple[list, int | None]:
+) -> tuple[Any, int | None]:
     if not (pjsk_region in ["cn", "tw", "kr"] and key in current_structures):
         return file_data, None
+    if not isinstance(file_data, list):
+        raise RuntimeError(f"Expected list master data for {key}")
 
     converted_file_data = []
     last_record_idx = None
@@ -500,7 +516,7 @@ def _merge_existing_file_data(
     return merged
 
 
-def _write_compact_master_alias_if_needed(key: str, file_data: list) -> None:
+def _write_compact_master_alias_if_needed(key: str, file_data: Any) -> None:
     if not (pjsk_region in ["cn", "tw", "kr"] and key.startswith("compact")):
         return
     new_key = key[len("compact") :]
@@ -524,7 +540,7 @@ def refresh_version():
         f.truncate()
 
     logger.debug("[refresh_version] fetching master db")
-    master_data: dict[str, list] = _fetch_master_data_by_region()
+    master_data: dict[str, Any] = _fetch_master_data_by_region()
     logger.debug("[refresh_version] write master db to separate json files by keys")
     structures_app_ver = version_info.get("appVersion") or getenv("APP_VER", "")
     current_structures = get_structures_for_app_ver(structures_app_ver)
@@ -735,13 +751,17 @@ def _bootstrap_try_refresh() -> bool:
         "[bootstrap] Pull %s repo remote changes before making any local changes",
         local_git_folder_names["masterDBDiff"],
     )
+    if masterdb_diff_repo is None:
+        raise RuntimeError("Master data repository is not initialized")
     masterdb_diff_repo.remote().pull()
     if update_options["userInfo"]:
         jsonrpc_client.request("login")
         save_info_from_suite_user()
 
     global version_info
-    version_info = jsonrpc_client.request("version_info")
+    version_info = _require_dict_response(
+        jsonrpc_client.request("version_info"), "fetch version info"
+    )
     if update_options["master"]:
         refresh_version()
     return True
