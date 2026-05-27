@@ -27,7 +27,7 @@ import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from flask import Flask
-from jsonrpc.exceptions import JSONRPCInternalError
+from jsonrpc.exceptions import JSONRPCDispatchException, JSONRPCInternalError
 from pytz import timezone
 
 from api_client import APIClient
@@ -95,7 +95,7 @@ def get_answer(response_queue: queue.Queue[Any]) -> Any | JSONRPCInternalError:
     return res
 
 
-def run_job(job: Callable[[], Any]) -> Any | JSONRPCInternalError:
+def run_job(job: Callable[[], Any]) -> Any:
     """
     Enqueue a job and wait for its result.
 
@@ -105,22 +105,36 @@ def run_job(job: Callable[[], Any]) -> Any | JSONRPCInternalError:
         job: Callable to execute in background worker
 
     Returns:
-        Job result, or JSONRPCInternalError if job failed or timed out
+        Job result
+
+    Raises:
+        JSONRPCDispatchException: If the queued job failed or timed out
     """
     response_queue, err = enqueue_job(job)
+    result: Any
     if err is not None:
-        return err
-    if response_queue is None:
-        return JSONRPCInternalError(data="Job was not enqueued")
-    return get_answer(response_queue)
+        result = err
+    elif response_queue is None:
+        result = JSONRPCInternalError(data="Job was not enqueued")
+    else:
+        result = get_answer(response_queue)
+
+    if isinstance(result, JSONRPCInternalError):
+        raise JSONRPCDispatchException(
+            code=JSONRPCInternalError.CODE,
+            message=JSONRPCInternalError.MESSAGE,
+            data=result.data,
+        )
+    return result
 
 
 def day_change_func() -> None:
     """Scheduled job to relogin once per day (at 4 AM JST)."""
     if user_logged_in:
-        result = run_job(lambda: login_account(True))
-        if isinstance(result, JSONRPCInternalError):
-            logger.error("Scheduled daily relogin failed: %s", result.data)
+        try:
+            run_job(lambda: login_account(True))
+        except JSONRPCDispatchException as error:
+            logger.error("Scheduled daily relogin failed: %s", error.error.data)
 
 
 # Background scheduler for daily account refresh

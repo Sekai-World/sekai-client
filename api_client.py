@@ -226,16 +226,15 @@ class APIClient:
         response: requests.Response | None,
         res_data: Any,
     ) -> bool:
-        content_type = response.headers.get("content-type", "") if response else ""
-        content_type_l = content_type.lower()
         error_code = res_data.get("errorCode") if isinstance(res_data, dict) else None
 
         if (
             response is not None
             and response.status_code == 403
-            and content_type_l.startswith("text/xml")
+            and self.region == "jp"
+            and error_code != "session_error"
         ):
-            self.logger.warning("%s server cookie expired, refreshing...", self.region)
+            self.logger.warning("%s server rejected cookie, refreshing...", self.region)
             self.init_cookie()
             return True
 
