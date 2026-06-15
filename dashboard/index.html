@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sekai Service Dashboard</title>
+  <style>
+    :root { color-scheme: light; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f7f8fa; color: #1d2430; }
+    header, main { max-width: 1180px; margin: 0 auto; padding: 20px; }
+    header { display: flex; gap: 16px; justify-content: space-between; align-items: center; }
+    h1 { margin: 0; font-size: 24px; }
+    button, input { border: 1px solid #c9d1dc; border-radius: 6px; padding: 8px 10px; background: #fff; font: inherit; }
+    button { cursor: pointer; }
+    button.primary { background: #1d6f5f; border-color: #1d6f5f; color: #fff; }
+    button.danger { background: #b42318; border-color: #b42318; color: #fff; }
+    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .region { margin: 0 0 18px; padding: 16px; background: #fff; border: 1px solid #dfe4eb; border-radius: 8px; }
+    .region-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .region-title { display: flex; gap: 8px; align-items: center; font-weight: 700; text-transform: uppercase; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .service { border: 1px solid #dfe4eb; border-radius: 8px; padding: 12px; background: #fbfcfd; min-width: 0; }
+    .service-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .name { font-weight: 650; overflow-wrap: anywhere; }
+    .meta { color: #5d6673; font-size: 13px; line-height: 1.5; }
+    .pill { border-radius: 999px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
+    .ok { background: #dff6ea; color: #12633d; }
+    .bad { background: #ffe4e0; color: #9f1d14; }
+    pre { margin: 8px 0 0; max-height: 120px; overflow: auto; white-space: pre-wrap; font-size: 12px; color: #5b1a13; }
+    #message { color: #5d6673; min-height: 20px; }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } header { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Sekai Service Dashboard</h1>
+      <div id="message">Loading...</div>
+    </div>
+    <div class="toolbar">
+      <input id="token" type="password" placeholder="API token">
+      <button id="saveToken">Save</button>
+      <button id="refresh" class="primary">Refresh</button>
+    </div>
+  </header>
+  <main id="app"></main>
+  <script>
+    const app = document.getElementById("app");
+    const message = document.getElementById("message");
+    const tokenInput = document.getElementById("token");
+    tokenInput.value = localStorage.getItem("sekaiDashboardToken") || "";
+
+    function headers() {
+      return {"x-api-token": tokenInput.value, "content-type": "application/json"};
+    }
+
+    function setMessage(text) {
+      message.textContent = text;
+    }
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, {...options, headers: headers()});
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.message || body.error || res.statusText);
+      return body;
+    }
+
+    function serviceCard(region, service) {
+      const errors = service.logs?.recentErrors || [];
+      const probe = service.probe ? `Shared probe: ${service.probe.ok ? "ok" : service.probe.error || "failed"}\n` : "";
+      return `<section class="service">
+        <div class="service-head">
+          <div class="name">${service.type}<br>${service.name}</div>
+          <span class="pill ${service.ok ? "ok" : "bad"}">${service.status}</span>
+        </div>
+        <div class="meta">
+          PID: ${service.pid || "-"} · CPU: ${service.cpu ?? "-"}% · RAM: ${Math.round((service.memory || 0) / 1024 / 1024)} MB<br>
+          Restarts: ${service.restartCount ?? 0} · Log errors: ${service.logs?.errorCount ?? 0}<br>
+          ${probe}
+        </div>
+        <button class="danger" data-region="${region}" data-service="${service.type}">Restart</button>
+        ${errors.length ? `<pre>${errors.map(escapeHtml).join("\n")}</pre>` : ""}
+      </section>`;
+    }
+
+    function escapeHtml(text) {
+      return String(text).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    }
+
+    function render(data) {
+      app.innerHTML = Object.entries(data.regions).map(([region, regionData]) => `
+        <section class="region">
+          <div class="region-head">
+            <div class="region-title"><span class="pill ${regionData.ok ? "ok" : "bad"}">${regionData.ok ? "OK" : "ISSUE"}</span>${region}</div>
+            <button class="danger" data-region-restart="${region}">Restart region</button>
+          </div>
+          <div class="grid">${Object.values(regionData.services).map(service => serviceCard(region, service)).join("")}</div>
+        </section>
+      `).join("");
+    }
+
+    async function refresh() {
+      setMessage("Refreshing...");
+      const data = await api("/dashboard/api/status");
+      render(data);
+      setMessage(`Updated ${new Date(data.updatedAt * 1000).toLocaleString()}`);
+    }
+
+    app.addEventListener("click", async event => {
+      const target = event.target;
+      if (!(target instanceof HTMLButtonElement)) return;
+      target.disabled = true;
+      try {
+        if (target.dataset.service) {
+          setMessage(`Restarting ${target.dataset.region} ${target.dataset.service}...`);
+          await api(`/dashboard/api/regions/${target.dataset.region}/services/${target.dataset.service}/restart`, {method: "POST"});
+        } else if (target.dataset.regionRestart) {
+          setMessage(`Restarting ${target.dataset.regionRestart} services...`);
+          await api(`/dashboard/api/regions/${target.dataset.regionRestart}/restart`, {method: "POST"});
+        }
+        await refresh();
+      } catch (err) {
+        setMessage(err.message);
+      } finally {
+        target.disabled = false;
+      }
+    });
+
+    document.getElementById("saveToken").addEventListener("click", () => {
+      localStorage.setItem("sekaiDashboardToken", tokenInput.value);
+      setMessage("Token saved");
+    });
+    document.getElementById("refresh").addEventListener("click", () => refresh().catch(err => setMessage(err.message)));
+    refresh().catch(err => setMessage(err.message));
+  </script>
+</body>
+</html>

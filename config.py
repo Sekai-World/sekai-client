@@ -161,6 +161,31 @@ class Config:
     LOGLEVEL: str = _parse_str_env("LOGLEVEL", "INFO").upper()
     """Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"""
 
+    # ============ Service Dashboard Configuration ============
+    PM2_BIN: str = _parse_str_env("PM2_BIN", "pm2")
+    """PM2 executable used by the service dashboard"""
+
+    SERVICE_SHARED_CLIENT_TEMPLATE: str = _parse_str_env(
+        "SERVICE_SHARED_CLIENT_TEMPLATE", "sharedApiClient-{region}"
+    )
+    """PM2 name template for shared_client services"""
+
+    SERVICE_CHECK_UPDATE_TEMPLATE: str = _parse_str_env(
+        "SERVICE_CHECK_UPDATE_TEMPLATE", "checkUpdate-{region}"
+    )
+    """PM2 name template for check_update services"""
+
+    SERVICE_EVENT_TRACKER_TEMPLATE: str = _parse_str_env(
+        "SERVICE_EVENT_TRACKER_TEMPLATE", "eventTracker-{region}"
+    )
+    """PM2 name template for event_tracker services"""
+
+    SERVICE_LOG_TAIL_LINES: int = _parse_int_env("SERVICE_LOG_TAIL_LINES", 300)
+    """Number of recent PM2 log lines scanned by the dashboard"""
+
+    SERVICE_STABLE_WAIT_SECONDS: int = _parse_int_env("SERVICE_STABLE_WAIT_SECONDS", 8)
+    """Seconds to wait after a PM2 restart before continuing a restart sequence"""
+
     @classmethod
     def validate(cls) -> list[str]:
         """
