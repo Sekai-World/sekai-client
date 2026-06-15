@@ -16,14 +16,16 @@ Health Check Semantics:
 """
 
 import logging
+from pathlib import Path
 from threading import Lock
 
-from flask import Flask, Response, json, jsonify
+from flask import Flask, Response, json, jsonify, request, send_file
 from werkzeug.exceptions import BadRequest
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.wrappers import Response as WerkzeugResponse
 
 from config import Config
+from service_dashboard import dashboard_status, restart_region, restart_service
 from utils.decorators import require_apikey
 from utils.jsonrpc_client import JSONRPCClient
 
@@ -146,6 +148,8 @@ def bootstrap() -> None:
 @app.before_request
 def ensure_bootstrap() -> None:
     """Ensure bootstrap has run before handling requests."""
+    if request.path == "/health" or request.path.startswith("/dashboard"):
+        return
     bootstrap()
 
 
@@ -180,6 +184,40 @@ def health() -> tuple[Response, int]:
             "regions": region_status,
         }
     ), 200 if is_healthy else 500
+
+
+@app.route("/dashboard", methods=["GET"])
+def dashboard() -> Response:
+    return send_file(Path(__file__).parent / "dashboard" / "index.html")
+
+
+@app.route("/dashboard/api/status", methods=["GET"])
+@require_apikey
+def dashboard_api_status() -> Response:
+    try:
+        return jsonify(dashboard_status())
+    except RuntimeError as err:
+        return jsonify({"status": "error", "message": str(err)}), 500
+
+
+@app.route(
+    "/dashboard/api/regions/<region>/services/<service_type>/restart", methods=["POST"]
+)
+@require_apikey
+def dashboard_restart_service(region: str, service_type: str) -> Response:
+    try:
+        return jsonify(restart_service(region, service_type))
+    except (RuntimeError, ValueError) as err:
+        return jsonify({"status": "error", "message": str(err)}), 400
+
+
+@app.route("/dashboard/api/regions/<region>/restart", methods=["POST"])
+@require_apikey
+def dashboard_restart_region(region: str) -> Response:
+    try:
+        return jsonify(restart_region(region))
+    except (RuntimeError, ValueError) as err:
+        return jsonify({"status": "error", "message": str(err)}), 400
 
 
 @app.route("/<region>/refresh", methods=["POST"])
