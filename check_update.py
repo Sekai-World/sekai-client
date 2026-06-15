@@ -492,7 +492,6 @@ def _merge_existing_file_data(
     file_path: str,
     incoming_data: list,
     id_key: str | None,
-    fallback_value: list,
 ) -> list:
     if id_key is None or not path.exists(file_path):
         return incoming_data
@@ -510,8 +509,8 @@ def _merge_existing_file_data(
     ):
         return incoming_data
 
-    value_ids = {item[id_key] for item in fallback_value}
-    merged = [x for x in old_data if x[id_key] not in value_ids] + fallback_value
+    value_ids = {item[id_key] for item in incoming_data}
+    merged = [x for x in old_data if x[id_key] not in value_ids] + incoming_data
     merged.sort(key=lambda x: x[id_key])
     return merged
 
@@ -565,9 +564,7 @@ def refresh_version():
                 key, file_data, current_structures
             )
             id_key = _resolve_master_id_key(key)
-            file_data = _merge_existing_file_data(
-                file_path, file_data, id_key, file_data
-            )
+            file_data = _merge_existing_file_data(file_path, file_data, id_key)
             with open(file_path, "w") as f:
                 json.dump(file_data, f, ensure_ascii=False, indent=2)
             _write_compact_master_alias_if_needed(key, file_data)
