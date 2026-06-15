@@ -1,5 +1,6 @@
 """Unit tests for update source refresh selection."""
 
+import json
 from unittest.mock import Mock, call
 
 import check_update
@@ -36,4 +37,28 @@ def test_jp_refresh_logs_in_when_client_has_no_session(monkeypatch):
         call("is_login"),
         call("login"),
         call("version_info"),
+    ]
+
+
+def test_merge_existing_file_data_replaces_matching_ids(tmp_path):
+    file_path = tmp_path / "events.json"
+    file_path.write_text(
+        json.dumps(
+            [
+                {"id": 1, "name": "old one"},
+                {"id": 2, "name": "old two"},
+            ]
+        )
+    )
+
+    result = check_update._merge_existing_file_data(
+        str(file_path),
+        [{"id": 2, "name": "new two"}, {"id": 3, "name": "new three"}],
+        "id",
+    )
+
+    assert result == [
+        {"id": 1, "name": "old one"},
+        {"id": 2, "name": "new two"},
+        {"id": 3, "name": "new three"},
     ]
