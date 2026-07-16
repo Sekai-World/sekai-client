@@ -115,10 +115,9 @@ def _tail_lines(file_path: str | None, limit: int) -> list[str]:
 
 def _scan_logs(proc: dict[str, Any]) -> dict[str, Any]:
     pm2_env = proc.get("pm2_env", {})
-    lines = (
-        _tail_lines(pm2_env.get("pm_out_log_path"), Config.SERVICE_LOG_TAIL_LINES)
-        + _tail_lines(pm2_env.get("pm_err_log_path"), Config.SERVICE_LOG_TAIL_LINES)
-    )
+    lines = _tail_lines(
+        pm2_env.get("pm_out_log_path"), Config.SERVICE_LOG_TAIL_LINES
+    ) + _tail_lines(pm2_env.get("pm_err_log_path"), Config.SERVICE_LOG_TAIL_LINES)
     matches = [line for line in lines if ERROR_RE.search(line)]
     return {
         "scannedLines": len(lines),

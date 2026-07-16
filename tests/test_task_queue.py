@@ -4,10 +4,9 @@ Unit tests for background task queue.
 Tests job enqueueing, worker execution, and timeout handling.
 """
 
-import pytest
 import queue
-import threading
-from unittest.mock import Mock, patch
+
+import pytest
 
 from config import Config
 from utils.task_queue import start_worker
@@ -66,8 +65,9 @@ class TestTaskQueue:
 
     def test_worker_drops_stale_results(self, caplog):
         """Test worker drops results if caller already timed out."""
-        from utils.task_queue import job_queue
         import logging
+
+        from utils.task_queue import job_queue
 
         caplog.set_level(logging.WARNING)
         result_queue = queue.Queue(maxsize=1)

@@ -4,12 +4,12 @@ Unit tests for JSON-RPC client.
 Tests remote method calls and error handling.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-import requests
+from unittest.mock import Mock, patch
 
-from utils.jsonrpc_client import JSONRPCClient
+import pytest
+
 from config import Config
+from utils.jsonrpc_client import JSONRPCClient
 
 
 class TestJSONRPCClient:

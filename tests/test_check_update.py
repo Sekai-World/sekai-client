@@ -62,3 +62,31 @@ def test_merge_existing_file_data_replaces_matching_ids(tmp_path):
         {"id": 2, "name": "new two"},
         {"id": 3, "name": "new three"},
     ]
+
+
+def test_commit_master_diff_returns_false_on_push_failure(monkeypatch):
+    """A failed commit/push must be reported as failure, not swallowed silently.
+
+    NOTE: The current code deletes and re-clones the local repo on failure
+    (see commit_master_diff / check_update.py). That data-loss behavior is a
+    known issue tracked for remediation phase 4 and MUST NOT be asserted as
+    correct here. This test only locks in the failure *return contract* and
+    that cleanup is mocked (no real filesystem/git side effects).
+    """
+    repo = Mock()
+    repo.is_dirty.return_value = True
+    repo.remote.return_value.push.return_value.raise_if_error.side_effect = (
+        RuntimeError("push rejected")
+    )
+    monkeypatch.setattr(check_update, "masterdb_diff_repo", repo)
+    monkeypatch.setattr(
+        check_update, "version_info", {"dataVersion": "1", "assetVersion": "1"}
+    )
+    monkeypatch.setattr(check_update.shutil, "rmtree", Mock())
+    monkeypatch.setattr(check_update, "check_git_folder", Mock(return_value=repo))
+
+    result = check_update.commit_master_diff()
+
+    assert result is False
+    repo.index.commit.assert_called_once()
+    repo.remote.return_value.push.return_value.raise_if_error.assert_called_once()

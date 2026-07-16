@@ -123,3 +123,27 @@ def test_rpc_worker_error_is_returned_as_jsonrpc_error(monkeypatch):
     assert response.status_code == 200
     assert response.json["error"]["code"] == JSONRPCInternalError.CODE
     assert response.json["error"]["data"] == "request failed"
+
+
+def test_already_logged_in_returns_cache_without_relogin(monkeypatch, logged_in_client):
+    day_change_job = Mock()
+    monkeypatch.setattr(shared_client, "day_change_job", day_change_job)
+
+    result = shared_client.login_account()
+
+    assert result == {"name": "current-user"}
+    logged_in_client.login.assert_not_called()
+    day_change_job.pause.assert_not_called()
+    day_change_job.resume.assert_not_called()
+
+
+def test_enqueue_job_rejects_with_error_when_queue_full(monkeypatch):
+    full_queue: queue.Queue = queue.Queue(maxsize=1)
+    full_queue.put(object())
+    monkeypatch.setattr(shared_client, "job_queue", full_queue)
+
+    response_queue, error = shared_client.enqueue_job(lambda: None)
+
+    assert response_queue is None
+    assert isinstance(error, JSONRPCInternalError)
+    assert "Job queue is full" in error.data

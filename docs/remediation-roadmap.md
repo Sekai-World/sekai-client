@@ -17,8 +17,8 @@
 
 | 阶段 | 内容 | 状态 | 预计工作量 | 依赖 | 建议 PR |
 |---|---|---|---:|---|---|
-| 0 | 生产事实确认与 CN 范围决策 | `[-]` 代码层完成，生产事实待确认 | 0.5 天 | 无 | PR 1 |
-| 1 | 测试基线与 CI | `[ ]` | 1 天 | 阶段 0 | PR 1-2 |
+| 0 | 生产事实确认与 CN 范围决策 | `[x]` 代码层完成，生产事实待确认 | 0.5 天 | 无 | PR 1 (#5 merged) |
+| 1 | 测试基线与 CI | `[-]` 部分完成（CI 与部分测试基线已建立） | 1 天 | 阶段 0 | PR 1-2 |
 | 2 | 凭据、日志和内部 RPC 安全 | `[ ]` | 1-2 天 | 阶段 1 | PR 3 |
 | 3 | Dashboard 安全与交互 | `[ ]` | 0.5-1 天 | 阶段 1 | PR 4 |
 | 4 | 定时任务互斥与 Git 数据安全 | `[ ]` | 1-2 天 | 阶段 1 | PR 5 |
@@ -91,18 +91,22 @@
 
 ### 任务
 
-- [ ] 增加所有支持区域的配置完整性测试。
-- [ ] 增加 `api_public_server` bootstrap 部分失败与恢复测试。
-- [ ] 增加 shared client 重新初始化状态一致性测试。
-- [ ] 增加非幂等请求不得自动重试的测试。
-- [ ] 增加 update job 互斥测试。
-- [ ] 增加 push 失败保留本地数据和 commit 的测试。
-- [ ] 增加最小 CI：Ruff、mypy、pytest。
-- [ ] 记录当前 Ruff/mypy 已知问题，不在本阶段混入全仓清理。
+- [x] 增加所有支持区域的配置完整性测试。（`tests/test_config.py::TestRegionConfigValidation`，含 fail-fast 与幂等安全边界）
+- [x] 增加 `api_public_server` bootstrap 不完整配置快速失败测试（`test_config.py::test_bootstrap_rejects_incomplete_region_config`）。
+  - `[!]` deferred：bootstrap 部分区域失败仍继续标记 `bootstrapped=True`（`api_public_server.bootstrap` 用 try/except 跳过失败区域）的真实回滚/部分失败恢复测试，需等阶段 5 状态机重构后才能稳定成立，未固化为期望。
+- [x] 增加 shared client 已登录缓存不重复 login 与失败回滚测试（`tests/test_shared_client.py`：`test_already_logged_in_returns_cache_without_relogin`、`test_failed_forced_login_restores_active_session`）。
+- [x] 增加队列满快速拒绝/异常契约测试（`tests/test_shared_client.py::test_enqueue_job_rejects_with_error_when_queue_full`）。
+- [x] 增加 check_update push 失败返回契约测试（`tests/test_check_update.py::test_commit_master_diff_returns_false_on_push_failure`），并确认执行到远端 push 错误。**不得断言 `rmtree` 为正确行为**，push 失败删除仓库的数据丢失问题标为阶段 4 deferred。
+  - `[!]` deferred：非幂等请求（POST）不得自动重试的测试——当前 `call_pjsk_api(retry_after_error=True)` 默认对所有错误重试，无按方法/幂等性区分；需阶段 6 deadline/重试策略重构后成立。
+  - `[!]` deferred：update job 互斥测试——需阶段 4 进程级互斥锁/调度 `max_instances=1` 后才能成立。
+  - `[!]` deferred：push 失败保留本地 commit 与数据测试——`shutil.rmtree` 删除仓库为已知错误行为，阶段 4 修复前无法"保留本地数据"，故只锁定失败返回契约，不固化 rmtree。
+- [x] 增加最小 CI：Ruff、mypy、pytest（`.github/workflows/ci.yml`，Python 3.12 + astral-sh/setup-uv，权限 read-only，针对 `transform-python` 分支）。
+- [x] 记录当前 Ruff/mypy 已知问题，不在本阶段混入全仓清理（仅机械修复 `tests/` 与 `service_dashboard.py` 的格式/未用 import/空白，零逻辑变化）。
 
 ### 最小验证命令
 
 ```bash
+uv run --extra dev ruff format --check .
 uv run --extra dev ruff check .
 uv run --extra dev mypy api_client.py shared_client.py utils/ config.py
 uv run --extra dev pytest tests/
@@ -110,17 +114,26 @@ uv run --extra dev pytest tests/
 
 ### 验收条件
 
-- PR 自动执行 lint、类型检查和测试。
-- 关键失败路径具备回归测试。
-- CI 失败能阻止合并。
+- [x] PR 自动执行 lint、类型检查和测试。
+- [x] 关键失败路径具备回归测试（登录缓存、bootstrap fail-fast、队列满、push 失败返回）。
+- [ ] CI 失败能阻止合并（工作流任一步失败会令检查失败；是否强制阻止合并仍需在仓库设置中确认 `transform-python` 分支保护与 required status check）。
 
 ### 验收证据
 
-- 待填写：CI 运行链接或本地输出
+- CI 文件：`.github/workflows/ci.yml`（Python 3.12，`astral-sh/setup-uv@v5`，`actions/checkout@v4` + `actions/setup-python@v5`，`permissions: contents: read`，触发 `push`/`pull_request` 到 `transform-python`）。
+- scoped mypy 选择：`api_client.py shared_client.py utils/ config.py`——覆盖请求生命周期、客户端状态、区域配置与后台任务队列；其余模块（含已知全仓 mypy 问题的 `event_tracker.py`、`check_update.py`、`api_public_server.py`、`service_dashboard.py`、`dashboard/`）不在阶段 1 范围，避免混入全仓清理。
+- 已知全仓 mypy 问题（未在本阶段修复，仅记录）：运行全仓 `mypy .` 会暴露 `event_tracker.py`、`check_update.py`、`api_public_server.py`、`service_dashboard.py` 等模块的类型错误（`warn_return_any` / `warn_redundant_casts` / `warn_unused_ignores` 等）；scoped 命令当前 `Success: no issues found in 14 source files`，说明核心模块已通过，全仓问题留待对应阶段（3/4/5/7）随代码改动处理。
+- 测试数量：本阶段 `pytest tests/ -q` 共 **76** 个用例（基线 71 + 新增 5：登录缓存、bootstrap fail-fast 安全边界 x2、队列满拒绝、push 失败返回契约）。
+- 本地验证命令结果（2026-07-16）：
+  - `uv run --extra dev ruff format --check .`：pass（29 files already formatted）
+  - `uv run --extra dev ruff check .`：pass（All checks passed）
+  - `uv run --extra dev mypy api_client.py shared_client.py utils/ config.py`：pass（no issues found in 14 source files）
+  - `uv run --extra dev pytest tests/ -q`：76 passed
+  - `git diff --check`：clean
 
 ### 执行记录
 
-- 待填写
+- 2026-07-16：新增 `.github/workflows/ci.yml`（阶段 4 之前脚手架，read-only 权限，针对 `transform-python`）。机械修复 `tests/` 与 `service_dashboard.py` 的格式/未用 import/空白以通过 lint 门禁（零逻辑变化）。扩展 `tests/test_shared_client.py` 覆盖已登录缓存不重复 login 与队列满快速拒绝；扩展 `tests/test_config.py` 覆盖 bootstrap 配置 fail-fast 与幂等安全边界；新增 `tests/test_check_update.py` 锁定 push 失败返回契约、确认执行到远端 push 错误，但不把 rmtree 固化为正确行为。下列原任务因依赖阶段 4/5/6 修复而标记为 deferred，未伪称完成：bootstrap 部分失败恢复、POST 非幂等自动重试、update job 互斥、push 失败保留本地数据。`pytest` 71 → 76 passed。`git diff --check` clean。
 
 ## 阶段 2：凭据、日志和内部 RPC 安全
 
@@ -356,8 +369,8 @@ UNINITIALIZED
 
 | PR | 建议标题 | 范围 | 状态 | 链接 |
 |---|---|---|---|---|
-| 1 | `fix: validate supported region configuration` | CN 决策、区域配置校验与测试 | `[ ]` | 待填写 |
-| 2 | `ci: add project verification pipeline` | Ruff、mypy、pytest CI | `[ ]` | 待填写 |
+| 1 | `fix: validate supported region configuration` | CN 决策、区域配置校验与测试 | `[x]` | #5 merged |
+| 2 | `ci: add project verification pipeline` | Ruff、mypy、pytest CI | `[-]` | 进行中（阶段 1 提交，待合并） |
 | 3 | `security: redact credentials and protect internal rpc` | 日志、token、文件权限、RPC | `[ ]` | 待填写 |
 | 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[ ]` | 待填写 |
 | 5 | `fix: serialize update jobs and preserve git state` | 调度互斥、原子发布、Git 恢复 | `[ ]` | 待填写 |
@@ -384,3 +397,4 @@ UNINITIALIZED
 | 日期 | 阶段 | 记录 | 下一步 |
 |---|---|---|---|
 | 2026-07-16 | 0 | D-001 决策：CN 非正式区域，保留简化版 checkUpdate-cn。代码层：REGIONS/PM2/公共 API 移除 CN，新增区域映射完整性校验与聚焦测试。生产运行事实（PM2 进程、loopback 绑定、worker 数、未推送 commit）待运维确认。 | 阶段 1 测试基线与 CI；运维核对生产事实 |
+| 2026-07-16 | 1 | 新增 CI（`.github/workflows/ci.yml`，针对 transform-python，read-only，Python 3.12 + uv）。机械 lint 修复 tests/ 与 service_dashboard.py（零逻辑变化）。新增 5 个回归测试：登录缓存、bootstrap fail-fast 安全边界、队列满拒绝、push 失败返回契约。4 项原任务因依赖阶段 4/5/6 标记为 deferred（bootstrap 部分失败恢复、POST 非幂等重试、update job 互斥、push 失败保留本地数据）。验证：format/check/mypy/pytest(76) 全绿，`git diff --check` clean。 | 提交 PR 2 待合并；运维核对阶段 0 生产事实；后续阶段按路线图推进 |
