@@ -148,6 +148,23 @@ class TestRegionConfigValidation:
         errors = Config.validate_region_config()
         assert any("yy" in e and "URL" in e for e in errors)
 
+    def test_validate_region_config_missing_port(self, monkeypatch):
+        """Test missing RPC port mapping is reported (idempotent safety bound)."""
+        monkeypatch.setattr(
+            Config,
+            "REGIONS",
+            ["jp", "en", "tw", "kr", "zz"],
+        )
+        errors = Config.validate_region_config()
+        assert any("zz" in e and "port" in e.lower() for e in errors)
+
+    def test_validate_region_config_is_idempotent(self):
+        """Repeated calls must return the same result set (pure, no side effects)."""
+        first = sorted(Config.validate_region_config())
+        second = sorted(Config.validate_region_config())
+        assert first == second
+        assert first == []
+
     def test_validate_includes_region_errors(self):
         """Test Config.validate surfaces region-mapping errors."""
         warnings = Config.validate()

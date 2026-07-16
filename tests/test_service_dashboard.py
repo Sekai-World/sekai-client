@@ -20,12 +20,8 @@ def test_service_name_uses_default_templates():
     assert service_dashboard.service_name("jp", "shared_client") == (
         "sharedApiClient-jp"
     )
-    assert service_dashboard.service_name("en", "check_update") == (
-        "checkUpdate-en"
-    )
-    assert service_dashboard.service_name("tw", "event_tracker") == (
-        "eventTracker-tw"
-    )
+    assert service_dashboard.service_name("en", "check_update") == ("checkUpdate-en")
+    assert service_dashboard.service_name("tw", "event_tracker") == ("eventTracker-tw")
 
 
 def test_dashboard_status_marks_missing_services_unhealthy(monkeypatch):

@@ -62,8 +62,6 @@ def test_jp_session_error_reauthenticates_instead_of_refreshing_cookie():
     client.init_cookie = Mock()
     response = Mock(status_code=403)
 
-    assert client._handle_http_error_retry(
-        response, {"errorCode": "session_error"}
-    )
+    assert client._handle_http_error_retry(response, {"errorCode": "session_error"})
     client.login.assert_called_once_with()
     client.init_cookie.assert_not_called()
