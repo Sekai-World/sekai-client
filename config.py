@@ -109,8 +109,11 @@ class Config:
     """Maximum number of bootstrap retries"""
 
     # ============ Region Port Configuration ============
-    REGIONS: list[str] = ["jp", "en", "cn", "tw", "kr"]
-    """List of supported game regions"""
+    # Formal service regions. CN is NOT a formally deployed region; only a
+    # standalone simplified checkUpdate-cn process is kept (see D-001 in
+    # docs/remediation-roadmap.md). Keep CN_PORT/port-map for that process.
+    REGIONS: list[str] = ["jp", "en", "tw", "kr"]
+    """List of formally supported game regions (CN is excluded, see D-001)"""
 
     JP_PORT: int = _parse_int_env("JP_PORT", 39390)
     """Port for Japan region JSON-RPC server"""
@@ -133,7 +136,8 @@ class Config:
         Get the JSON-RPC server port for a specific region.
 
         Args:
-            region: Region code ('jp', 'en', 'cn', 'tw', 'kr')
+            region: Region code ('jp', 'en', 'tw', 'kr', and 'cn' for the
+                standalone simplified checkUpdate process, see D-001)
 
         Returns:
             Port number
@@ -151,6 +155,42 @@ class Config:
         if region not in port_map:
             raise ValueError(f"Unsupported region: {region}")
         return port_map[region]
+
+    @classmethod
+    def validate_region_config(cls) -> list[str]:
+        """
+        Validate that every formally supported region has complete mappings.
+
+        Ensures each region in ``REGIONS`` is declared in the headers map,
+        the API URL map, and the RPC port map. Missing mappings are returned
+        as error strings so callers can fail fast at startup.
+
+        CN is intentionally excluded from ``REGIONS`` and is not checked here;
+        the simplified checkUpdate-cn process relies on its own config and is
+        not a formal service region (see D-001).
+
+        Returns:
+            List of region-mapping errors (empty if all regions are complete)
+        """
+        from utils.constants import base_pjsk_api_url, initial_api_headers
+
+        port_map = {
+            "jp": cls.JP_PORT,
+            "en": cls.EN_PORT,
+            "cn": cls.CN_PORT,
+            "tw": cls.TW_PORT,
+            "kr": cls.KR_PORT,
+        }
+
+        errors: list[str] = []
+        for region in cls.REGIONS:
+            if region not in initial_api_headers:
+                errors.append(f"Region {region!r} missing API headers mapping")
+            if region not in base_pjsk_api_url:
+                errors.append(f"Region {region!r} missing API URL mapping")
+            if region not in port_map:
+                errors.append(f"Region {region!r} missing RPC port mapping")
+        return errors
 
     # ============ API & Security Configuration ============
     @classmethod
@@ -195,6 +235,9 @@ class Config:
             List of validation warnings (empty if all valid)
         """
         warnings = []
+
+        region_errors = cls.validate_region_config()
+        warnings.extend(region_errors)
 
         if not cls.get_api_token():
             warnings.append("API_TOKEN not set; requests will return 500 (fail-closed)")

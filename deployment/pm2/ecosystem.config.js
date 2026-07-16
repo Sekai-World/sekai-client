@@ -1,4 +1,6 @@
-const regions = ["jp", "en", "cn", "tw", "kr"];
+// Formal service regions. CN is intentionally excluded (not formally deployed;
+// only the standalone simplified checkUpdate-cn process below is kept, see D-001).
+const regions = ["jp", "en", "tw", "kr"];
 
 const sharedPorts = {
   jp: 39390,
@@ -44,6 +46,22 @@ const apps = regions.flatMap((region) => [
     },
   },
 ]);
+
+// Standalone simplified checkUpdate-cn process. CN is not a formal service
+// region (see D-001): this process runs independently in CHECK_UPDATE_SIMPLE_MODE
+// and does not need shared_client/event_tracker peers.
+apps.push({
+  name: "checkUpdate-cn",
+  script: "check_update.py",
+  interpreter: ".venv/bin/python",
+  cwd: "/root/sekai-client",
+  env: {
+    SEKAI_REGION: "cn",
+    JSONRPC_PORT: String(sharedPorts.cn),
+    CHECK_UPDATE_SIMPLE_MODE: "true",
+    PYTHONUNBUFFERED: "1",
+  },
+});
 
 apps.push({
   name: "sekai-api-public",

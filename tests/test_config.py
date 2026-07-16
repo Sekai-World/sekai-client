@@ -4,8 +4,10 @@ Unit tests for configuration management.
 Tests config parsing, validation, and defaults.
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 from config import Config, _parse_float_env, _parse_int_env, _parse_str_env
 
 
@@ -89,9 +91,10 @@ class TestConfigValues:
         assert Config.MAX_API_RETRIES == 3
 
     def test_regions_supported(self):
-        """Test all regions are defined."""
-        expected_regions = ["jp", "en", "cn", "tw", "kr"]
+        """Test formal service regions (CN excluded per D-001)."""
+        expected_regions = ["jp", "en", "tw", "kr"]
         assert set(Config.REGIONS) == set(expected_regions)
+        assert "cn" not in Config.REGIONS
 
     def test_region_port_jp(self):
         """Test JP port is configured."""
@@ -102,7 +105,7 @@ class TestConfigValues:
         assert Config.get_region_port("en") == 39392
 
     def test_region_port_cn(self):
-        """Test CN port is configured."""
+        """Test CN port is still configured for the standalone process."""
         assert Config.get_region_port("cn") == 39394
 
     def test_region_port_tw(self):
@@ -117,6 +120,60 @@ class TestConfigValues:
         """Test invalid region raises ValueError."""
         with pytest.raises(ValueError):
             Config.get_region_port("invalid")
+
+
+class TestRegionConfigValidation:
+    """Tests for startup region-mapping completeness validation."""
+
+    def test_validate_region_config_empty(self):
+        """Test all formal regions have complete mappings."""
+        errors = Config.validate_region_config()
+        assert errors == []
+
+    def test_validate_region_config_no_cn(self):
+        """Test CN is intentionally not checked as a formal region."""
+        assert "cn" not in Config.REGIONS
+        errors = Config.validate_region_config()
+        assert not any("cn" in e for e in errors)
+
+    def test_validate_region_config_missing_headers(self, monkeypatch):
+        """Test missing headers mapping is reported."""
+        monkeypatch.setattr(Config, "REGIONS", ["jp", "en", "tw", "kr", "xx"])
+        errors = Config.validate_region_config()
+        assert any("xx" in e and "headers" in e for e in errors)
+
+    def test_validate_region_config_missing_url(self, monkeypatch):
+        """Test missing URL mapping is reported."""
+        monkeypatch.setattr(Config, "REGIONS", ["jp", "en", "tw", "kr", "yy"])
+        errors = Config.validate_region_config()
+        assert any("yy" in e and "URL" in e for e in errors)
+
+    def test_validate_includes_region_errors(self):
+        """Test Config.validate surfaces region-mapping errors."""
+        warnings = Config.validate()
+        assert isinstance(warnings, list)
+
+    def test_bootstrap_rejects_incomplete_region_config(self, monkeypatch):
+        """Test public API bootstrap fails before initializing any client."""
+        import api_public_server
+
+        monkeypatch.setattr(api_public_server, "bootstrapped", False)
+        monkeypatch.setattr(
+            api_public_server.Config,
+            "validate_region_config",
+            lambda: ["Region 'xx' missing API headers mapping"],
+        )
+        initialized_regions = []
+        monkeypatch.setattr(
+            api_public_server,
+            "init_regional_client",
+            lambda region: initialized_regions.append(region),
+        )
+
+        with pytest.raises(RuntimeError, match="Region configuration is incomplete"):
+            api_public_server.bootstrap()
+
+        assert initialized_regions == []
 
 
 class TestConfigValidation:
