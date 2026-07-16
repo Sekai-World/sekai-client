@@ -8,6 +8,7 @@ from typing import Any
 
 from config import Config
 from utils.jsonrpc_client import JSONRPCClient
+from utils.redaction import redact_text
 
 SERVICE_TYPES = ("shared_client", "check_update", "event_tracker")
 SERVICE_NAME_CANDIDATES: dict[str, tuple[str, ...]] = {
@@ -122,7 +123,8 @@ def _scan_logs(proc: dict[str, Any]) -> dict[str, Any]:
     return {
         "scannedLines": len(lines),
         "errorCount": len(matches),
-        "recentErrors": matches[-5:],
+        # Scanned log lines may contain tokens/paths; redact before surfacing.
+        "recentErrors": [redact_text(line) for line in matches[-5:]],
     }
 
 

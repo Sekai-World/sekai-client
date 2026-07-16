@@ -2,8 +2,10 @@
 
 from unittest.mock import Mock
 
+import pytest
 import requests
 
+import api_client
 from api_client import APIClient
 
 
@@ -65,3 +67,70 @@ def test_jp_session_error_reauthenticates_instead_of_refreshing_cookie():
     assert client._handle_http_error_retry(response, {"errorCode": "session_error"})
     client.login.assert_called_once_with()
     client.init_cookie.assert_not_called()
+
+
+def test_request_and_decrypt_allows_allowlisted_master_data_url(monkeypatch):
+    client = APIClient(region="tw")
+    resp = Mock(status_code=200, content=b"data")
+    resp.raise_for_status.return_value = None
+    monkeypatch.setattr(requests, "request", lambda *a, **k: resp)
+    monkeypatch.setattr(api_client, "decrypt_msgpack", lambda c: c)
+
+    # Nuverse base for tw is an https host serving master-data-<digits>.info
+    from utils.constants import nuverse_master_data_base_url
+
+    base = nuverse_master_data_base_url["tw"]
+    url = f"{base}/master-data-60001.info"
+    assert client.request_and_decrypt(url) == b"data"
+
+
+def test_request_and_decrypt_rejects_non_get():
+    client = APIClient(region="tw")
+    with pytest.raises(ValueError, match="only allows GET"):
+        client.request_and_decrypt("https://x/master-data-1.info", method="post")
+
+
+def test_request_and_decrypt_rejects_non_https():
+    client = APIClient(region="tw")
+    with pytest.raises(ValueError, match="https"):
+        client.request_and_decrypt("http://x/master-data-1.info")
+
+
+def test_request_and_decrypt_rejects_wrong_host():
+    client = APIClient(region="tw")
+    with pytest.raises(ValueError, match="allowlisted"):
+        client.request_and_decrypt("https://evil.example.com/master-data-1.info")
+
+
+def test_request_and_decrypt_rejects_bad_filename():
+    client = APIClient(region="tw")
+    from utils.constants import nuverse_master_data_base_url
+
+    base = nuverse_master_data_base_url["tw"]
+    with pytest.raises(ValueError, match="outside the allowlist"):
+        client.request_and_decrypt(f"{base}/../secret.txt")
+
+
+def test_request_and_decrypt_rejects_traversal():
+    client = APIClient(region="tw")
+    from utils.constants import nuverse_master_data_base_url
+
+    base = nuverse_master_data_base_url["tw"]
+    with pytest.raises(ValueError, match="outside the allowlist"):
+        client.request_and_decrypt(f"{base}/../../etc/passwd")
+
+
+def test_fetch_master_split_rejects_unallowlisted():
+    client = APIClient(region="jp")
+    client.master_split_paths = ["suite/master/valid"]
+    with pytest.raises(ValueError, match="not in the allowlist"):
+        client.fetch_master_split("suite/master/evil")
+
+
+def test_fetch_master_split_allows_and_calls():
+    client = APIClient(region="jp")
+    client.master_split_paths = ["suite/master/valid"]
+    client.call_pjsk_api = Mock(return_value={"k": "v"})
+    result = client.fetch_master_split("suite/master/valid")
+    assert result == {"k": "v"}
+    client.call_pjsk_api.assert_called_once_with("/suite/master/valid")

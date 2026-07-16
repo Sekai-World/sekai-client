@@ -12,6 +12,15 @@ from config import Config
 from utils.jsonrpc_client import JSONRPCClient
 
 
+@pytest.fixture(autouse=True)
+def _internal_rpc_token(monkeypatch):
+    # The JSON-RPC client now requires an internal RPC token (fail-closed).
+    # Provide a dev token so these request-level tests exercise the call path
+    # without depending on real env config.
+    monkeypatch.setattr(Config, "get_internal_rpc_token", lambda: "dev-token")
+    monkeypatch.setattr(Config, "allow_insecure_internal_rpc", lambda: False)
+
+
 class TestJSONRPCClient:
     """Tests for JSONRPCClient."""
 

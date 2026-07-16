@@ -198,6 +198,43 @@ class Config:
         """Read API token from environment on each access."""
         return _parse_str_env("API_TOKEN", "")
 
+    @classmethod
+    def get_internal_rpc_token(cls) -> str:
+        """Read the internal JSON-RPC auth token on each access.
+
+        Used to authenticate intra-host RPC between shared_client / check_update
+        / event_tracker / api_public_server. Must be set (or bypass disabled via
+        ALLOW_INSECURE_INTERNAL_RPC on loopback) or requests fail-closed.
+        """
+        return _parse_str_env("INTERNAL_RPC_TOKEN", "")
+
+    @classmethod
+    def allow_insecure_internal_rpc(cls) -> bool:
+        """Whether to allow unauthenticated RPC from loopback.
+
+        Off by default (fail-closed). Only honored for requests originating
+        from 127.0.0.1 / ::1; non-loopback callers are always rejected.
+        """
+        return _parse_str_env("ALLOW_INSECURE_INTERNAL_RPC", "") in (
+            "true",
+            "True",
+            "1",
+        )
+
+    @classmethod
+    def enable_unsafe_pjsk_rpc(cls) -> bool:
+        """Whether to expose the generic ``call_pjsk_api`` RPC.
+
+        Off by default. The generic passthrough is intentionally disabled because
+        it forwards arbitrary endpoints/methods/body to the game server. Scoped
+        helpers (e.g. ``fetch_master_split``) must be used instead.
+        """
+        return _parse_str_env("ENABLE_UNSAFE_PJSK_RPC", "") in (
+            "true",
+            "True",
+            "1",
+        )
+
     LOGLEVEL: str = _parse_str_env("LOGLEVEL", "INFO").upper()
     """Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"""
 

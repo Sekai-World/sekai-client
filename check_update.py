@@ -166,12 +166,31 @@ def _write_i18n_json(filename: str, payload: dict) -> None:
 
 
 def _post_strapi_ids(endpoint: str, ids: list[int]) -> None:
+    # The token is sent via the Authorization header (never in the URL query).
+    # X-Strapi-Token is also accepted by Strapi; both carry the secret in
+    # a header so it is not logged in access logs. Legacy query-string token
+    # fallback is intentionally removed.
+    #
+    # A Strapi failure must NOT block the master-data update pipeline
+    # (it is best-effort auxiliary publishing). We therefore surface the
+    # HTTP error via a redacted exception log and continue.
     if strapi_base_url and strapi_token:
-        requests.post(
-            f"{strapi_base_url}/{endpoint}?token={strapi_token}",
-            json=ids,
-            timeout=60,
-        )
+        try:
+            requests.post(
+                f"{strapi_base_url}/{endpoint}",
+                json=ids,
+                headers={
+                    "Authorization": f"Bearer {strapi_token}",
+                    "X-Strapi-Token": strapi_token,
+                },
+                timeout=60,
+            ).raise_for_status()
+        except requests.RequestException as err:
+            logger.exception(
+                "[_post_strapi_ids] failed to publish %s ids: %s",
+                endpoint,
+                err,
+            )
 
 
 I18N_CARD_ID_THRESHOLD = 500
@@ -337,12 +356,12 @@ def get_splitted_master_data() -> dict[str, Any]:
 
     master_split_paths: list[str] = jsonrpc_client.request("master_split_paths")
 
-    # download every split
+    # download every split via the scoped, allowlisted RPC
     master_data_raw = []
     for split_path in master_split_paths:
         logger.debug("[get_splitted_master_data] fetch split %s", split_path)
         master_data_raw.append(
-            jsonrpc_client.request("call_pjsk_api", [f"/{split_path}"])
+            jsonrpc_client.request("fetch_master_split", [split_path])
         )
 
     master_data: dict[str, Any] = {}
