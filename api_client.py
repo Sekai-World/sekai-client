@@ -5,8 +5,9 @@ Provides high-level API for game login, account management, and data fetching.
 Handles encryption/decryption, version checking, rate limiting, and automatic
 session token refresh.
 
-Supported regions: 'jp' (Japan), 'en' (English), 'cn' (China),
-                  'tw' (Taiwan), 'kr' (Korea)
+Supported full API regions: 'jp' (Japan), 'en' (English), 'tw' (Taiwan),
+                            'kr' (Korea). CN is supported only by the standalone
+                            simplified checkUpdate process (see D-001).
 """
 
 import logging

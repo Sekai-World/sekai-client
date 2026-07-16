@@ -36,13 +36,13 @@ app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
     app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1
 )
 
-# Initialize region-specific JSON-RPC clients
+# Initialize region-specific JSON-RPC clients. CN is excluded (not a formal
+# region; only a standalone simplified checkUpdate-cn process, see D-001).
 client_map: dict[str, JSONRPCClient] = {
     "jp": JSONRPCClient(f"http://localhost:{Config.JP_PORT}/"),
     "tw": JSONRPCClient(f"http://localhost:{Config.TW_PORT}/"),
     "en": JSONRPCClient(f"http://localhost:{Config.EN_PORT}/"),
     "kr": JSONRPCClient(f"http://localhost:{Config.KR_PORT}/"),
-    "cn": JSONRPCClient(f"http://localhost:{Config.CN_PORT}/"),
 }
 bootstrap_lock = Lock()
 bootstrapped = False
@@ -135,6 +135,13 @@ def bootstrap() -> None:
     with bootstrap_lock:
         if bootstrapped:
             return
+
+        region_errors = Config.validate_region_config()
+        if region_errors:
+            raise RuntimeError(
+                "Region configuration is incomplete; refusing to start: "
+                + "; ".join(region_errors)
+            )
 
         for region in client_map:
             try:
