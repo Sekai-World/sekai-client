@@ -143,33 +143,48 @@ uv run --extra dev pytest tests/
 
 ### 任务
 
-- [ ] 实现集中式日志脱敏。
-- [ ] 屏蔽 `Authorization`、`Cookie`、`x-session-token`、credential、access token、signature 和 device ID。
-- [ ] 禁止记录完整登录 body 和敏感 headers。
-- [ ] 将 Strapi token 从 URL query 移到 `Authorization` header。
-- [ ] 为凭据 YAML 使用原子写入和 `0600` 权限，或迁移到 secret store。
-- [ ] 为内部 JSON-RPC 增加独立认证。
-- [ ] 无内部认证时禁止绑定非 loopback 地址。
-- [ ] 从 `account_info` 移除敏感字段。
-- [ ] 为 `request_and_decrypt` 增加 scheme、host 和 method 白名单。
-- [ ] 评估并收敛通用 `call_pjsk_api` 的权限范围。
+- [x] 实现集中式日志脱敏（`utils/redaction.py`：`SecretRedactingFilter` 递归脱敏 dict/list 与文本脱敏；`logging_config.configure_logging` 默认安装，`attach_redaction` 供 gunicorn 入口复用）。
+- [x] 屏蔽 `authorization`/`cookie`/`set-cookie`/`x-session-token`/`credential`/`signature`/`accessToken`/`access_token`/`token`/`api_key`/`x-api-token`/`x-api-key`/`device_id`/`x-install-id` 等键与 `Bearer`/header-like/URL query（`[REDACTED]` 替换）。
+- [x] `shared_client` 请求/错误日志面显式缩小：`run_job` 在把错误 `data` 序列化回内部调用方前先脱敏。
+- [x] `check_update._post_strapi_ids`：URL 不再含 token；改用 `Authorization: Bearer` 与 `X-Strapi-Token` header，并调用 `raise_for_status` 后捕获 `requests.RequestException` 记录错误继续，避免辅助 Strapi 故障阻断主数据更新；移除 legacy query fallback。
+- [x] `service_dashboard._scan_logs` 的 `recentErrors` 在返回前脱敏。
+- [x] 凭据 YAML 原子写入（`shared_client._write_account_yaml_atomic`：同目录临时文件、`0600`、`flush`/`fsync`/`os.replace`/异常清理、`yaml.safe_dump`）。
+- [x] 内部 RPC 鉴权（`Config.get_internal_rpc_token` / `ALLOW_INSECURE_INTERNAL_RPC` 动态读取；header `x-internal-rpc-token`；`compare_digest` 常量时间比较；默认 token 缺失 500，错误 token 401；仅 `ALLOW_INSECURE_INTERNAL_RPC=true` 且 loopback 才 bypass，非 loopback 一律 401；未认证请求不启动 scheduler）。
+- [x] `utils.jsonrpc_client.JSONRPCClient.request` 自动动态读 token 并加 header；缺 token 本地 `RuntimeError`（fail-closed）；HTTP 响应在 `json` 解析前 `raise_for_status`；所有调用方经默认 client 自动兼容，无手工散落 token。
+- [x] PM2：正式 `shared/check/event` 与 public API 传递 `INTERNAL_RPC_TOKEN` 与 `ALLOW_INSECURE_INTERNAL_RPC`（来自 `process.env`）；standalone `checkUpdate-cn` 不依赖 RPC，仍不强制。
+- [x] `shared_client.account_info` RPC 仅返回 `userId` 与 `region`，兼容 `event_tracker`。
+- [x] `request_and_decrypt` 在 `APIClient` 内严格校验：仅 GET、空 body、https、当前 region `nuverse_master_data_base_url` host/base path、`master-data-<digits>.info` 文件名；拒绝 path traversal（`..`）/非白名单 host/scheme。
+- [x] 收敛通用 `call_pjsk_api`：新增 `fetch_master_split(split_path)` 仅允许 `client.master_split_paths` 中值（GET）；`check_update` 改调此 RPC；通用 `call_pjsk_api` 默认禁用，仅 `ENABLE_UNSAFE_PJSK_RPC=true` 时允许（加入 `Config` 动态布尔）。未做完整 capability model。
 
 ### 验收条件
 
-- 日志中不出现 credential、session token 或 access token。
-- URL 中不再包含认证 token。
-- 未认证请求不能调用内部 RPC。
-- RPC 不能向任意 URL 发起请求。
-- 合法内部调用保持可用。
+- [x] 日志中不出现 credential、session token 或 access token。
+- [x] URL 中不再包含认证 token。
+- [x] 未认证请求不能调用内部 RPC（且非 loopback 一律拒绝）。
+- [x] RPC 不能向任意 URL 发起请求（`request_and_decrypt` 白名单 + 通用 RPC 默认禁用）。
+- [x] 合法内部调用保持可用（带 token 或 loopback dev bypass）。
 
 ### 验收证据
 
-- 待填写：日志脱敏测试
-- 待填写：RPC 鉴权与 URL 白名单测试
+- 日志脱敏：`tests/test_redaction.py`（结构/文本/Bearer/header/URL query/日志 filter 单测，断言 secret 不出现在输出）。`configure_logging` 默认安装 filter；`shared_client.run_job` 对错误 `data` 脱敏；`service_dashboard._scan_logs` 对 `recentErrors` 脱敏。
+- 内部 RPC 鉴权：`tests/test_internal_rpc_auth.py` 覆盖 server 端（缺 token→500、错 token→401、正确 token→通过、loopback dev bypass、非 loopback→401、未认证不启动 scheduler）与 client 端（自动加 token header、缺 token 本地 RuntimeError、HTTP 错误先 raise）。`tests/test_jsonrpc_client.py` 增加 autouse fixture 提供 dev token。
+- Strapi：`tests/test_check_update.py::test_post_strapi_ids_uses_authorization_header_not_query` 与 `..._logs_and_continues_on_http_error`（header 化、无 query token、调用 `raise_for_status`，HTTP 错误不传播）。
+- YAML 原子性：`tests/test_shared_client.py::test_write_account_yaml_atomic_mode_0600_and_cleanup_on_failure`（0600、替换、失败清理临时文件，不真实碰用户文件）。
+- account_info 字段：`tests/test_shared_client.py::test_account_info_rpc_returns_only_userid_and_region`（仅 userId/region）。
+- request_and_decrypt 白名单：`tests/test_api_client.py` 4 例（允许名单 URL、拒绝非 GET/非 https/错误 host/traversal/bad filename）。
+- fetch_master_split / unsafe 开关：`tests/test_api_client.py` + `tests/test_shared_client.py`（`fetch_master_split` 允许名单调用、拒绝未允许路径；`call_pjsk_api` 默认禁用、开关开启可用）。
+- 测试数量：本阶段 `pytest tests/ -q` 共 **114** 个用例（阶段 1 基线 76 + 新增 38）。
+- 本地验证命令结果（2026-07-16）：
+  - `uv run --extra dev ruff format --check .`：pass（32 files already formatted）
+  - `uv run --extra dev ruff check .`：pass（All checks passed）
+  - `uv run --extra dev mypy api_client.py shared_client.py utils/ config.py`：pass（no issues found in 15 source files）
+  - `uv run --extra dev pytest tests/ -q`：114 passed
+  - `node --check deployment/pm2/ecosystem.config.js`：pass
+  - `git diff --check`：clean
 
 ### 执行记录
 
-- 待填写
+- 2026-07-16：实现阶段 2 最小安全设计。新增 `utils/redaction.py`（递归+文本脱敏、`SecretRedactingFilter`、`attach_redaction`），`logging_config.configure_logging` 默认安装 filter。`Config` 增加 `get_internal_rpc_token`/`allow_insecure_internal_rpc`/`enable_unsafe_pjsk_rpc` 动态配置；`utils/jsonrpc_client` 自动加 `x-internal-rpc-token` header、缺 token 本地 RuntimeError、`raise_for_status` 前置。`shared_client`：before_request 独立 RPC 鉴权（fail-closed、loopback dev bypass、非 loopback 拒绝、未认证不启动 scheduler）、`account_info` 仅返回 userId/region、`request_and_decrypt` 严格白名单、`fetch_master_split` 允许名单 RPC、通用 `call_pjsk_api` 默认禁用、`run_job` 错误 data 脱敏、凭据 YAML 原子写入（0600）。`check_update._post_strapi_ids` 改为 Authorization header + `raise_for_status` 并将 Strapi HTTP 故障降级为记录后继续；`get_splitted_master_data` 改调 `fetch_master_split`。`service_dashboard._scan_logs` recentErrors 脱敏。`api_public_server` 安装 redaction。PM2 传递 `INTERNAL_RPC_TOKEN`/`ALLOW_INSECURE_INTERNAL_RPC`（standalone cn 不强制）。README 增加 INTERNAL_RPC_TOKEN 等说明。**明确延期项（未伪称完成）**：secret store（当前为 0600 文件）、mTLS/Unix socket、完整 capability model、Dashboard localStorage（阶段 3）；未改变阶段 3 UI / 阶段 4 Git 删除 / 阶段 5 状态机 / 阶段 6 重试。验证全绿（114 passed，mypy/ruff/node/git clean）。
 
 ## 阶段 3：Dashboard 安全与交互
 
@@ -371,7 +386,7 @@ UNINITIALIZED
 |---|---|---|---|---|
 | 1 | `fix: validate supported region configuration` | CN 决策、区域配置校验与测试 | `[x]` | #5 merged |
 | 2 | `ci: add project verification pipeline` | Ruff、mypy、pytest CI | `[-]` | 进行中（阶段 1 提交，待合并） |
-| 3 | `security: redact credentials and protect internal rpc` | 日志、token、文件权限、RPC | `[ ]` | 待填写 |
+| 3 | `security: redact credentials and protect internal rpc` | 日志、token、文件权限、RPC | `[-]` | 进行中（阶段 2 提交，待合并） |
 | 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[ ]` | 待填写 |
 | 5 | `fix: serialize update jobs and preserve git state` | 调度互斥、原子发布、Git 恢复 | `[ ]` | 待填写 |
 | 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[ ]` | 待填写 |
@@ -398,3 +413,4 @@ UNINITIALIZED
 |---|---|---|---|
 | 2026-07-16 | 0 | D-001 决策：CN 非正式区域，保留简化版 checkUpdate-cn。代码层：REGIONS/PM2/公共 API 移除 CN，新增区域映射完整性校验与聚焦测试。生产运行事实（PM2 进程、loopback 绑定、worker 数、未推送 commit）待运维确认。 | 阶段 1 测试基线与 CI；运维核对生产事实 |
 | 2026-07-16 | 1 | 新增 CI（`.github/workflows/ci.yml`，针对 transform-python，read-only，Python 3.12 + uv）。机械 lint 修复 tests/ 与 service_dashboard.py（零逻辑变化）。新增 5 个回归测试：登录缓存、bootstrap fail-fast 安全边界、队列满拒绝、push 失败返回契约。4 项原任务因依赖阶段 4/5/6 标记为 deferred（bootstrap 部分失败恢复、POST 非幂等重试、update job 互斥、push 失败保留本地数据）。验证：format/check/mypy/pytest(76) 全绿，`git diff --check` clean。 | 提交 PR 2 待合并；运维核对阶段 0 生产事实；后续阶段按路线图推进 |
+| 2026-07-16 | 2 | 实现最小安全设计：日志脱敏（utils/redaction.py + logging_config 默认 filter）、Strapi header 化+raise、凭据 YAML 原子写入 0600、内部 RPC 鉴权（x-internal-rpc-token、fail-closed、loopback dev bypass、非 loopback 拒绝、未认证不启 scheduler）、request_and_decrypt 严格白名单、fetch_master_split 允许名单 RPC + 通用 call_pjsk_api 默认禁用、account_info 仅返回 userId/region、PM2 传递 INTERNAL_RPC_TOKEN/ALLOW_INSECURE_INTERNAL_RPC、README 补充。新增 38 测试（redaction/RPC 鉴权/Strapi/YAML/allowlist/unsafe 开关），pytest 76 → 114。验证：format/check/mypy/pytest(114)/node/git diff --check 全绿。**延期（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model、Dashboard localStorage（阶段 3）；未改动阶段 3 UI/4 Git 删除/5 状态机/6 重试。 | 提交 PR 3 待合并；阶段 3 Dashboard 安全与交互 |

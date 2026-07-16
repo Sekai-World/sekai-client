@@ -13,13 +13,21 @@ from jsonrpcclient.responses import Error, Ok, parse
 
 from config import Config
 
+# Header used to authenticate internal JSON-RPC calls between the
+# sekai-client processes (shared_client / check_update / event_tracker /
+# api_public_server). All such calls must run on loopback only.
+INTERNAL_RPC_TOKEN_HEADER = "x-internal-rpc-token"
+
 
 class JSONRPCClient:
     """
     Client for making JSON-RPC method calls to sekai-client servers.
 
     Wraps the requests library to provide convenient JSON-RPC request/response
-    handling with automatic timeout configuration.
+    handling with automatic timeout configuration. Every request carries the
+    internal RPC auth token (read dynamically from the environment so it can be
+    rotated without a restart); loopback dev runs without a token are allowed
+    via ALLOW_INSECURE_INTERNAL_RPC.
 
     Attributes:
         url: Base URL of the JSON-RPC server (e.g., 'http://localhost:39390/')
@@ -34,6 +42,40 @@ class JSONRPCClient:
         """
         self.url = url
 
+    def _is_loopback_target(self) -> bool:
+        """Whether this client's URL points at loopback (127.0.0.1 / ::1)."""
+        from urllib.parse import urlparse
+
+        host = urlparse(self.url).hostname or ""
+        return host in ("127.0.0.1", "::1", "localhost")
+
+    def _build_headers(self) -> dict[str, str]:
+        """Build request headers, including the internal RPC auth token.
+
+        Fails closed: if no token is configured and dev bypass is disabled,
+        raise so the client never talks to the server unauthenticated. Dev
+        loopback runs may omit the token via ALLOW_INSECURE_INTERNAL_RPC.
+        The token is only ever sent to loopback targets, so it cannot
+        leak to an external URL.
+        """
+        headers: dict[str, str] = {}
+        token = Config.get_internal_rpc_token()
+        if token:
+            if not self._is_loopback_target():
+                raise RuntimeError(
+                    "Refusing to send INTERNAL_RPC_TOKEN to a non-loopback "
+                    f"URL: {self.url!r}"
+                )
+            headers[INTERNAL_RPC_TOKEN_HEADER] = token
+            return headers
+        if Config.allow_insecure_internal_rpc() and self._is_loopback_target():
+            return headers
+        raise RuntimeError(
+            "INTERNAL_RPC_TOKEN is not configured; cannot issue internal "
+            "RPC request (set INTERNAL_RPC_TOKEN or ALLOW_INSECURE_INTERNAL_RPC "
+            "for loopback dev only)"
+        )
+
     def request(
         self,
         func_name: str,
@@ -41,6 +83,10 @@ class JSONRPCClient:
     ) -> Any:
         """
         Make a JSON-RPC method call.
+
+        Automatically attaches the internal RPC auth token and fails closed when
+        no token is configured (unless loopback dev bypass is enabled). The
+        token is only attached for loopback targets.
 
         Args:
             func_name: Name of the remote method to call
@@ -50,19 +96,25 @@ class JSONRPCClient:
             The result from the JSON-RPC response
 
         Raises:
-            RuntimeError: If the JSON-RPC response is an error
+            RuntimeError: If no internal RPC token is configured, if the
+                token would be sent to a non-loopback URL, or if the
+                JSON-RPC response is an error
         """
         request_params = tuple(params) if isinstance(params, list) else params
+
+        headers = self._build_headers()
         r = requests.post(
             self.url,
             json=request_uuid(func_name, request_params),
+            headers=headers,
             timeout=Config.REQUEST_TIMEOUT,
         )
+        # Surface HTTP errors (auth rejection, 5xx) before attempting to parse.
+        r.raise_for_status()
 
         try:
             payload = r.json()
         except ValueError as err:
-            r.raise_for_status()
             raise RuntimeError(f"Invalid JSON-RPC response: {r.text}") from err
 
         parsed = parse(payload)

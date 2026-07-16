@@ -25,10 +25,12 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.wrappers import Response as WerkzeugResponse
 
 from config import Config
+from logging_config import enable_log_redaction
 from service_dashboard import dashboard_status, restart_region, restart_service
 from utils.decorators import require_apikey
 from utils.jsonrpc_client import JSONRPCClient
 
+enable_log_redaction()
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)

@@ -15,9 +15,12 @@ Regional Ports (configurable via environment):
 """
 
 import logging
+import os
 import queue
+import tempfile
 from collections.abc import Callable
 from copy import deepcopy
+from hmac import compare_digest
 from os import getenv, path
 from threading import Lock
 from typing import Any
@@ -26,18 +29,26 @@ import jwt
 import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from flask import Flask
+from flask import Flask, abort, request
 from jsonrpc.exceptions import JSONRPCDispatchException, JSONRPCInternalError
 from pytz import timezone
 
 from api_client import APIClient
 from config import Config
+from logging_config import enable_log_redaction
 from utils.constants import pjsk_region
+from utils.jsonrpc_client import INTERNAL_RPC_TOKEN_HEADER
+from utils.redaction import redact_structure, redact_text
 from utils.task_queue import job_queue, start_worker
 from utils.ujsonrpcapi import api
 
-dirname = path.dirname(__file__)
+enable_log_redaction()
 logger = logging.getLogger(__name__)
+
+dirname = path.dirname(__file__)
+
+# Header used to authenticate internal JSON-RPC calls between the
+# sekai-client processes. All such calls must run on loopback only.
 
 # Global state for the JSON-RPC server
 api_client: APIClient | None = None
@@ -121,10 +132,17 @@ def run_job(job: Callable[[], Any]) -> Any:
         result = get_answer(response_queue)
 
     if isinstance(result, JSONRPCInternalError):
+        # Redact any secret that leaked into the error payload before
+        # it is serialized back to the (internal) caller.
+        redacted_data = result.data
+        if isinstance(redacted_data, (dict, list, tuple)):
+            redacted_data = redact_structure(redacted_data)
+        elif isinstance(redacted_data, str):
+            redacted_data = redact_text(redacted_data)
         raise JSONRPCDispatchException(
             code=JSONRPCInternalError.CODE,
             message=JSONRPCInternalError.MESSAGE,
-            data=result.data,
+            data=redacted_data,
         )
     return result
 
@@ -171,6 +189,49 @@ def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
     client.user_info = state["user_info"]
 
 
+def _enforce_account_yaml_permissions(filepath: str) -> None:
+    """
+    Ensure an existing account YAML file is not world/readable.
+
+    On POSIX, chmod the file to 0600 (best-effort: ignores
+    errors so non-POSIX platforms such as Windows are unaffected). Callers
+    that read the file should not print its contents.
+    """
+    try:
+        if os.stat(filepath).st_mode & 0o077:
+            os.chmod(filepath, 0o600)
+    except OSError:
+        pass
+
+
+def _write_account_yaml_atomic(filepath: str, account_info: dict[str, Any]) -> None:
+    """
+    Write account YAML atomically with restrictive permissions.
+
+    Writes to a temp file in the same directory, flushes + fsyncs, then
+    atomically ``os.replace`` onto the target. The file is chmod'd 0600 so
+    credentials are not world-readable. The temp file is removed on any
+    failure. Never prints the secret contents.
+    """
+    directory = path.dirname(filepath) or "."
+    fd, tmp_path = tempfile.mkstemp(
+        dir=directory, prefix=".sharedAccount.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump(account_info, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, filepath)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def get_account_info() -> dict[str, Any]:
     """
     Load or generate account credentials for the current region.
@@ -190,6 +251,7 @@ def get_account_info() -> dict[str, Any]:
     if client_region in ("jp", "en"):
         filepath = path.join(dirname, f"sharedAccount.{client_region}.yaml")
         if path.exists(filepath):
+            _enforce_account_yaml_permissions(filepath)
             with open(filepath, encoding="utf-8") as f:
                 account_info = yaml.safe_load(f)
             if not isinstance(account_info, dict):
@@ -209,8 +271,7 @@ def get_account_info() -> dict[str, Any]:
                 "credential": credential,
                 "userId": user_id,
             }
-            with open(filepath, "w", encoding="utf-8") as f:
-                yaml.dump(account_info, f)
+            _write_account_yaml_atomic(filepath, account_info)
             return account_info
 
     if client_region in ("cn", "tw", "kr"):
@@ -347,11 +408,19 @@ def version_info() -> dict[str, Any]:
 
 @api.dispatcher.add_method
 def account_info() -> dict[str, Any]:
-    """Get logged-in account information."""
+    """Get logged-in account identifier.
+
+    Returns only the non-sensitive ``userId`` and ``region`` so callers
+    (e.g. event_tracker) can correlate requests without exposing
+    credentials/signatures.
+    """
     if not user_logged_in:
         raise RuntimeError("Login before calling this method")
 
-    return require_api_client().account_info
+    return {
+        "userId": require_api_client().account_info.get("userId"),
+        "region": client_region,
+    }
 
 
 @api.dispatcher.add_method
@@ -462,6 +531,11 @@ def call_pjsk_api(endpoint: str, method: str = "get", body: str | dict = "") -> 
     """
     Make a direct API call to game server.
 
+    Intentionally disabled by default: the generic passthrough forwards
+    arbitrary endpoints/methods/body to the game server and must not be
+    exposed. Use scoped helpers (e.g. ``fetch_master_split``) instead.
+    Enable only with ENABLE_UNSAFE_PJSK_RPC=true.
+
     Args:
         endpoint: API endpoint path
         method: HTTP method ('get', 'post', 'put', 'patch')
@@ -470,8 +544,42 @@ def call_pjsk_api(endpoint: str, method: str = "get", body: str | dict = "") -> 
     Returns:
         API response or JSONRPCInternalError
     """
+    if not Config.enable_unsafe_pjsk_rpc():
+        raise RuntimeError(
+            "Generic call_pjsk_api RPC is disabled. Set "
+            "ENABLE_UNSAFE_PJSK_RPC=true to enable it (unsafe)."
+        )
     client = require_api_client()
     return run_job(lambda: client.call_pjsk_api(endpoint, method, body))
+
+
+@api.dispatcher.add_method
+def fetch_master_split(split_path: str) -> Any:
+    """
+    Fetch a single master-data split by path.
+
+    Only allows ``split_path`` values already present in the client's
+    ``master_split_paths`` (populated during login), always using GET.
+    This is the safe replacement for ``call_pjsk_api("/<split>")``.
+
+    Args:
+        split_path: Master split path (must be in master_split_paths)
+
+    Returns:
+        Decrypted split data or JSONRPCInternalError
+
+    Raises:
+        RuntimeError: If split_path is not in the allowlist
+    """
+    if not user_logged_in:
+        raise RuntimeError("Login before calling this method")
+
+    client = require_api_client()
+    allowed = client.master_split_paths
+    if split_path not in allowed:
+        raise RuntimeError(f"Master split path {split_path!r} is not in the allowlist")
+
+    return run_job(lambda: client.call_pjsk_api(f"/{split_path}"))
 
 
 @api.dispatcher.add_method
@@ -523,6 +631,38 @@ app = Flask(__name__)
 app.register_blueprint(api.as_blueprint())
 
 
+def _is_loopback(remote_addr: str | None) -> bool:
+    return remote_addr in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+
+def _require_internal_rpc_auth() -> None:
+    """Fail-closed guard for internal JSON-RPC requests.
+
+    - Missing configured token -> 500 (server misconfigured), unless
+      loopback + ALLOW_INSECURE_INTERNAL_RPC=true (dev bypass). Once a
+      token IS configured, the dev bypass no longer applies: a missing or
+      wrong token is always 401, even on loopback.
+    - Non-loopback caller -> 401 (the channel is loopback-only by design,
+      even with a valid token or the dev bypass).
+    - Correct token -> allowed.
+    """
+    token = Config.get_internal_rpc_token()
+    if not token:
+        # Dev mode: with no token configured, loopback callers may bypass.
+        if Config.allow_insecure_internal_rpc() and _is_loopback(request.remote_addr):
+            return
+        abort(500, description="INTERNAL_RPC_TOKEN is not configured")
+
+    if not _is_loopback(request.remote_addr):
+        abort(401, description="Unauthorized internal RPC request (non-loopback)")
+
+    provided = request.headers.get(INTERNAL_RPC_TOKEN_HEADER, "")
+    if compare_digest(provided, token):
+        return
+
+    abort(401, description="Unauthorized internal RPC request")
+
+
 def start_scheduler():
     global scheduler_started
     if scheduler_started:
@@ -534,6 +674,16 @@ def start_scheduler():
         if not scheduler.running:
             scheduler.start()
         scheduler_started = True
+
+
+@app.before_request
+def enforce_internal_rpc_auth():
+    """Authenticate every internal JSON-RPC request before handling.
+
+    Unauthenticated requests must not, among other things, start the
+    scheduler. Authorization happens first.
+    """
+    _require_internal_rpc_auth()
 
 
 @app.before_request

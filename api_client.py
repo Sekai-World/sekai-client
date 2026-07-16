@@ -14,6 +14,7 @@ import logging
 from copy import deepcopy
 from time import sleep
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import requests
@@ -23,6 +24,7 @@ from utils.constants import (
     app_id_regions,
     base_pjsk_api_url,
     initial_api_headers,
+    nuverse_master_data_base_url,
     pjsk_cookie_post_url,
     pjsk_region,
 )
@@ -694,13 +696,97 @@ class APIClient:
             {"credential": credential, "userId": 0},
         )
 
+    def fetch_master_split(self, split_path: str) -> Any:
+        """Fetch a single master-data split by path (GET only).
+
+        Only allowlisted split paths (present in ``master_split_paths``) are
+        permitted. This is the safe, scoped replacement for the generic
+        ``call_pjsk_api("/<split>")`` passthrough.
+        """
+        if split_path not in self.master_split_paths:
+            raise ValueError(
+                f"Master split path {split_path!r} is not in the allowlist"
+            )
+        return self.call_pjsk_api(f"/{split_path}")
+
     def request_and_decrypt(
         self,
         url: str,
         method: str = "get",
         body: str | dict[str, Any] = "",
     ) -> Any:
-        res = requests.request(method, url, data=body, timeout=Config.REQUEST_TIMEOUT)
+        self._validate_request_and_decrypt_url(url, method, body)
+        res = requests.request(
+            method,
+            url,
+            data=body,
+            timeout=Config.REQUEST_TIMEOUT,
+            allow_redirects=False,
+        )
         res.raise_for_status()
 
         return decrypt_msgpack(res.content)
+
+    def _validate_request_and_decrypt_url(
+        self, url: str, method: str, body: str | dict[str, Any]
+    ) -> None:
+        """Strictly allowlist ``request_and_decrypt`` targets.
+
+        Only GET with an empty body is permitted, and only against the
+        current region's Nuverse master-data base URL, requesting exactly
+        ``<base_path>/master-data-<digits>.info`` (no query, fragment,
+        userinfo, non-default port, encoded/raw traversal, or extra
+        sub-directories). Anything else is rejected (fail-closed).
+        """
+        if method.lower() != "get":
+            raise ValueError("request_and_decrypt only allows GET")
+        if body:
+            raise ValueError("request_and_decrypt only allows an empty body")
+
+        from posixpath import normpath
+        from urllib.parse import unquote
+
+        base = nuverse_master_data_base_url.get(self.region)
+        if not base:
+            raise ValueError(
+                f"No master-data base URL configured for region {self.region!r}"
+            )
+
+        self._check_request_host_and_port(url, base)
+        self._check_request_path(url, base, normpath, unquote)
+
+    def _check_request_host_and_port(self, url: str, base: str) -> None:
+        parsed = urlparse(url)
+        if parsed.scheme != "https":
+            raise ValueError("request_and_decrypt requires https")
+        # No query, fragment or userinfo allowed.
+        if parsed.query or parsed.fragment or parsed.username or parsed.password:
+            raise ValueError("request_and_decrypt URL must not carry query/fragment")
+        expected = urlparse(base)
+        if parsed.hostname != expected.hostname:
+            raise ValueError(
+                f"request_and_decrypt host {parsed.hostname!r} is not allowlisted"
+            )
+        if parsed.port is not None and parsed.port != 443:
+            raise ValueError("request_and_decrypt only allows the default https port")
+
+    def _check_request_path(self, url: str, base: str, normpath, unquote) -> None:
+        parsed = urlparse(url)
+        # Decode (to catch %2e%2e encoded traversal) then normalize.
+        raw_path = unquote(parsed.path)
+        norm_path = normpath(raw_path)
+        base_path = normpath(urlparse(base).path.rstrip("/"))
+        if not norm_path.startswith(base_path + "/"):
+            raise ValueError("request_and_decrypt path is outside the allowlist")
+        if ".." in norm_path:
+            raise ValueError("request_and_decrypt path is outside the allowlist")
+        # Must be exactly one level under base and a master-data-<digits>.info file.
+        if norm_path.count("/") != base_path.count("/") + 1:
+            raise ValueError("request_and_decrypt path is outside the allowlist")
+        filename = norm_path.rsplit("/", 1)[-1]
+        import re as _re
+
+        if not _re.fullmatch(r"master-data-\d+\.info", filename):
+            raise ValueError(
+                "request_and_decrypt only allows master-data-<digits>.info"
+            )

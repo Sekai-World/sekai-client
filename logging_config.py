@@ -8,6 +8,8 @@ all modules. Use configure_logging() to initialize at application startup.
 import logging
 import sys
 
+from utils.redaction import enable_log_redaction
+
 # Standard log format with structured information
 LOG_FORMAT = (
     "%(asctime)s [%(levelname)s] [%(name)s:%(funcName)s:%(lineno)d] %(message)s"
@@ -65,6 +67,10 @@ def configure_logging(
             root_logger.addHandler(file_handler)
         except OSError as e:
             root_logger.error("Failed to set up file logging to %s: %s", log_file, e)
+
+    # Redact secrets from all records before they reach any handler. Install
+    # after handlers are attached so their formatters are wrapped too.
+    enable_log_redaction(root_logger)
 
 
 def get_logger(name: str) -> logging.Logger:

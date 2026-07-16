@@ -52,3 +52,38 @@ Some files need to have specific environment variables, listed below
 | `STRAPI_TOKEN` | strapi access token | | ✅ | | |
 | `SEKAI_API_KEY` | sekai api key | | | ✅ | |
 | `JSONRPC_PORT` | Shared client jsonrpc port | | ✅ | ✅ | |
+| `INTERNAL_RPC_TOKEN` | Auth token for internal JSON-RPC between shared_client / check_update / event_tracker / api_public_server (required, loopback only) | ✅ | ✅ | ✅ | ✅ |
+| `ALLOW_INSECURE_INTERNAL_RPC` | Dev-only: allow unauthenticated RPC from loopback (127.0.0.1/::1). Non-loopback is always rejected. Off by default (fail-closed). | ✅ | ✅ | ✅ | ✅ |
+| `ENABLE_UNSAFE_PJSK_RPC` | Dev-only: expose the generic `call_pjsk_api` RPC (disabled by default; use scoped `fetch_master_split` instead). | ✅ | | | |
+
+## Security: internal RPC auth
+
+The four processes communicate over loopback via an internal JSON-RPC protocol.
+Every call must carry `INTERNAL_RPC_TOKEN` (set identically in the environment
+of all processes). It is read dynamically from `INTERNAL_RPC_TOKEN` and sent as
+the `x-internal-rpc-token` header by the client, and checked with constant-time
+comparison by the server.
+
+- If `INTERNAL_RPC_TOKEN` is not set, requests fail closed: `500` unless
+  `ALLOW_INSECURE_INTERNAL_RPC=true` **and** the caller is on loopback
+  (`127.0.0.1` / `::1`).
+- A wrong/missing token is rejected with `401`.
+- A non-loopback caller is always rejected, even with the insecure bypass enabled.
+- Token rotation requires coordinating all related processes so callers and
+  shared clients use the same environment. With PM2, reload/restart from the
+  ecosystem file and update the process environment for all formal services;
+  do not assume changing the shell environment updates already-running Python
+  processes.
+
+The standalone `checkUpdate-cn` process does not use internal RPC and does not
+require `INTERNAL_RPC_TOKEN`.
+
+Credentials (tokens, cookies, signatures, device IDs) are redacted from all
+logs via a logging filter installed by `configure_logging()`.
+
+## Configure environment variables
+
+See the table above. The `shared_client` credential files
+(`sharedAccount.{region}.yaml`) are written atomically with `0600` permissions;
+existing files are chmod'd to `0600` on read on POSIX. On Windows this is
+best-effort and does not replace a real secret store or ACL policy.

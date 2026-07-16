@@ -21,6 +21,8 @@ const apps = regions.flatMap((region) => [
       SEKAI_REGION: region,
       JSONRPC_PORT: String(sharedPorts[region]),
       PYTHONUNBUFFERED: "1",
+      INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
+      ALLOW_INSECURE_INTERNAL_RPC: process.env.ALLOW_INSECURE_INTERNAL_RPC || "",
     },
   },
   {
@@ -32,6 +34,8 @@ const apps = regions.flatMap((region) => [
       SEKAI_REGION: region,
       JSONRPC_PORT: String(sharedPorts[region]),
       PYTHONUNBUFFERED: "1",
+      INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
+      ALLOW_INSECURE_INTERNAL_RPC: process.env.ALLOW_INSECURE_INTERNAL_RPC || "",
     },
   },
   {
@@ -43,13 +47,16 @@ const apps = regions.flatMap((region) => [
       SEKAI_REGION: region,
       JSONRPC_PORT: String(sharedPorts[region]),
       PYTHONUNBUFFERED: "1",
+      INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
+      ALLOW_INSECURE_INTERNAL_RPC: process.env.ALLOW_INSECURE_INTERNAL_RPC || "",
     },
   },
 ]);
 
 // Standalone simplified checkUpdate-cn process. CN is not a formal service
 // region (see D-001): this process runs independently in CHECK_UPDATE_SIMPLE_MODE
-// and does not need shared_client/event_tracker peers.
+// and does not need shared_client/event_tracker peers, so it does not require
+// INTERNAL_RPC_TOKEN / loopback RPC auth.
 apps.push({
   name: "checkUpdate-cn",
   script: "check_update.py",
@@ -60,6 +67,8 @@ apps.push({
     JSONRPC_PORT: String(sharedPorts.cn),
     CHECK_UPDATE_SIMPLE_MODE: "true",
     PYTHONUNBUFFERED: "1",
+    INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
+    ALLOW_INSECURE_INTERNAL_RPC: process.env.ALLOW_INSECURE_INTERNAL_RPC || "",
   },
 });
 
@@ -71,6 +80,8 @@ apps.push({
   args: "-b 127.0.0.1:39400 api_public_server:app",
   env: {
     PYTHONUNBUFFERED: "1",
+    INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
+    ALLOW_INSECURE_INTERNAL_RPC: process.env.ALLOW_INSECURE_INTERNAL_RPC || "",
   },
 });
 

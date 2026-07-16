@@ -3,6 +3,8 @@
 import json
 from unittest.mock import Mock, call
 
+import requests
+
 import check_update
 
 
@@ -90,3 +92,73 @@ def test_commit_master_diff_returns_false_on_push_failure(monkeypatch):
     assert result is False
     repo.index.commit.assert_called_once()
     repo.remote.return_value.push.return_value.raise_if_error.assert_called_once()
+
+
+def test_post_strapi_ids_uses_authorization_header_not_query(monkeypatch):
+    import check_update as cu
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers", {})
+        resp = Mock()
+        resp.raise_for_status.return_value = None
+        return resp
+
+    captured: dict = {}
+    monkeypatch.setattr(cu, "strapi_base_url", "http://strapi:3000")
+    monkeypatch.setattr(cu, "strapi_token", "SECRET")
+    monkeypatch.setattr(cu.requests, "post", fake_post)
+
+    cu._post_strapi_ids("cards/fromDB", [1, 2])
+
+    # No token in the URL query string.
+    assert "SECRET" not in captured["url"]
+    assert "token=" not in captured["url"]
+    assert captured["headers"]["Authorization"] == "Bearer SECRET"
+    assert captured["headers"]["X-Strapi-Token"] == "SECRET"
+
+
+def test_post_strapi_ids_logs_and_continues_on_http_error(monkeypatch):
+    import check_update as cu
+
+    def fake_post(url, **kwargs):
+        resp = Mock()
+        resp.raise_for_status.side_effect = requests.HTTPError("500")
+        captured["response"] = resp
+        return resp
+
+    captured: dict = {}
+    monkeypatch.setattr(cu, "strapi_base_url", "http://strapi:3000")
+    monkeypatch.setattr(cu, "strapi_token", "SECRET")
+    monkeypatch.setattr(cu.requests, "post", fake_post)
+
+    cu._post_strapi_ids("cards/fromDB", [1])
+
+    captured["response"].raise_for_status.assert_called_once()
+
+
+def test_get_splitted_master_data_uses_fetch_master_split(monkeypatch):
+    import check_update as cu
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, params=None):
+            self.calls.append((method, params))
+            if method == "master_split_paths":
+                return ["suite/master/a", "suite/master/b"]
+            return {"data": method}
+
+    fake = FakeClient()
+    monkeypatch.setattr(cu, "jsonrpc_client", fake)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+
+    cu.get_splitted_master_data()
+
+    assert ("master_split_paths", None) in fake.calls
+    assert all(
+        method == "fetch_master_split"
+        for method, _ in fake.calls
+        if method != "master_split_paths"
+    )

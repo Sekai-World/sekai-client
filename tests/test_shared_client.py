@@ -108,6 +108,10 @@ def test_rpc_worker_error_is_returned_as_jsonrpc_error(monkeypatch):
     client = Mock()
     monkeypatch.setattr(shared_client, "api_client", client)
     monkeypatch.setattr(shared_client, "start_scheduler", lambda: None)
+    monkeypatch.setattr(shared_client.Config, "get_internal_rpc_token", lambda: "tok")
+    monkeypatch.setattr(
+        shared_client.Config, "allow_insecure_internal_rpc", lambda: False
+    )
 
     response_queue = queue.Queue()
     response_queue.put(RuntimeError("request failed"))
@@ -118,6 +122,7 @@ def test_rpc_worker_error_is_returned_as_jsonrpc_error(monkeypatch):
     response = shared_client.app.test_client().post(
         "/",
         json={"jsonrpc": "2.0", "method": "fetch_system_data", "id": 1},
+        headers={"x-internal-rpc-token": "tok"},
     )
 
     assert response.status_code == 200
@@ -147,3 +152,89 @@ def test_enqueue_job_rejects_with_error_when_queue_full(monkeypatch):
     assert response_queue is None
     assert isinstance(error, JSONRPCInternalError)
     assert "Job queue is full" in error.data
+
+
+def test_write_account_yaml_atomic_mode_0600_and_cleanup_on_failure(
+    monkeypatch, tmp_path
+):
+    target = tmp_path / "sharedAccount.jp.yaml"
+
+    # Happy path: temp file replaced onto target with 0600 mode.
+    shared_client._write_account_yaml_atomic(
+        str(target), {"userId": "1", "credential": "c", "signature": "s"}
+    )
+    assert target.exists()
+    assert oct(target.stat().st_mode & 0o777) == "0o600"
+    content = target.read_text()
+    assert "1" in content  # never asserts the secret values leak in tests
+    assert "credential" in content
+
+    # Failure path: exception during dump leaves no temp file behind.
+    leftover = list(tmp_path.glob(".sharedAccount.*.tmp"))
+    assert leftover == []
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(shared_client, "yaml", type("Y", (), {"safe_dump": boom})())
+    with pytest.raises(OSError):
+        shared_client._write_account_yaml_atomic(
+            str(tmp_path / "sharedAccount.en.yaml"), {"userId": "2"}
+        )
+    # Temp file was cleaned up on failure.
+    assert list(tmp_path.glob(".sharedAccount.*.tmp")) == []
+
+
+def test_account_info_rpc_returns_only_userid_and_region(monkeypatch):
+    client = Mock()
+    client.account_info = {"userId": "u1", "credential": "C", "signature": "S"}
+    monkeypatch.setattr(shared_client, "api_client", client)
+    monkeypatch.setattr(shared_client, "user_logged_in", True)
+    monkeypatch.setattr(shared_client, "client_region", "jp")
+
+    result = shared_client.account_info()
+
+    assert result == {"userId": "u1", "region": "jp"}
+    # Credential/signature must never cross the RPC boundary.
+    assert "credential" not in result
+    assert "signature" not in result
+
+
+def test_fetch_master_split_rejects_unallowlisted_path(monkeypatch):
+    client = Mock()
+    client.master_split_paths = ["suite/master/valid"]
+    monkeypatch.setattr(shared_client, "api_client", client)
+    monkeypatch.setattr(shared_client, "user_logged_in", True)
+
+    with pytest.raises(RuntimeError, match="not in the allowlist"):
+        shared_client.fetch_master_split("suite/master/evil")
+
+
+def test_fetch_master_split_allowlisted_calls_client(monkeypatch):
+    client = Mock()
+    client.master_split_paths = ["suite/master/valid"]
+    client.call_pjsk_api.return_value = {"k": "v"}
+    monkeypatch.setattr(shared_client, "api_client", client)
+    monkeypatch.setattr(shared_client, "user_logged_in", True)
+
+    result = shared_client.fetch_master_split("suite/master/valid")
+
+    assert result == {"k": "v"}
+    client.call_pjsk_api.assert_called_once_with("/suite/master/valid")
+
+
+def test_generic_call_pjsk_api_disabled_by_default(monkeypatch):
+    monkeypatch.setattr(shared_client.Config, "enable_unsafe_pjsk_rpc", lambda: False)
+
+    with pytest.raises(RuntimeError, match="disabled"):
+        shared_client.call_pjsk_api("/suite/master")
+
+
+def test_generic_call_pjsk_api_enabled_with_flag(monkeypatch):
+    monkeypatch.setattr(shared_client.Config, "enable_unsafe_pjsk_rpc", lambda: True)
+    client = Mock()
+    client.call_pjsk_api.return_value = {"ok": True}
+    monkeypatch.setattr(shared_client, "api_client", client)
+
+    result = shared_client.call_pjsk_api("/suite/master")
+    assert result == {"ok": True}
