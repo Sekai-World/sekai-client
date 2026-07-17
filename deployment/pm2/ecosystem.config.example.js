@@ -16,9 +16,10 @@
 //
 // Required env (export these before `pm2 start`):
 //   INTERNAL_RPC_TOKEN   (shared secret, >=32 random chars)
-//   STRAPI_BASE_URL      (e.g. https://strapi.example.com)
-//   STRAPI_TOKEN         (Strapi access token)
-//   SEKAI_API_KEY        (only needed if tw/kr are enabled)
+//   API_TOKEN            (public API and Dashboard token)
+//   STRAPI_BASE_URL      (JP checkUpdate + current eventTrackers)
+//   STRAPI_TOKEN         (JP checkUpdate only)
+//   SEKAI_API_KEY        (current eventTrackers)
 
 // Formal service regions. CN is intentionally excluded (not formally deployed;
 // only the standalone simplified checkUpdate-cn process below is kept, see D-001).
@@ -44,8 +45,6 @@ const apps = regions.flatMap((region) => [
       JSONRPC_PORT: String(sharedPorts[region]),
       PYTHONUNBUFFERED: "1",
       INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
-      STRAPI_BASE_URL: process.env.STRAPI_BASE_URL || "",
-      STRAPI_TOKEN: process.env.STRAPI_TOKEN || "",
       // ALLOW_INSECURE_INTERNAL_RPC intentionally omitted (fail-closed).
     },
   },
@@ -59,8 +58,13 @@ const apps = regions.flatMap((region) => [
       JSONRPC_PORT: String(sharedPorts[region]),
       PYTHONUNBUFFERED: "1",
       INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
-      STRAPI_BASE_URL: process.env.STRAPI_BASE_URL || "",
-      STRAPI_TOKEN: process.env.STRAPI_TOKEN || "",
+      // Only JP publishes i18n IDs to Strapi in this deployment.
+      ...(region === "jp"
+        ? {
+            STRAPI_BASE_URL: process.env.STRAPI_BASE_URL || "",
+            STRAPI_TOKEN: process.env.STRAPI_TOKEN || "",
+          }
+        : {}),
     },
   },
   {
@@ -74,7 +78,7 @@ const apps = regions.flatMap((region) => [
       PYTHONUNBUFFERED: "1",
       INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
       STRAPI_BASE_URL: process.env.STRAPI_BASE_URL || "",
-      STRAPI_TOKEN: process.env.STRAPI_TOKEN || "",
+      SEKAI_API_KEY: process.env.SEKAI_API_KEY || "",
     },
   },
 ]);
@@ -93,9 +97,6 @@ apps.push({
     JSONRPC_PORT: String(sharedPorts.cn),
     CHECK_UPDATE_SIMPLE_MODE: "true",
     PYTHONUNBUFFERED: "1",
-    INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
-    STRAPI_BASE_URL: process.env.STRAPI_BASE_URL || "",
-    STRAPI_TOKEN: process.env.STRAPI_TOKEN || "",
   },
 });
 
@@ -108,8 +109,7 @@ apps.push({
   env: {
     PYTHONUNBUFFERED: "1",
     INTERNAL_RPC_TOKEN: process.env.INTERNAL_RPC_TOKEN || "",
-    STRAPI_BASE_URL: process.env.STRAPI_BASE_URL || "",
-    STRAPI_TOKEN: process.env.STRAPI_TOKEN || "",
+    API_TOKEN: process.env.API_TOKEN || "",
   },
 });
 
