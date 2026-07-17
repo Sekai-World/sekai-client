@@ -21,6 +21,36 @@ ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Canonical, single normalized service state. Every service summary exposes
+# exactly one of these in ``state``; the legacy ``ok`` flag is *derived* from
+# ``state`` (``ok == (state == "healthy")``) so the two can never contradict.
+SERVICE_STATES = (
+    "healthy",
+    "degraded",
+    "probe_failed",
+    "offline",
+    "missing",
+    "restarting",
+)
+
+# Priority order (highest precedence first) used by ``_derive_state``.
+# The first matching condition wins.
+_STATE_PRIORITY = (
+    "missing",  # no pm2 process entry at all
+    "restarting",  # pm2 itself reports the process is restarting right now
+    "offline",  # pm2 status is anything other than "online"
+    "probe_failed",  # online, but the shared_client health probe did not pass
+    "degraded",  # online, but recent log errors were detected
+    "healthy",  # online, probe ok, no log errors
+)
+
+# Structured outcome of a restart operation. ``success`` means the pm2 restart
+# command ran and the service came back online; ``restart_failed`` means the
+# pm2 restart command itself failed (or the process vanished); ``refresh_failed``
+# means pm2 restart *succeeded* but the post-restart status could not be
+# confirmed (status refresh error, or the process is offline/missing again).
+RESTART_STATUS = ("success", "restart_failed", "refresh_failed")
+
 
 @dataclass(frozen=True)
 class ServiceRef:
@@ -138,15 +168,41 @@ def _shared_client_probe(region: str) -> dict[str, Any]:
         return {"ok": False, "error": str(err)}
 
 
+def _derive_state(
+    status: str,
+    logs: dict[str, Any],
+    probe_ok: bool | None = None,
+) -> str:
+    """Compute the single normalized service ``state``.
+
+    Priority (highest first): missing > restarting > offline > probe_failed >
+    degraded > healthy. ``missing`` is handled by the caller (no process entry);
+    here ``status`` is the pm2 status, ``logs`` the scanned logs, and
+    ``probe_ok`` is ``None`` for non-shared_client services or a bool when a
+    health probe ran.
+    """
+    if status == "restarting":
+        return "restarting"
+    if status != "online":
+        return "offline"
+    if probe_ok is not None and not probe_ok:
+        return "probe_failed"
+    if logs.get("errorCount", 0) > 0:
+        return "degraded"
+    return "healthy"
+
+
 def _process_summary(
     ref: ServiceRef, processes: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
     proc = processes.get(ref.name)
     if not proc:
+        state = "missing"
         return {
             "name": ref.name,
             "type": ref.service_type,
             "status": "missing",
+            "state": state,
             "ok": False,
             "logs": {"scannedLines": 0, "errorCount": 0, "recentErrors": []},
         }
@@ -156,13 +212,12 @@ def _process_summary(
     restart_count = pm2_env.get("restart_time", 0)
     uptime = pm2_env.get("pm_uptime")
     logs = _scan_logs(proc)
-    ok = status == "online" and logs["errorCount"] == 0
 
-    summary = {
+    probe_ok: bool | None = None
+    summary: dict[str, Any] = {
         "name": ref.name,
         "type": ref.service_type,
         "status": status,
-        "ok": ok,
         "pid": proc.get("pid"),
         "cpu": proc.get("monit", {}).get("cpu"),
         "memory": proc.get("monit", {}).get("memory"),
@@ -173,7 +228,13 @@ def _process_summary(
     if ref.service_type == "shared_client":
         probe = _shared_client_probe(ref.region)
         summary["probe"] = probe
-        summary["ok"] = ok and probe["ok"]
+        # A probe that returned an ``error`` key counts as a failed probe.
+        probe_ok = bool(probe.get("ok")) and "error" not in probe
+
+    state = _derive_state(status, logs, probe_ok)
+    summary["state"] = state
+    # ``ok`` is strictly derived from ``state`` so the two can never contradict.
+    summary["ok"] = state == "healthy"
     return summary
 
 
@@ -198,16 +259,79 @@ def dashboard_status() -> dict[str, Any]:
 def restart_service(region: str, service_type: str) -> dict[str, Any]:
     processes = _pm2_processes()
     ref = service_ref(region, service_type, processes)
-    _run_pm2(["restart", ref.name])
+    try:
+        _run_pm2(["restart", ref.name])
+    except subprocess.SubprocessError as err:
+        # The pm2 restart command itself failed: surface the real error and do
+        # not fabricate a transient state.
+        prior = {ref.name: proc} if (proc := processes.get(ref.name)) else {}
+        return {
+            "restartStatus": "restart_failed",
+            "message": f"PM2 restart command failed for {ref.name}: {err}",
+            "region": region,
+            "serviceType": service_type,
+            "service": _process_summary(ref, prior),
+        }
+
     time.sleep(Config.SERVICE_STABLE_WAIT_SECONDS)
-    proc = _pm2_processes().get(ref.name)
+    try:
+        proc = _pm2_processes().get(ref.name)
+    except RuntimeError as err:
+        # pm2 was reachable for the restart but the status refresh failed.
+        return {
+            "restartStatus": "refresh_failed",
+            "message": f"Service restarted but status refresh failed: {err}",
+            "region": region,
+            "serviceType": service_type,
+            "service": None,
+        }
+
     if not proc:
-        raise RuntimeError(f"PM2 service not found after restart: {ref.name}")
-    return {"status": "success", "service": _process_summary(ref, {ref.name: proc})}
+        return {
+            "restartStatus": "refresh_failed",
+            "message": f"PM2 service not found after restart: {ref.name}",
+            "region": region,
+            "serviceType": service_type,
+            "service": None,
+        }
+
+    service = _process_summary(ref, {ref.name: proc})
+    if service["state"] != "healthy":
+        # pm2 reported the restart succeeded, but the process is not cleanly
+        # healthy afterwards (offline, missing, degraded, probe_failed). This is
+        # distinct from a pm2 command failure: we distinguish "ran but could not
+        # confirm healthy" from "pm2 error".
+        return {
+            "restartStatus": "refresh_failed",
+            "message": (
+                f"Service restarted but is not healthy (state={service['state']})."
+            ),
+            "region": region,
+            "serviceType": service_type,
+            "service": service,
+        }
+
+    return {
+        "restartStatus": "success",
+        "region": region,
+        "serviceType": service_type,
+        "service": service,
+    }
 
 
 def restart_region(region: str) -> dict[str, Any]:
     restarted = []
     for service_type in SERVICE_TYPES:
-        restarted.append(restart_service(region, service_type)["service"])
-    return {"status": "success", "region": region, "services": restarted}
+        restarted.append(restart_service(region, service_type))
+    restart_statuses = {item["restartStatus"] for item in restarted}
+    if "restart_failed" in restart_statuses:
+        status = "restart_failed"
+    elif "refresh_failed" in restart_statuses:
+        status = "refresh_failed"
+    else:
+        status = "success"
+    return {
+        "restartStatus": status,
+        "region": region,
+        "services": restarted,
+    }

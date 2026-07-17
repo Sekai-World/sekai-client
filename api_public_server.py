@@ -215,7 +215,8 @@ def dashboard_api_status() -> Response:
 @require_apikey
 def dashboard_restart_service(region: str, service_type: str) -> Response:
     try:
-        return jsonify(restart_service(region, service_type))
+        result = restart_service(region, service_type)
+        return _normalize_restart_response(result, 200)
     except (RuntimeError, ValueError) as err:
         return jsonify({"status": "error", "message": str(err)}), 400
 
@@ -224,9 +225,34 @@ def dashboard_restart_service(region: str, service_type: str) -> Response:
 @require_apikey
 def dashboard_restart_region(region: str) -> Response:
     try:
-        return jsonify(restart_region(region))
+        result = restart_region(region)
+        return _normalize_restart_response(result, 200)
     except (RuntimeError, ValueError) as err:
         return jsonify({"status": "error", "message": str(err)}), 400
+
+
+def _normalize_restart_response(result: dict[str, object], ok_code: int) -> Response:
+    """Preserve the legacy top-level ``status`` field for API compatibility.
+
+    Older clients read ``result["status"]``; we derive it from the structured
+    ``restartStatus`` so both coexist without contradiction.
+
+    - "success"      -> status "success"     (HTTP 200)
+    - "restart_failed"  -> status "error"    (HTTP 400)
+    - "refresh_failed"  -> status "partial"  (HTTP 200: restart ran, but
+      health could not be confirmed — still useful, not a hard error)
+    """
+    restart_status = result.get("restartStatus", "success")
+    if restart_status == "success":
+        legacy = "success"
+        code = ok_code
+    elif restart_status == "restart_failed":
+        legacy = "error"
+        code = 400
+    else:  # refresh_failed
+        legacy = "partial"
+        code = ok_code
+    return jsonify({**result, "status": legacy}), code
 
 
 @app.route("/<region>/refresh", methods=["POST"])
