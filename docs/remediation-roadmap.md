@@ -18,9 +18,9 @@
 | 阶段 | 内容 | 状态 | 预计工作量 | 依赖 | 建议 PR |
 |---|---|---|---:|---|---|
 | 0 | 生产事实确认与 CN 范围决策 | `[x]` 代码层完成，生产事实待确认 | 0.5 天 | 无 | PR 1 (#5 merged) |
-| 1 | 测试基线与 CI | `[-]` 部分完成（CI 与部分测试基线已建立） | 1 天 | 阶段 0 | PR 1-2 |
-| 2 | 凭据、日志和内部 RPC 安全 | `[ ]` | 1-2 天 | 阶段 1 | PR 3 |
-| 3 | Dashboard 安全与交互 | `[ ]` | 0.5-1 天 | 阶段 1 | PR 4 |
+| 1 | 测试基线与 CI | `[x]` 实施完成（分支保护 required check 待仓库设置确认） | 1 天 | 阶段 0 | PR 2 (#6 merged) |
+| 2 | 凭据、日志和内部 RPC 安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | PR 3 (#7 merged) |
+| 3 | Dashboard 安全与交互 | `[-]` 进行中（待桌面/移动端手工验收） | 0.5-1 天 | 阶段 1 | PR 4 |
 | 4 | 定时任务互斥与 Git 数据安全 | `[ ]` | 1-2 天 | 阶段 1 | PR 5 |
 | 5 | 区域 bootstrap 与客户端状态机 | `[ ]` | 2-3 天 | 阶段 1 | PR 6 |
 | 6 | Deadline、重试与队列生命周期 | `[ ]` | 2-3 天 | 阶段 5 | PR 7 |
@@ -134,6 +134,7 @@ uv run --extra dev pytest tests/
 ### 执行记录
 
 - 2026-07-16：新增 `.github/workflows/ci.yml`（阶段 4 之前脚手架，read-only 权限，针对 `transform-python`）。机械修复 `tests/` 与 `service_dashboard.py` 的格式/未用 import/空白以通过 lint 门禁（零逻辑变化）。扩展 `tests/test_shared_client.py` 覆盖已登录缓存不重复 login 与队列满快速拒绝；扩展 `tests/test_config.py` 覆盖 bootstrap 配置 fail-fast 与幂等安全边界；新增 `tests/test_check_update.py` 锁定 push 失败返回契约、确认执行到远端 push 错误，但不把 rmtree 固化为正确行为。下列原任务因依赖阶段 4/5/6 修复而标记为 deferred，未伪称完成：bootstrap 部分失败恢复、POST 非幂等自动重试、update job 互斥、push 失败保留本地数据。`pytest` 71 → 76 passed。`git diff --check` clean。
+- 2026-07-16：阶段 1 PR [#6](https://github.com/Sekai-World/sekai-client/pull/6) 的 CI 检查通过后合并到 `transform-python`，合并提交 `7a5a6c3`。代码与 CI 基线工作已完成；仓库分支保护是否把该检查配置为 required status check 仍需在 GitHub 仓库设置中确认，不以 PR 成功合并替代该运维事实。
 
 ## 阶段 2：凭据、日志和内部 RPC 安全
 
@@ -173,18 +174,19 @@ uv run --extra dev pytest tests/
 - account_info 字段：`tests/test_shared_client.py::test_account_info_rpc_returns_only_userid_and_region`（仅 userId/region）。
 - request_and_decrypt 白名单：`tests/test_api_client.py` 4 例（允许名单 URL、拒绝非 GET/非 https/错误 host/traversal/bad filename）。
 - fetch_master_split / unsafe 开关：`tests/test_api_client.py` + `tests/test_shared_client.py`（`fetch_master_split` 允许名单调用、拒绝未允许路径；`call_pjsk_api` 默认禁用、开关开启可用）。
-- 测试数量：本阶段 `pytest tests/ -q` 共 **114** 个用例（阶段 1 基线 76 + 新增 38）。
+- 测试数量：阶段 2 实施期间 `pytest tests/ -q` 从阶段 1 基线 76 增至 **119** 个用例（最终 PR CI 通过）。
 - 本地验证命令结果（2026-07-16）：
   - `uv run --extra dev ruff format --check .`：pass（32 files already formatted）
   - `uv run --extra dev ruff check .`：pass（All checks passed）
   - `uv run --extra dev mypy api_client.py shared_client.py utils/ config.py`：pass（no issues found in 15 source files）
-  - `uv run --extra dev pytest tests/ -q`：114 passed
+  - `uv run --extra dev pytest tests/ -q`：119 passed（PR #7 最终提交）
   - `node --check deployment/pm2/ecosystem.config.js`：pass
   - `git diff --check`：clean
 
 ### 执行记录
 
-- 2026-07-16：实现阶段 2 最小安全设计。新增 `utils/redaction.py`（递归+文本脱敏、`SecretRedactingFilter`、`attach_redaction`），`logging_config.configure_logging` 默认安装 filter。`Config` 增加 `get_internal_rpc_token`/`allow_insecure_internal_rpc`/`enable_unsafe_pjsk_rpc` 动态配置；`utils/jsonrpc_client` 自动加 `x-internal-rpc-token` header、缺 token 本地 RuntimeError、`raise_for_status` 前置。`shared_client`：before_request 独立 RPC 鉴权（fail-closed、loopback dev bypass、非 loopback 拒绝、未认证不启动 scheduler）、`account_info` 仅返回 userId/region、`request_and_decrypt` 严格白名单、`fetch_master_split` 允许名单 RPC、通用 `call_pjsk_api` 默认禁用、`run_job` 错误 data 脱敏、凭据 YAML 原子写入（0600）。`check_update._post_strapi_ids` 改为 Authorization header + `raise_for_status` 并将 Strapi HTTP 故障降级为记录后继续；`get_splitted_master_data` 改调 `fetch_master_split`。`service_dashboard._scan_logs` recentErrors 脱敏。`api_public_server` 安装 redaction。PM2 传递 `INTERNAL_RPC_TOKEN`/`ALLOW_INSECURE_INTERNAL_RPC`（standalone cn 不强制）。README 增加 INTERNAL_RPC_TOKEN 等说明。**明确延期项（未伪称完成）**：secret store（当前为 0600 文件）、mTLS/Unix socket、完整 capability model、Dashboard localStorage（阶段 3）；未改变阶段 3 UI / 阶段 4 Git 删除 / 阶段 5 状态机 / 阶段 6 重试。验证全绿（114 passed，mypy/ruff/node/git clean）。
+- 2026-07-16：实现阶段 2 最小安全设计。新增 `utils/redaction.py`（递归+文本脱敏、`SecretRedactingFilter`、`attach_redaction`），`logging_config.configure_logging` 默认安装 filter。`Config` 增加 `get_internal_rpc_token`/`allow_insecure_internal_rpc`/`enable_unsafe_pjsk_rpc` 动态配置；`utils/jsonrpc_client` 自动加 `x-internal-rpc-token` header、缺 token 本地 RuntimeError、`raise_for_status` 前置。`shared_client`：before_request 独立 RPC 鉴权（fail-closed、loopback dev bypass、非 loopback 拒绝、未认证不启动 scheduler）、`account_info` 仅返回 userId/region、`request_and_decrypt` 严格白名单、`fetch_master_split` 允许名单 RPC、通用 `call_pjsk_api` 默认禁用、`run_job` 错误 data 脱敏、凭据 YAML 原子写入（0600）。`check_update._post_strapi_ids` 改为 Authorization header + `raise_for_status` 并将 Strapi HTTP 故障降级为记录后继续；`get_splitted_master_data` 改调 `fetch_master_split`。`service_dashboard._scan_logs` recentErrors 脱敏。`api_public_server` 安装 redaction。PM2 传递 `INTERNAL_RPC_TOKEN`/`ALLOW_INSECURE_INTERNAL_RPC`（standalone cn 不强制）。README 增加 INTERNAL_RPC_TOKEN 等说明；新增通用、安全且不含真实 secret 的 `deployment/pm2/ecosystem.config.example.js`，线上配置未被该示例改写。**明确延期项（未伪称完成）**：secret store（当前为 0600 文件）、mTLS/Unix socket、完整 capability model、Dashboard localStorage（阶段 3）；未改变阶段 4 Git 删除 / 阶段 5 状态机 / 阶段 6 重试。最终验证全绿（119 passed，mypy/ruff/node/git clean）。
+- 2026-07-16：阶段 2 PR [#7](https://github.com/Sekai-World/sekai-client/pull/7) 在最终 CI 通过后 squash 合并到 `transform-python`，合并提交 `16b609a`。
 
 ## 阶段 3：Dashboard 安全与交互
 
@@ -194,33 +196,39 @@ uv run --extra dev pytest tests/
 
 ### 任务
 
-- [ ] 统一状态模型：Healthy、Degraded、Probe failed、Offline、Missing、Restarting。
-- [ ] 保证状态颜色与文案来自同一个归一化字段。
-- [ ] 单服务重启增加服务名和区域确认。
-- [ ] 区域重启显示全部受影响服务并使用更强确认。
-- [ ] 重启期间禁用相关操作，防止重复提交。
-- [ ] 区分重启失败与重启成功后刷新失败。
-- [ ] 使用 `createElement`、`textContent` 和属性赋值替代动态 `innerHTML`。
-- [ ] token 默认仅保存在当前会话。
-- [ ] 提供显式“记住此设备”和清除 token 操作。
+- [x] 统一状态模型：Healthy、Degraded、Probe failed、Offline、Missing、Restarting。
+- [x] 保证状态颜色与文案来自同一个归一化字段。
+- [x] 单服务重启增加服务名和区域确认。
+- [x] 区域重启显示全部受影响服务并使用更强确认（列出受影响服务，并要求输入区域名）。
+- [x] 重启期间禁用相关操作，防止重复提交。
+- [x] 区分重启失败与重启成功后刷新失败（`restartStatus`: `success` / `restart_failed` / `refresh_failed`）。
+- [x] 使用 `createElement`、`textContent` 和属性赋值替代动态 `innerHTML`。
+- [x] token 默认仅保存在当前会话（`sessionStorage`）。
+- [x] 提供显式“记住此设备”（`localStorage`）和清除 token 操作。
 - [ ] 验证桌面端和移动端操作流程。
+  - 状态：`[!]` 待真实浏览器验证；代码已包含响应式布局、键盘 focus 与 reduced-motion 支持，但尚未记录桌面/移动端完整操作证据。
 
 ### 验收条件
 
-- 不会出现红色 `online` 等颜色与文字矛盾状态。
-- 重启不能通过一次误点直接触发。
-- 服务端返回的动态字段不能注入 HTML。
-- 用户能够区分进行中、成功、重启失败和刷新失败。
-- 桌面端和移动端均可完成登录、查看状态和重启流程。
+- [x] 不会出现红色 `online` 等颜色与文字矛盾状态。
+- [x] 重启不能通过一次误点直接触发。
+- [x] 服务端返回的动态字段不能注入 HTML。
+- [x] 用户能够区分进行中、成功、重启失败和刷新失败。
+- [ ] 桌面端和移动端均可完成登录、查看状态和重启流程。
+  - 状态：`[!]` 待在可连接 Dashboard API/PM2 的环境中完成手工验收。
 
 ### 验收证据
 
-- 待填写：DOM/XSS 测试
-- 待填写：桌面和移动端手工验证记录
+- DOM/XSS：`dashboard/index.html` 不再使用 `innerHTML`、`outerHTML` 或 `insertAdjacentHTML`；区域、服务名、类型、状态与错误日志等服务端动态值均通过 `textContent`/`createTextNode` 写入。JavaScript 语法检查与禁用 API 搜索通过。
+- 状态模型：`tests/test_service_dashboard.py` 覆盖 missing/offline/restarting/degraded/probe_failed/healthy 的派生与优先级，并断言兼容字段 `ok` 严格由 `state == "healthy"` 派生。
+- 重启结果：`tests/test_service_dashboard.py` 与新增 `tests/test_dashboard_api.py` 覆盖 success/restart_failed/refresh_failed、区域聚合、旧 `status` 兼容映射及未认证 401。前端显式读取 HTTP 200 响应中的 `refresh_failed`，不会误报成功。
+- 聚焦验证（2026-07-17）：`uv run --extra dev pytest -q tests/test_service_dashboard.py tests/test_dashboard_api.py`：24 passed；Dashboard JavaScript syntax check：pass；`git diff --check`：clean。
+- 全套回归（阶段 3 实施时）：`uv run --extra dev pytest tests/`：139 passed。
+- 桌面和移动端手工验证记录：待填写；未真实触发线上 PM2 重启。
 
 ### 执行记录
 
-- 待填写
+- 2026-07-17：在分支 `security/phase-3-dashboard-safety` 实现阶段 3。后端新增单一归一化 `state`，兼容 `ok` 由其派生；重启 API 新增结构化 `restartStatus` 并保留旧 `status` 字段。Dashboard 改为安全 DOM 构建，增加单服务确认、区域强确认、操作期间禁用、成功/重启失败/刷新失败反馈，以及 session-only/记住设备/清除 token 语义；完善响应式布局与可访问性。自动化与静态验证通过；真实桌面/移动端流程和 PM2 重启仍待部署环境手工验收，因此阶段 3 保持部分完成，不提前标记全部验收完成。
 
 ## 阶段 4：定时任务互斥与 Git 数据安全
 
@@ -385,9 +393,9 @@ UNINITIALIZED
 | PR | 建议标题 | 范围 | 状态 | 链接 |
 |---|---|---|---|---|
 | 1 | `fix: validate supported region configuration` | CN 决策、区域配置校验与测试 | `[x]` | #5 merged |
-| 2 | `ci: add project verification pipeline` | Ruff、mypy、pytest CI | `[-]` | 进行中（阶段 1 提交，待合并） |
-| 3 | `security: redact credentials and protect internal rpc` | 日志、token、文件权限、RPC | `[-]` | 进行中（阶段 2 提交，待合并） |
-| 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[ ]` | 待填写 |
+| 2 | `ci: establish phase 1 verification baseline` | Ruff、mypy、pytest CI | `[x]` | [#6](https://github.com/Sekai-World/sekai-client/pull/6) merged（`7a5a6c3`） |
+| 3 | `security: harden internal rpc and credential handling` | 日志、token、文件权限、RPC | `[x]` | [#7](https://github.com/Sekai-World/sekai-client/pull/7) merged（`16b609a`） |
+| 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[-]` | 分支 `security/phase-3-dashboard-safety`，待浏览器验收与 PR |
 | 5 | `fix: serialize update jobs and preserve git state` | 调度互斥、原子发布、Git 恢复 | `[ ]` | 待填写 |
 | 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[ ]` | 待填写 |
 | 7 | `refactor: enforce request deadlines and retry policy` | Deadline、重试、取消、队列 | `[ ]` | 待填写 |
@@ -412,5 +420,6 @@ UNINITIALIZED
 | 日期 | 阶段 | 记录 | 下一步 |
 |---|---|---|---|
 | 2026-07-16 | 0 | D-001 决策：CN 非正式区域，保留简化版 checkUpdate-cn。代码层：REGIONS/PM2/公共 API 移除 CN，新增区域映射完整性校验与聚焦测试。生产运行事实（PM2 进程、loopback 绑定、worker 数、未推送 commit）待运维确认。 | 阶段 1 测试基线与 CI；运维核对生产事实 |
-| 2026-07-16 | 1 | 新增 CI（`.github/workflows/ci.yml`，针对 transform-python，read-only，Python 3.12 + uv）。机械 lint 修复 tests/ 与 service_dashboard.py（零逻辑变化）。新增 5 个回归测试：登录缓存、bootstrap fail-fast 安全边界、队列满拒绝、push 失败返回契约。4 项原任务因依赖阶段 4/5/6 标记为 deferred（bootstrap 部分失败恢复、POST 非幂等重试、update job 互斥、push 失败保留本地数据）。验证：format/check/mypy/pytest(76) 全绿，`git diff --check` clean。 | 提交 PR 2 待合并；运维核对阶段 0 生产事实；后续阶段按路线图推进 |
-| 2026-07-16 | 2 | 实现最小安全设计：日志脱敏（utils/redaction.py + logging_config 默认 filter）、Strapi header 化+raise、凭据 YAML 原子写入 0600、内部 RPC 鉴权（x-internal-rpc-token、fail-closed、loopback dev bypass、非 loopback 拒绝、未认证不启 scheduler）、request_and_decrypt 严格白名单、fetch_master_split 允许名单 RPC + 通用 call_pjsk_api 默认禁用、account_info 仅返回 userId/region、PM2 传递 INTERNAL_RPC_TOKEN/ALLOW_INSECURE_INTERNAL_RPC、README 补充。新增 38 测试（redaction/RPC 鉴权/Strapi/YAML/allowlist/unsafe 开关），pytest 76 → 114。验证：format/check/mypy/pytest(114)/node/git diff --check 全绿。**延期（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model、Dashboard localStorage（阶段 3）；未改动阶段 3 UI/4 Git 删除/5 状态机/6 重试。 | 提交 PR 3 待合并；阶段 3 Dashboard 安全与交互 |
+| 2026-07-16 | 1 | 新增 CI（`.github/workflows/ci.yml`，针对 transform-python，read-only，Python 3.12 + uv）。机械 lint 修复 tests/ 与 service_dashboard.py（零逻辑变化）。新增 5 个回归测试：登录缓存、bootstrap fail-fast 安全边界、队列满拒绝、push 失败返回契约。4 项原任务因依赖阶段 4/5/6 标记为 deferred（bootstrap 部分失败恢复、POST 非幂等重试、update job 互斥、push 失败保留本地数据）。验证：format/check/mypy/pytest(76) 全绿，`git diff --check` clean。PR #6 已合并为 `7a5a6c3`；required status check 的仓库设置仍待确认。 | 阶段 2；运维核对阶段 0 生产事实和分支保护 |
+| 2026-07-16 | 2 | 实现最小安全设计：日志脱敏、Strapi header 化、凭据 YAML 原子写入 0600、内部 RPC 鉴权、请求白名单、受限 master split RPC、account_info 缩权、PM2 env 传递及安全 PM2 示例。最终 pytest 119，format/check/mypy/node/git diff --check 全绿。PR #7 已合并为 `16b609a`。**延期（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model；Dashboard token 存储转入阶段 3。 | 阶段 3 Dashboard 安全与交互 |
+| 2026-07-17 | 3 | 已实现统一状态模型、安全 DOM 渲染、重启确认与防重复、结构化 restartStatus、session-only/记住设备/清除 token。聚焦测试 24 passed，实施时全套测试 139 passed，JavaScript syntax 与 diff check 通过。真实桌面/移动端流程和 PM2 重启尚未手工验证。 | 完成浏览器验收，更新证据后提交阶段 3 PR |
