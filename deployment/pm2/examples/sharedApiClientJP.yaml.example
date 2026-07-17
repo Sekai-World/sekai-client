@@ -1,0 +1,22 @@
+# One-process-per-file PM2 YAML template for sharedApiClient-jp.
+#
+# Generate a real deployment file with envsubst, e.g.:
+#   export INTERNAL_RPC_TOKEN='...'  AES_KEY='...'
+#   envsubst < sharedApiClientJP.yaml.example > /root/pm2/sharedApiClientJP.yaml
+#
+# Sensitive values are ${VARIABLE_NAME} placeholders. Production does not set
+# ALLOW_INSECURE_INTERNAL_RPC / ENABLE_UNSAFE_PJSK_RPC.
+apps:
+  - name: sharedApiClient-jp
+    script: uv run gunicorn --worker-class gevent --timeout 0 --bind 127.0.0.1:39390 shared_client:app
+    cwd: /root/sekai-client
+    env:
+      SEKAI_REGION: jp
+      AES_IV: 6d737833495630693958453575595a31
+      AES_KEY: ${AES_KEY}
+      APP_HASH: a4afe2ff-8be2-4e6b-ebbc-75d32802351e
+      APP_VER: 3.4.0
+      ASSET_VER: 3.3.0.57
+      DATA_VER: 3.3.1.57
+      LOGLEVEL: DEBUG
+      INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}

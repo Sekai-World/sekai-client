@@ -1,0 +1,19 @@
+# One-process-per-file PM2 YAML template for eventTracker-kr.
+#
+# Generate a real deployment file with envsubst, e.g.:
+#   export INTERNAL_RPC_TOKEN='...'  STRAPI_BASE_URL='...'  SEKAI_API_KEY='...'
+#   envsubst < eventTrackerKR.yaml.example > /root/pm2/eventTrackerKR.yaml
+#
+# Sensitive values are ${VARIABLE_NAME} placeholders. Production does not set
+# ALLOW_INSECURE_INTERNAL_RPC / ENABLE_UNSAFE_PJSK_RPC.
+apps:
+  - name: eventTracker-kr
+    script: uv run python event_tracker.py
+    cwd: /root/sekai-client
+    env:
+      SEKAI_REGION: kr
+      JSONRPC_PORT: "39393"
+      LOGLEVEL: DEBUG
+      SEKAI_API_KEY: ${SEKAI_API_KEY}
+      STRAPI_BASE_URL: ${STRAPI_BASE_URL}
+      INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}

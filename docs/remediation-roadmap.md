@@ -49,11 +49,11 @@
 ### 任务
 
 - [x] 确认 CN 不属于正式支持区域，完成 D-001（保留简化版 `checkUpdate-cn` 进程）。
-- [x] 自检代码库区域声明：从 `Config.REGIONS`、`api_public_server.client_map`、PM2 `regions` 移除 CN；保留 `checkUpdate-cn` 独立进程与 `CN_PORT`/port-map。
+- [x] 自检代码库区域声明：从 `Config.REGIONS` 与 `api_public_server.client_map` 移除 CN；生产 PM2 使用 `/root/pm2` 下的一进程一个 YAML，正式服务不含 CN，保留独立 `checkUpdate-cn` 与 `CN_PORT`/port-map。
 - [ ] 检查生产环境实际启动的区域和 PM2 进程。
   - 状态：`[!]` 待生产确认——代码层已变更，但生产实际运行进程需运维核对 PM2 列表。
 - [ ] 确认 shared client 是否始终绑定 `127.0.0.1`。
-  - 状态：`[!]` 待生产确认——`ecosystem.config.js` 已固定 `-b 127.0.0.1`，但运行实例需核实。
+  - 状态：`[x]` 已确认——virtono-jp 的 `/root/pm2/sharedApiClient*.yaml` 均固定绑定 `127.0.0.1`。
 - [ ] 确认每个 shared client 的 Gunicorn worker 数量。
   - 状态：`[!]` 待生产确认——gunicorn 默认 1 worker，需运维确认。
 - [ ] 确认 master/i18n 仓库是否可能存在未推送 commit。
@@ -76,8 +76,8 @@
 - 代码层改动：
   - `config.py`：`REGIONS` 移除 `cn`；新增 `validate_region_config` 并接入 `Config.validate`。
   - `api_public_server.py`：`client_map` 移除 `cn`；`bootstrap` 在区域映射不完整时启动失败。
-  - `deployment/pm2/ecosystem.config.js`：`regions` 移除 `cn`，保留独立 `checkUpdate-cn` 进程（simple mode）。
-  - 待生产确认项：实际运行 PM2 进程、loopback 绑定、worker 数、未推送 commit。
+  - 生产 PM2：已确认 virtono-jp 使用 `/root/pm2` 下 14 个独立 YAML；4 个正式区域各有 shared/check/event，另有 `sekai-api` 与 standalone `checkUpdate-cn`（simple mode）。仓库 `deployment/pm2/examples/` 提供对应无 secret 模板。
+  - 待生产确认项：worker 数、未推送 commit。
 
 ### 执行记录
 
@@ -152,7 +152,7 @@ uv run --extra dev pytest tests/
 - [x] 凭据 YAML 原子写入（`shared_client._write_account_yaml_atomic`：同目录临时文件、`0600`、`flush`/`fsync`/`os.replace`/异常清理、`yaml.safe_dump`）。
 - [x] 内部 RPC 鉴权（`Config.get_internal_rpc_token` / `ALLOW_INSECURE_INTERNAL_RPC` 动态读取；header `x-internal-rpc-token`；`compare_digest` 常量时间比较；默认 token 缺失 500，错误 token 401；仅 `ALLOW_INSECURE_INTERNAL_RPC=true` 且 loopback 才 bypass，非 loopback 一律 401；未认证请求不启动 scheduler）。
 - [x] `utils.jsonrpc_client.JSONRPCClient.request` 自动动态读 token 并加 header；缺 token 本地 `RuntimeError`（fail-closed）；HTTP 响应在 `json` 解析前 `raise_for_status`；所有调用方经默认 client 自动兼容，无手工散落 token。
-- [x] PM2：正式 `shared/check/event` 与 public API 传递 `INTERNAL_RPC_TOKEN` 与 `ALLOW_INSECURE_INTERNAL_RPC`（来自 `process.env`）；standalone `checkUpdate-cn` 不依赖 RPC，仍不强制。
+- [x] PM2 模板：正式 `shared/check/event` 与 public API 传递同一 `INTERNAL_RPC_TOKEN`；production 不传 `ALLOW_INSECURE_INTERNAL_RPC`；standalone `checkUpdate-cn` 不依赖 RPC。模板采用与生产一致的一进程一个 YAML，并按进程/区域最小化外部凭据。
 - [x] `shared_client.account_info` RPC 仅返回 `userId` 与 `region`，兼容 `event_tracker`。
 - [x] `request_and_decrypt` 在 `APIClient` 内严格校验：仅 GET、空 body、https、当前 region `nuverse_master_data_base_url` host/base path、`master-data-<digits>.info` 文件名；拒绝 path traversal（`..`）/非白名单 host/scheme。
 - [x] 收敛通用 `call_pjsk_api`：新增 `fetch_master_split(split_path)` 仅允许 `client.master_split_paths` 中值（GET）；`check_update` 改调此 RPC；通用 `call_pjsk_api` 默认禁用，仅 `ENABLE_UNSAFE_PJSK_RPC=true` 时允许（加入 `Config` 动态布尔）。未做完整 capability model。
@@ -180,12 +180,12 @@ uv run --extra dev pytest tests/
   - `uv run --extra dev ruff check .`：pass（All checks passed）
   - `uv run --extra dev mypy api_client.py shared_client.py utils/ config.py`：pass（no issues found in 15 source files）
   - `uv run --extra dev pytest tests/ -q`：119 passed（PR #7 最终提交）
-  - `node --check deployment/pm2/ecosystem.config.js`：pass
+  - `deployment/pm2/examples/*.yaml.example`：PyYAML 解析通过，并验证正式服务包含 `INTERNAL_RPC_TOKEN`、CN 不包含内部 token、无生产不安全开关。
   - `git diff --check`：clean
 
 ### 执行记录
 
-- 2026-07-16：实现阶段 2 最小安全设计。新增 `utils/redaction.py`（递归+文本脱敏、`SecretRedactingFilter`、`attach_redaction`），`logging_config.configure_logging` 默认安装 filter。`Config` 增加 `get_internal_rpc_token`/`allow_insecure_internal_rpc`/`enable_unsafe_pjsk_rpc` 动态配置；`utils/jsonrpc_client` 自动加 `x-internal-rpc-token` header、缺 token 本地 RuntimeError、`raise_for_status` 前置。`shared_client`：before_request 独立 RPC 鉴权（fail-closed、loopback dev bypass、非 loopback 拒绝、未认证不启动 scheduler）、`account_info` 仅返回 userId/region、`request_and_decrypt` 严格白名单、`fetch_master_split` 允许名单 RPC、通用 `call_pjsk_api` 默认禁用、`run_job` 错误 data 脱敏、凭据 YAML 原子写入（0600）。`check_update._post_strapi_ids` 改为 Authorization header + `raise_for_status` 并将 Strapi HTTP 故障降级为记录后继续；`get_splitted_master_data` 改调 `fetch_master_split`。`service_dashboard._scan_logs` recentErrors 脱敏。`api_public_server` 安装 redaction。PM2 传递 `INTERNAL_RPC_TOKEN`/`ALLOW_INSECURE_INTERNAL_RPC`（standalone cn 不强制）。README 增加 INTERNAL_RPC_TOKEN 等说明；新增通用、安全且不含真实 secret 的 `deployment/pm2/ecosystem.config.example.js`，线上配置未被该示例改写。**明确延期项（未伪称完成）**：secret store（当前为 0600 文件）、mTLS/Unix socket、完整 capability model、Dashboard localStorage（阶段 3）；未改变阶段 4 Git 删除 / 阶段 5 状态机 / 阶段 6 重试。最终验证全绿（119 passed，mypy/ruff/node/git clean）。
+- 2026-07-16：实现阶段 2 最小安全设计。新增 `utils/redaction.py`（递归+文本脱敏、`SecretRedactingFilter`、`attach_redaction`），`logging_config.configure_logging` 默认安装 filter。`Config` 增加动态内部 RPC 安全配置；client/server 默认 fail-closed，account_info/RPC capability/URL allowlist/YAML 写入与日志脱敏均收敛。`check_update` 的 Strapi token 改为 header。README 增加内部 token 部署说明。后续生产盘点确认 virtono-jp 实际使用 `/root/pm2` 的独立 YAML，因此仓库改为 `deployment/pm2/examples/*.yaml.example`，而不是误导性的单一 ecosystem 文件。**明确延期项（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model；未改变阶段 4 Git 删除 / 阶段 5 状态机 / 阶段 6 重试。最终验证全绿（119 passed，mypy/ruff/YAML/git clean）。
 - 2026-07-16：阶段 2 PR [#7](https://github.com/Sekai-World/sekai-client/pull/7) 在最终 CI 通过后 squash 合并到 `transform-python`，合并提交 `16b609a`。
 
 ## 阶段 3：Dashboard 安全与交互
