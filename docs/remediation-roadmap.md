@@ -238,15 +238,15 @@ uv run --extra dev pytest tests/
 
 ### 任务
 
-- [ ] 合并 update cycle，或为完整流程增加进程级互斥锁。
-- [ ] 锁覆盖 pull、获取版本、生成、校验、commit 和 push。
-- [ ] Scheduler 设置 `max_instances=1`、`coalesce=True` 和合理的 `misfire_grace_time`。
-- [ ] 移除 commit/push 失败后的 `shutil.rmtree`。
-- [ ] 区分 clone、pull、commit、push 和认证错误。
-- [ ] push 失败时保留本地 commit 并进入待重试状态。
-- [ ] 文件先写临时路径，校验成功后原子替换。
-- [ ] 将 `versions.json` 放到发布流程末尾更新。
-- [ ] 评估使用临时 Git worktree 生成完整数据集。
+- [x] 合并 update cycle，并为完整流程增加进程级与仓库级互斥锁。
+- [x] 锁覆盖 fetch、获取版本、生成、校验、commit 和 push。
+- [x] Scheduler 设置 `max_instances=1`、`coalesce=True` 和 `misfire_grace_time=300`。
+- [x] 移除 commit/push 失败后的 `shutil.rmtree`。
+- [x] 区分 fetch、fast-forward、commit、push、阻塞和待重试状态。
+- [x] push 失败时保留本地 commit，并在后续周期优先恢复 pending push。
+- [x] 文件先写入同文件系统 staging 路径，校验成功后使用 `os.replace` 原子替换。
+- [x] 将 `versions.json` 放到跨 master/i18n 发布流程的最后一步。
+- [x] 评估临时 Git worktree；当前不采用，使用 staging + 文件级原子替换满足现有消费者边界。
 
 ### 验收条件
 
@@ -257,13 +257,17 @@ uv run --extra dev pytest tests/
 
 ### 验收证据
 
-- 待填写：并发调度测试
-- 待填写：Git push 失败恢复测试
-- 待填写：原子发布测试
+- `tests/test_update_cycle_safety.py`：调度唯一性、04:00 daily/ordinary 语义、staging/校验失败、全局 `versions.json` 最后发布、空 manifest、candidate/global 状态与入口边界。
+- `tests/test_git_lock_integration.py`、`tests/test_update_cycle_lock_integration.py`：真实 `multiprocessing/spawn` 锁竞争、不同仓库并行、部分获取回收、外层 cycle 持锁与异常释放。
+- `tests/test_git_safety.py`、`tests/test_two_repo_publish_integration.py`：临时 bare remote 上的 fast-forward/ahead/diverged 状态、push 失败保留本地 SHA、双仓库 commit-all、部分 push 停止和同 SHA 恢复。
+- `tests/test_update_staging_integration.py`：真实 suite-user/information、compact alias、i18n handler、JSON 校验和 `read_bytes()` 正式树快照。
+- 阶段验证（2026-07-18）：Phase 4 聚焦/集成测试 112 passed；全套 `uv run pytest -q`：244 passed；`uv run ruff check`：pass；`git diff --check`：clean。
 
 ### 执行记录
 
-- 待填写
+- 2026-07-18：在分支 `fix/phase-4-update-git-safety` 完成阶段 4。统一 scheduler cycle 在 04:00 保留 daily/full-refresh 语义、普通周期执行版本 gate；增加进程内非阻塞锁和按规范化路径排序的跨进程 `flock`。Git 更新改为显式 fetch/fast-forward/pending-push 状态机，push 失败保留本地提交并由后续周期恢复，禁止删除或重克隆已有仓库。
+- 2026-07-18：生成流程改为 repository-adjacent staging、JSON 重新解析校验、文件级 `os.replace` 发布；所有 master 非版本文件和 i18n 文件完成后，最后发布 master `versions.json`，仅成功后推进 published `version_info`。publication 失败清理两个 staging root，但保留已替换的 dirty 工作树供诊断；明确接受这不是多文件事务或跨仓库 2PC。
+- 2026-07-18：commit 仅使用 cycle manifest；所有仓库先 commit 再按固定顺序 push，首个 push 失败停止后续 push，保留所有 pending local SHA。通过本地 bare remote、spawn 锁和真实 staging 路径完成验收；未访问生产仓库或外部网络。
 
 ## 阶段 5：区域 Bootstrap 与客户端状态机
 

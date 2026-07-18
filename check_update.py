@@ -1,8 +1,10 @@
 import logging
+import os
 import re
 import shutil
 import sys
 import traceback
+from datetime import datetime
 from os import getenv, path
 from time import sleep
 from typing import Any
@@ -34,7 +36,18 @@ from utils.constants import (
     update_options,
 )
 from utils.crypto import decrypt_msgpack
-from utils.git import check_git_folder
+from utils.git import (
+    GitOutcome,
+    GitResult,
+    check_git_folder,
+    prepare_repo_for_update,
+    push_current_head,
+)
+from utils.git_lock import (
+    ProcessCycleLock,
+    RepoLockUnavailable,
+    repo_file_locks,
+)
 from utils.jsonrpc_client import JSONRPCClient
 
 LOGLEVEL = getenv("LOGLEVEL", "INFO").upper()
@@ -55,114 +68,149 @@ i18n_diff_folder_path = path.join(
 )
 i18n_diff_repo: Repo | None = None
 
+# --- Phase 4.2: staging roots, lock state, and the single in-process lock ---
+#
+# During a cycle, all candidate JSON is generated into repository-adjacent
+# staging directories on the same filesystem; only after every staged file is
+# validated are they published into the formal working trees with ``os.replace``
+# (``versions.json`` last). These module-level roots are ``None`` outside a
+# cycle, in which case writes go straight to the working trees (legacy behavior)
+# and no manifest is recorded.
+_MASTER_STAGING_ROOT: str | None = None
+_I18N_STAGING_ROOT: str | None = None
+_STAGING_MANIFEST: dict[str, list[str]] | None = None
+
+_PROCESS_LOCK = ProcessCycleLock()
+
+# Repositories are prepared/committed/pushed in this deterministic order.
+_REPO_ORDER = ("master", "i18n")
+
+
+def _staging_master_root() -> str:
+    return _MASTER_STAGING_ROOT or masterdb_diff_folder_path
+
+
+def _staging_i18n_root() -> str:
+    return _I18N_STAGING_ROOT or i18n_diff_folder_path
+
+
+def _clear_staging_dir(staging_root: str) -> None:
+    if path.exists(staging_root):
+        shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def _clear_staging_dir_safe(staging_root: str) -> None:
+    """Clear a staging root, logging (not raising) if removal fails.
+
+    Cleanup runs inside a ``finally`` during a publication failure; it must never
+    mask the original :class:`PublicationError` with a cleanup exception, so any
+    error is logged and swallowed. This only removes the staging directories —
+    the already-``os.replace``'d dirty working trees are intentionally left intact.
+    """
+    try:
+        _clear_staging_dir(staging_root)
+    except Exception:  # noqa: BLE001 - cleanup must not override publication error
+        logger.exception(
+            "[publish] failed to clear staging root %s; ignoring cleanup error",
+            staging_root,
+        )
+
+
+class PublicationError(Exception):
+    """Raised when a staged file's ``os.replace`` into a formal working tree fails.
+
+    Distinct from a generation/validation failure: the staged candidates are
+    discarded and the cycle reports ``publication_failed`` (generation and
+    validation of the same candidate still count as ``generation_failed``).
+    """
+
+
+def _validate_staged_json(file_path: str) -> None:
+    """Re-read a staged file to confirm it is valid JSON (parse-only)."""
+    with open(file_path, encoding="utf-8") as f:
+        json.load(f)
+
+
+def _write_master_file(relpath: str, data: Any) -> None:
+    """Write a master-data file to the active root and record/validate it.
+
+    When master output is disabled (``update_options['master']`` is False) this
+    is a no-op: no file is written and nothing is recorded, so a disabled master
+    repository never receives a manifest entry and is never committed.
+
+    When a cycle is active (``_STAGING_MANIFEST`` set) the file is written to
+    the staging root, validated, and added to the explicit publish manifest so
+    the later commit stages only these paths.
+    """
+    if not update_options["master"]:
+        return
+    root = _staging_master_root()
+    file_path = path.join(root, relpath)
+    parent = path.dirname(file_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)  # noqa: F821 - os imported below
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    if _STAGING_MANIFEST is not None:
+        _validate_staged_json(file_path)
+        if relpath not in _STAGING_MANIFEST["master"]:
+            _STAGING_MANIFEST["master"].append(relpath)
+
+
+def _write_i18n_file(filename: str, payload: Any) -> None:
+    """Write an i18n file (under ``ja/``) to the active root and record/validate.
+
+    When i18n output is disabled (``update_options['i18n']`` is False) this is a
+    no-op: no file is written and nothing is recorded, so a disabled i18n
+    repository never receives a manifest entry and is never committed.
+    """
+    if not update_options["i18n"]:
+        return
+    root = _staging_i18n_root()
+    file_path = path.join(root, "ja", filename)
+    parent = path.dirname(file_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    if _STAGING_MANIFEST is not None:
+        _validate_staged_json(file_path)
+        rel = path.join("ja", filename)
+        if rel not in _STAGING_MANIFEST["i18n"]:
+            _STAGING_MANIFEST["i18n"].append(rel)
+
 
 def day_change_func():
-    logger.debug(
-        "[day_change_func] Pull %s repo remote changes before making any local changes",
-        local_git_folder_names["masterDBDiff"],
-    )
-    masterdb_diff_repo.remote().pull()
-
-    refresh_version()
-    if (
-        not check_update_simple_mode
-        and not is_in_maintenance
-        and update_options["userInfo"]
-    ):
-        save_info_from_suite_user()
-
-    if commit_master_diff():
-        logger.info("Updated and committed master data")
-        if update_options["i18n"]:
-            if commit_i18n_files():
-                logger.info("Updated and committed i18n data")
+    """Daily (04:00) full-refresh cycle, run inside the cycle lock."""
+    _run_update_cycle(daily=True)
 
 
 def try_update_func():
+    """Ordinary update trigger (called by legacy entry points).
+
+    This is a thin delegate: every decision (maintenance, new-version,
+    candidate) and every write/commit runs inside the single locked cycle so
+    no ``remote().pull()`` is ever used and no side effects happen outside the
+    cycle.
+    """
     logger.info("Check update triggered by cron job")
-
-    if check_update_simple_mode:
-        try_update_simple_func()
-        return
-
-    ver_res = None
-    try:
-        ver_res = jsonrpc_client.request("check_versions", [version_info])
-    except Exception:
-        logger.exception(
-            "[try_update_func] check_versions failed, re-bootstrap before retry"
-        )
-        bootstrap()
-        ver_res = jsonrpc_client.request("check_versions", [version_info])
-
-    global is_in_maintenance
-    if ver_res["maintenance"]:
-        logger.warning("PJSK server is in maintenance, skipping...")
-        is_in_maintenance = True
-        return
-
-    is_in_maintenance = False
-    logger.debug(
-        "[try_update_func] Pull %s repo remote changes before making any local changes",
-        local_git_folder_names["masterDBDiff"],
-    )
-    masterdb_diff_repo.remote().pull()
-    if update_options["i18n"]:
-        logger.debug(
-            "[try_update_func] Pull %s repo remote changes before local updates",
-            local_git_folder_names["i18n"],
-        )
-        i18n_diff_repo.remote().pull()
-    if ver_res["new_version"] and update_options["master"]:
-        logger.info("Got a new version during checking update")
-        refresh_version()
-
-    if update_options["userInfo"]:
-        refresh_information()
-
-    if commit_master_diff():
-        logger.info("Updated and committed master data")
-        if update_options["i18n"]:
-            if commit_i18n_files():
-                logger.info("Updated and committed i18n data")
+    _run_update_cycle(daily=False)
 
 
 def try_update_simple_func():
-    global version_info
-    global is_in_maintenance
+    """Simple-mode update trigger.
 
-    ver_res = check_versions_simple()
-    is_in_maintenance = False
-
-    logger.debug(
-        "[try_update_simple_func] Pull %s repo remote changes before local updates",
-        local_git_folder_names["masterDBDiff"],
-    )
-    masterdb_diff_repo.remote().pull()
-    if update_options["i18n"]:
-        logger.debug(
-            "[try_update_simple_func] Pull %s repo remote changes before local updates",
-            local_git_folder_names["i18n"],
-        )
-        i18n_diff_repo.remote().pull()
-
-    if ver_res["new_version"] and update_options["master"]:
-        logger.info("Got a new version during checking update")
-        refresh_version()
-
-    if update_options["userInfo"]:
-        logger.warning("Simple check-update mode does not support userInfo")
-
-    if commit_master_diff():
-        logger.info("Updated and committed master data")
-        if update_options["i18n"]:
-            if commit_i18n_files():
-                logger.info("Updated and committed i18n data")
+    Only maps the simple-mode entry to the unified locked cycle. All candidate
+    determination, generation, publication, and commits happen inside the cycle;
+    this wrapper never assigns the published ``version_info`` or commits outside
+    the cycle.
+    """
+    logger.info("Check update triggered in simple mode")
+    _run_update_cycle(daily=False)
 
 
 def _write_i18n_json(filename: str, payload: dict) -> None:
-    with open(path.join(i18n_diff_folder_path, "ja", filename), "w") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    _write_i18n_file(filename, payload)
 
 
 def _post_strapi_ids(endpoint: str, ids: list[int]) -> None:
@@ -320,13 +368,37 @@ I18N_SPECIAL_HANDLERS = {
 
 
 scheduler = BlockingScheduler(timezone=timezone("Asia/Tokyo"))
-day_change_cron_trigger = CronTrigger(hour="4", minute="0", second="0")
-day_change_job = scheduler.add_job(
-    day_change_func, day_change_cron_trigger, name="day_change_job"
-)
-try_update_cron_trigger = CronTrigger(minute="0,30", second="0")
-try_update_job = scheduler.add_job(
-    try_update_func, try_update_cron_trigger, name="try_update_job"
+
+
+def scheduled_update_job() -> None:
+    """Single scheduler entry, fired every 30 minutes.
+
+    At 04:00 (hour == 4, minute == 0) it runs exactly one cycle with
+    daily/full-refresh semantics; at 04:30 and every other half-hour it runs an
+    ordinary update. The cycle itself owns the locks, so overlapping triggers
+    skip rather than queue stale work.
+    """
+    now = datetime.now(timezone("Asia/Tokyo"))
+    daily = _is_daily_run(now)
+    logger.info(
+        "[scheduled_update_job] triggered at %s (daily=%s)",
+        now.strftime("%H:%M"),
+        daily,
+    )
+    _run_update_cycle(daily=daily)
+
+
+# One half-hour entry. At 04:00 it is the unique daily/full-refresh cycle;
+# at 04:30 (and other half-hours) it is ordinary. max_instances=1 + coalesce
+# ensure a single in-flight run and de-duplicated misfires.
+scheduled_trigger = CronTrigger(minute="0,30", second="0")
+scheduler.add_job(
+    scheduled_update_job,
+    scheduled_trigger,
+    name="scheduled_update_job",
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=300,
 )
 
 
@@ -401,13 +473,21 @@ def fetch_simple_version_info() -> dict[str, Any]:
     return _require_dict_response(res.json(), "fetch simple version info")
 
 
-def check_versions_simple():
-    global version_info
+def check_versions_simple() -> dict[str, Any]:
+    """Return a candidate version check without advancing the published global.
 
+    In the unified-cycle design the candidate (``candidate_version_info``) and
+    the change flag (``new_version``) are returned for the locked cycle to
+    consume; this helper never mutates the published ``version_info`` on its own
+    (it previously advanced it outside the locked cycle, which is unsafe).
+    """
     curr_ver_info = fetch_simple_version_info()
     if version_info is None:
-        version_info = curr_ver_info
-        return {"maintenance": False, "new_version": True}
+        return {
+            "maintenance": False,
+            "new_version": True,
+            "candidate_version_info": curr_ver_info,
+        }
 
     new_version = (
         version_info.get("dataVersion") != curr_ver_info.get("dataVersion")
@@ -415,23 +495,12 @@ def check_versions_simple():
         or version_info.get("appVersion") != curr_ver_info.get("appVersion")
         or version_info.get("cdnVersion") != curr_ver_info.get("cdnVersion")
     )
-    version_info = curr_ver_info
 
-    return {"maintenance": False, "new_version": new_version}
-
-
-def _pull_i18n_repo_before_refresh() -> None:
-    if not update_options["i18n"]:
-        return
-    if not i18n_diff_repo:
-        raise RuntimeError(
-            f"{local_git_folder_names['i18n']} repository must be existed "
-            "to refresh version info."
-        )
-    i18n_diff_repo.remote().pull()
-    logger.debug(
-        f"[refresh_version] pulled repository {local_git_folder_names['i18n']}"
-    )
+    return {
+        "maintenance": False,
+        "new_version": new_version,
+        "candidate_version_info": curr_ver_info,
+    }
 
 
 def _refresh_version_info_from_source() -> dict[str, Any]:
@@ -453,12 +522,12 @@ def _refresh_version_info_from_source() -> dict[str, Any]:
     )
 
 
-def _fetch_master_data_by_region() -> dict[str, Any]:
+def _fetch_master_data_by_region(candidate: dict[str, Any] | None) -> dict[str, Any]:
     if pjsk_region in ("jp", "en"):
         return get_splitted_master_data()
-    if version_info is None:
+    if candidate is None:
         raise RuntimeError("Refresh version info before fetching master data")
-    return download_nuverse_master_data(version_info["cdnVersion"])
+    return download_nuverse_master_data(candidate["cdnVersion"])
 
 
 # The Python port keeps the broader keyword set used by downstream master-data
@@ -539,28 +608,38 @@ def _write_compact_master_alias_if_needed(key: str, file_data: Any) -> None:
         return
     new_key = key[len("compact") :]
     new_key = new_key[:1].lower() + new_key[1:]
-    new_file_path = path.join(masterdb_diff_folder_path, f"{new_key}.json")
     new_file_data = restore_compact_data(file_data)
-    with open(new_file_path, "w") as f:
-        json.dump(new_file_data, f, ensure_ascii=False, indent=2)
+    _write_master_file(f"{new_key}.json", new_file_data)
 
 
-def refresh_version():
-    global version_info
+def refresh_version(candidate: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Fetch master data and generate all master/i18n JSON for a candidate.
 
+    The cycle passes the explicit candidate version (returned by
+    ``_refresh_version_info_from_source``) so generation, conversion, and the
+    ``versions.json`` write all use the *candidate* — not the published global
+    ``version_info``. The global is only advanced by ``_generate_and_publish``
+    after every staged file is generated, validated, and published with
+    ``os.replace``. A generation/validation failure therefore leaves both the
+    global published ``version_info`` and the formal ``versions.json`` unchanged.
+
+    Returns the candidate used for this generation so the caller can advance the
+    published global only after publication succeeds. When called without a
+    candidate (legacy/standalone path) the source is fetched here and used
+    locally; the global is still not advanced inside this function so callers
+    remain responsible for publication.
+    """
     logger.debug("[refresh_version] called")
 
-    _pull_i18n_repo_before_refresh()
-    version_info = _refresh_version_info_from_source()
-    logger.debug("[refresh_version] fetched version info: %s", version_info)
-    with open(path.join(masterdb_diff_folder_path, "versions.json"), "w") as f:
-        json.dump(version_info, f, indent=2)
-        f.truncate()
+    if candidate is None:
+        candidate = _refresh_version_info_from_source()
+    logger.debug("[refresh_version] using candidate version info: %s", candidate)
+    _write_master_file("versions.json", candidate)
 
     logger.debug("[refresh_version] fetching master db")
-    master_data: dict[str, Any] = _fetch_master_data_by_region()
+    master_data: dict[str, Any] = _fetch_master_data_by_region(candidate)
     logger.debug("[refresh_version] write master db to separate json files by keys")
-    structures_app_ver = version_info.get("appVersion") or getenv("APP_VER", "")
+    structures_app_ver = candidate.get("appVersion") or getenv("APP_VER", "")
     current_structures = get_structures_for_app_ver(structures_app_ver)
     current_structure_version = resolve_structure_compatibility_version(
         structures_app_ver
@@ -573,7 +652,6 @@ def refresh_version():
         )
 
     for key, value in master_data.items():
-        file_path = path.join(masterdb_diff_folder_path, f"{key}.json")
         file_data = value
         logger.debug("[refresh_version] start writing master db %s.json", key)
         last_record_idx: int | None = None
@@ -583,9 +661,9 @@ def refresh_version():
                 key, file_data, current_structures
             )
             id_key = _resolve_master_id_key(key)
-            file_data = _merge_existing_file_data(file_path, file_data, id_key)
-            with open(file_path, "w") as f:
-                json.dump(file_data, f, ensure_ascii=False, indent=2)
+            working_path = path.join(masterdb_diff_folder_path, f"{key}.json")
+            file_data = _merge_existing_file_data(working_path, file_data, id_key)
+            _write_master_file(f"{key}.json", file_data)
             _write_compact_master_alias_if_needed(key, file_data)
         except Exception:
             logger.exception(
@@ -609,23 +687,20 @@ def refresh_version():
             update_i18n_files(key, file_data)
 
     logger.debug("[refresh_version] finished")
+    return candidate
 
 
 def save_info_from_suite_user():
     suite_user = jsonrpc_client.request("login_user_info")
 
     logger.debug("[save_info_from_suite_user] write user home banners")
-    with open(path.join(masterdb_diff_folder_path, "userHomeBanners.json"), "w") as f:
-        json.dump(suite_user["userHomeBanners"], f, ensure_ascii=False, indent=2)
+    _write_master_file("userHomeBanners.json", suite_user["userHomeBanners"])
 
     if pjsk_region == "en":
         refresh_information()
     elif suite_user.get("userInformations", None):
         logger.debug("[save_info_from_suite_user] write user informations")
-        with open(
-            path.join(masterdb_diff_folder_path, "userInformations.json"), "w"
-        ) as f:
-            json.dump(suite_user["userInformations"], f, ensure_ascii=False, indent=2)
+        _write_master_file("userInformations.json", suite_user["userInformations"])
 
     logger.debug("[save_info_from_suite_user] finished")
     return suite_user
@@ -636,105 +711,530 @@ def refresh_information():
     res = jsonrpc_client.request("fetch_information")
 
     logger.debug("[refresh_information] write user informations")
-    with open(path.join(masterdb_diff_folder_path, "userInformations.json"), "w") as f:
-        json.dump(res["informations"], f, ensure_ascii=False, indent=2)
+    _write_master_file("userInformations.json", res["informations"])
 
 
-def commit_master_diff():
+def _commit_diff(
+    repo: Repo | None,
+    operation: str,
+    folder_label: str,
+    commit_message: str,
+    author: Actor,
+    paths: list[str] | None = None,
+) -> GitResult:
+    """Stage (explicit ``paths`` when given) and commit only — no push.
+
+    Contract:
+    - ``repo`` is ``None`` or ``version_info`` is missing -> ``FAILED`` (these
+      are operational errors, never a benign "nothing to do").
+    - repository clean -> ``NOTHING_TO_DO``.
+    - stage/commit failure -> ``FAILED`` (``reason="commit_failed"``), with the
+      local repo left untouched.
+
+    When ``paths`` is provided (Phase 4.2 cycle), only those explicit paths are
+    staged; otherwise the historical broad ``index.add("**")`` is used. The
+    original ``master-db-diff-bot`` / ``i18n-diff-bot`` actors are passed by the
+    wrapper. The historical boolean contract is preserved via
+    :meth:`GitResult.__bool__`.
+    """
+    if repo is None:
+        logger.error("[%s] repository not initialized", operation)
+        return GitResult(
+            outcome=GitOutcome.FAILED,
+            reason="repo_missing",
+            operation=operation,
+        )
+    if version_info is None:
+        logger.error("[%s] version_info not loaded; cannot build commit", operation)
+        return GitResult(
+            outcome=GitOutcome.FAILED,
+            reason="version_info_missing",
+            operation=operation,
+        )
+
+    if not repo.is_dirty(untracked_files=True):
+        return GitResult(
+            outcome=GitOutcome.NOTHING_TO_DO,
+            reason="clean",
+            operation=operation,
+        )
+
+    # Explicit empty manifest: there is nothing for this repository to commit.
+    # Do not stage/commit, and crucially do not fall back to a broad add that
+    # would sweep unrelated dirty files into the commit. Only a ``None`` paths
+    # (legacy/standalone callers) uses the historical broad ``index.add("**")``.
+    if paths is not None and len(paths) == 0:
+        logger.debug(
+            "[%s] explicit empty path list; no staged changes to commit", operation
+        )
+        return GitResult(
+            outcome=GitOutcome.NOTHING_TO_DO,
+            reason="no_staged_paths",
+            operation=operation,
+        )
+
+    try:
+        logger.debug("[%s] add files to staged in %s", operation, folder_label)
+        if paths is not None and len(paths) > 0:
+            repo.index.add(paths)
+        else:
+            repo.index.add("**")
+
+        logger.debug("[%s] commit staged changes in %s", operation, folder_label)
+        repo.index.commit(commit_message, author=author)
+    except Exception as err:  # noqa: BLE001 - commit failure is its own contract
+        logger.exception("[%s] failed to stage/commit", operation)
+        return GitResult(
+            outcome=GitOutcome.FAILED,
+            reason="commit_failed",
+            operation=operation,
+            detail=str(err),
+        )
+
+    return GitResult(
+        outcome=GitOutcome.OK,
+        reason="committed",
+        operation=operation,
+        local_sha=_safe_head_sha(repo),
+    )
+
+
+def _push_diff(repo: Repo | None, operation: str) -> GitResult:
+    """Push the local HEAD and surface a credential-safe result.
+
+    A push failure or unverified push returns ``PENDING_PUSH``; the local
+    commit is *kept* and never deleted, recloned, reset, or force-pushed. The
+    warning (when pending) contains only operation, reason, and retained local
+    SHA — never the remote URL or exception detail.
+    """
+    if repo is None:
+        return GitResult(
+            outcome=GitOutcome.FAILED,
+            reason="repo_missing",
+            operation=operation,
+        )
+    push_result = push_current_head(repo, branch="main", require_remote_branch=True)
+    if push_result.outcome is GitOutcome.PENDING_PUSH:
+        logger.warning(
+            "[%s] push pending (commit retained): reason=%s local_sha=%s",
+            operation,
+            push_result.reason,
+            push_result.local_sha,
+        )
+    return push_result
+
+
+def _safe_head_sha(repo: Repo) -> str | None:
+    try:
+        return repo.head.commit.hexsha
+    except Exception:  # noqa: BLE001 - unborn repository
+        return None
+
+
+def commit_master_diff(paths: list[str] | None = None) -> GitResult:
+    """Stage, commit, and push master data diffs.
+
+    For the Phase 4.2 cycle this is called with an explicit ``paths`` manifest;
+    standalone callers (e.g. bootstrap) may omit it and fall back to broad
+    staging. The push is non-destructive; a push failure returns ``PENDING_PUSH``
+    with the local commit retained.
+    """
     global masterdb_diff_repo
-    data_ver = version_info["dataVersion"]
-    asset_ver = version_info["assetVersion"]
-
-    if masterdb_diff_repo and masterdb_diff_repo.is_dirty(untracked_files=True):
-        try:
-            logger.debug(
-                "[commit_master_diff] add files to staged in %s",
-                local_git_folder_names["masterDBDiff"],
-            )
-
-            curr_index = masterdb_diff_repo.index
-            curr_index.add("**")
-
-            logger.debug(
-                "[commit_master_diff] commit staged changes in %s",
-                local_git_folder_names["masterDBDiff"],
-            )
-            curr_index.commit(
-                f"master version {data_ver} asset version {asset_ver}",
-                author=Actor("master-db-diff-bot", "anonymous@example.com"),
-            )
-
-            logger.debug(
-                "[commit_master_diff] push commit to origin in %s",
-                local_git_folder_names["masterDBDiff"],
-            )
-            masterdb_diff_repo.remote().push().raise_if_error()
-        except Exception:
-            logger.exception(
-                "[commit_master_diff] failed to commit/push, re-cloning repository"
-            )
-            # reset to last commit
-            # masterdb_diff_repo.head.reset(commit="HEAD~1",
-            #                               index=True,
-            #                               working_tree=True)
-            # delete current repo folder and clone again
-            shutil.rmtree(masterdb_diff_folder_path)
-            masterdb_diff_repo = check_git_folder(
-                masterdb_diff_folder_path, remote_git_url_base
-            )
-            return False
-
-        return True
-
-    return False
+    if version_info is None:
+        commit_res = _commit_diff(
+            masterdb_diff_repo,
+            operation="commit_master_diff",
+            folder_label=local_git_folder_names["masterDBDiff"],
+            commit_message="",
+            author=Actor("master-db-diff-bot", "anonymous@example.com"),
+            paths=paths,
+        )
+    else:
+        commit_res = _commit_diff(
+            masterdb_diff_repo,
+            operation="commit_master_diff",
+            folder_label=local_git_folder_names["masterDBDiff"],
+            commit_message=(
+                f"master version {version_info['dataVersion']} "
+                f"asset version {version_info['assetVersion']}"
+            ),
+            author=Actor("master-db-diff-bot", "anonymous@example.com"),
+            paths=paths,
+        )
+    if commit_res.outcome is not GitOutcome.OK:
+        return commit_res
+    return _push_diff(masterdb_diff_repo, "push_master_diff")
 
 
-def commit_i18n_files():
+def commit_i18n_files(paths: list[str] | None = None) -> GitResult:
+    """Stage, commit, and push i18n data diffs (see ``commit_master_diff``)."""
     global i18n_diff_repo
-    data_ver = version_info["dataVersion"]
+    if version_info is None:
+        commit_res = _commit_diff(
+            i18n_diff_repo,
+            operation="commit_i18n_files",
+            folder_label=local_git_folder_names["i18n"],
+            commit_message="",
+            author=Actor("i18n-diff-bot", "anonymous@example.com"),
+            paths=paths,
+        )
+    else:
+        commit_res = _commit_diff(
+            i18n_diff_repo,
+            operation="commit_i18n_files",
+            folder_label=local_git_folder_names["i18n"],
+            commit_message=(
+                f"i18n update for master version {version_info['dataVersion']}"
+            ),
+            author=Actor("i18n-diff-bot", "anonymous@example.com"),
+            paths=paths,
+        )
+    if commit_res.outcome is not GitOutcome.OK:
+        return commit_res
+    return _push_diff(i18n_diff_repo, "push_i18n_files")
 
-    if i18n_diff_repo and i18n_diff_repo.is_dirty(untracked_files=True):
+
+# --------------------------------------------------------------------------- #
+# Phase 4.2: single locked cycle with staged generation + file-atomic publish
+# --------------------------------------------------------------------------- #
+
+
+def _is_daily_run(now: datetime) -> bool:
+    """True only at the unique 04:00 daily/full-refresh boundary."""
+    return now.hour == 4 and now.minute == 0
+
+
+def _publish_order(relpaths: list[str]) -> list[str]:
+    """Order published paths so ``versions.json`` is moved last.
+
+    The other paths keep their input order (stable, deterministic), with
+    ``versions.json`` appended last when present.
+    """
+    ordered = [p for p in relpaths if p != "versions.json"]
+    if "versions.json" in relpaths:
+        ordered.append("versions.json")
+    return ordered
+
+
+def _publish_staging(
+    staging_root: str, dest_root: str, relpaths: list[str]
+) -> None:
+    """Atomically publish staged files into the working tree via ``os.replace``.
+
+    ``versions.json`` is published last. If any replacement fails, a
+    :class:`PublicationError` is raised (with the already-published dirty working
+    tree left intact for diagnosis) and the remaining staging is cleaned so no
+    half-published content lingers. No commit/push happens here.
+    """
+    for rel in _publish_order(relpaths):
+        src = path.join(staging_root, rel)
+        dst = path.join(dest_root, rel)
+        dst_dir = path.dirname(dst)
+        if dst_dir:
+            os.makedirs(dst_dir, exist_ok=True)
         try:
-            logger.debug(
-                "[commit_i18n_files] add files to staged in %s",
-                local_git_folder_names["i18n"],
-            )
+            os.replace(src, dst)
+        except OSError as err:  # publish partially; stop, clean the rest
+            logger.error("[publish] replace failed for %s: %s", rel, err)
+            _clear_staging_dir(staging_root)
+            raise PublicationError(f"replace failed for {rel}: {err}") from err
 
-            curr_index = i18n_diff_repo.index
-            curr_index.add("**")
 
-            logger.debug(
-                "[commit_i18n_files] commit staged changes in %s",
-                local_git_folder_names["i18n"],
+def _generate_and_publish(daily: bool) -> dict[str, list[str]]:
+    """Generate all candidate JSON into staging, validate, then publish.
+
+    The candidate version is fetched up front (or taken from a passed-in
+    argument) and used locally for every generated file and commit message.
+    The global published ``version_info`` is *not* advanced until every staged
+    file has been generated, validated, and published (``os.replace``) into both
+    working trees. On any generation/validation failure the staging directories
+    are cleared and the exception is re-raised *without* touching the formal
+    working trees, so both working trees stay byte-identical and the published
+    version unchanged. A publication (``os.replace``) failure stops before
+    commit/push and leaves the dirty working tree intact; the global published
+    version is likewise left unchanged.
+
+    The global ``version_info`` is advanced *only* when master output is enabled
+    and the formal ``versions.json`` was actually published (``os.replace`` into
+    the master working tree succeeded). When master is disabled (``i18n=True``
+    only) or both repositories are disabled, no ``versions.json`` is ever staged
+    or published, so the global published version is never advanced and the
+    formal ``versions.json`` stays consistent with it.
+    """
+    global _MASTER_STAGING_ROOT, _I18N_STAGING_ROOT, _STAGING_MANIFEST
+    global version_info
+
+    master_staging = masterdb_diff_folder_path + ".staging"
+    i18n_staging = i18n_diff_folder_path + ".staging"
+    _clear_staging_dir(master_staging)
+    _clear_staging_dir(i18n_staging)
+
+    manifest: dict[str, list[str]] = {"master": [], "i18n": []}
+    # Candidate is local to this cycle; the published global stays untouched
+    # until publication of every staged file succeeds. refresh_version returns
+    # the candidate it generated with, so the global is advanced only afterward.
+    candidate: dict[str, Any] | None = None
+    try:
+        _MASTER_STAGING_ROOT = master_staging
+        _I18N_STAGING_ROOT = i18n_staging
+        _STAGING_MANIFEST = manifest
+
+        candidate = refresh_version()
+        if not check_update_simple_mode and update_options["userInfo"]:
+            save_info_from_suite_user()
+        if update_options["userInfo"]:
+            refresh_information()
+    except Exception:
+        logger.exception("[cycle] generation/validation failed; discarding staging")
+        _STAGING_MANIFEST = None
+        _MASTER_STAGING_ROOT = None
+        _I18N_STAGING_ROOT = None
+        _clear_staging_dir_safe(master_staging)
+        _clear_staging_dir_safe(i18n_staging)
+        raise
+    finally:
+        _STAGING_MANIFEST = None
+        _MASTER_STAGING_ROOT = None
+        _I18N_STAGING_ROOT = None
+
+    # Publish in deterministic repo order: master (all except versions.json)
+    # first, i18n second, and the formal ``versions.json`` *last* and on its own —
+    # sourced from the master staging root. Keeping the master staging directory
+    # alive until after ``versions.json`` is published guarantees an i18n replace
+    # failure leaves the formal ``versions.json`` (and thus the published global)
+    # untouched. The manifest path ``versions.json`` in either repo staging denotes
+    # the global version file, published into the master working tree.
+    master_manifest = [p for p in manifest["master"] if p != "versions.json"]
+    i18n_manifest = [p for p in manifest["i18n"] if p != "versions.json"]
+
+    # Whether the formal ``versions.json`` was actually published into the master
+    # working tree. Only a successful master-enabled publication advances the
+    # global. master=False (i18n-only) and all-disabled never reach this branch.
+    global_published = False
+
+    # Outer try/finally guarantees both staging roots are cleared after the
+    # publication phase, *without* masking a PublicationError: ``raise`` inside
+    # the ``except`` preserves the original exception/backtrace, and the cleanup
+    # only removes the staging directories (any already-``os.replace``'d dirty
+    # working trees are intentionally left intact for diagnosis).
+    try:
+        # 1) master: everything except versions.json.
+        _publish_staging(master_staging, masterdb_diff_folder_path, master_manifest)
+        # 2) i18n: everything except versions.json.
+        _publish_staging(i18n_staging, i18n_diff_folder_path, i18n_manifest)
+        # 3) global versions.json last and alone, from the master staging root,
+        #    but only when master is enabled and actually staged it.
+        if "versions.json" in manifest["master"]:
+            _publish_staging(
+                master_staging, masterdb_diff_folder_path, ["versions.json"]
             )
-            curr_index.commit(
-                f"i18n update for master version {data_ver}",
+            global_published = True
+    except BaseException:
+        # A publication failure mid-step-1 would otherwise leave the i18n staging
+        # root behind. Clean BOTH roots here, then re-raise the original error so
+        # a cleanup failure cannot override the original PublicationError.
+        _clear_staging_dir_safe(master_staging)
+        _clear_staging_dir_safe(i18n_staging)
+        raise
+    finally:
+        # Best-effort clearance of both staging roots on the success path too;
+        # safe logging ensures a stray cleanup error cannot mask prior work.
+        _clear_staging_dir_safe(master_staging)
+        _clear_staging_dir_safe(i18n_staging)
+
+    # Only now — after every staged file was generated, validated, and published
+    # into the working trees — do we advance the published global, and only when
+    # the formal ``versions.json`` was genuinely published by an enabled master.
+    # A ``None`` candidate (legacy caller) or a disabled master keeps the prior
+    # published value, so the formal ``versions.json`` and the global stay in
+    # lock-step.
+    if candidate is not None and global_published:
+        version_info = candidate
+    return manifest
+
+
+def _commit_enabled_repositories(
+    enabled: list[tuple[str, Repo | None]], manifest: dict[str, list[str]]
+) -> dict[str, GitResult]:
+    """Commit every enabled repository (explicit manifest paths) before push."""
+    commits: dict[str, GitResult] = {}
+    for key, repo in enabled:
+        relpaths = manifest.get(key, [])
+        if key == "master":
+            commits[key] = _commit_diff(
+                repo,
+                operation="commit_master_diff",
+                folder_label=local_git_folder_names["masterDBDiff"],
+                commit_message=(
+                    f"master version {version_info['dataVersion']} "
+                    f"asset version {version_info['assetVersion']}"
+                ),
+                author=Actor("master-db-diff-bot", "anonymous@example.com"),
+                paths=relpaths,
+            )
+        else:
+            commits[key] = _commit_diff(
+                repo,
+                operation="commit_i18n_files",
+                folder_label=local_git_folder_names["i18n"],
+                commit_message=(
+                    f"i18n update for master version {version_info['dataVersion']}"
+                ),
                 author=Actor("i18n-diff-bot", "anonymous@example.com"),
+                paths=relpaths,
             )
+    return commits
 
-            logger.debug(
-                "[commit_i18n_files] push commit to origin in %s",
-                local_git_folder_names["i18n"],
-            )
-            i18n_diff_repo.remote().push().raise_if_error()
-        except Exception:
-            logger.exception(
-                "[commit_i18n_files] failed to commit/push, re-cloning repository"
-            )
-            # reset to last commit
-            # i18n_diff_repo.head.reset(commit="HEAD~1",
-            #                           index=True,
-            #                           working_tree=True)
-            # delete current repo folder and clone again
-            shutil.rmtree(i18n_diff_folder_path)
-            i18n_diff_repo = check_git_folder(
-                i18n_diff_folder_path, remote_git_url_base
-            )
-            return False
 
-        return True
+def _push_enabled_repositories(commits: dict[str, GitResult]) -> str | None:
+    """Push committed repositories in deterministic order.
 
-    return False
+    Stops after the first push failure (preserving every local unpushed commit)
+    and returns a ``push_failed:<key>:<reason>`` status, or ``None`` on success.
+    """
+    for key in _REPO_ORDER:
+        commit_res = commits.get(key)
+        if commit_res is None or commit_res.outcome != GitOutcome.OK:
+            continue
+        repo = masterdb_diff_repo if key == "master" else i18n_diff_repo
+        push_res = _push_diff(repo, f"push_{key}")
+        if push_res.outcome != GitOutcome.OK:
+            logger.warning(
+                "[cycle] push failed for %s (%s); not pushing remaining repos",
+                key,
+                push_res.reason,
+            )
+            return f"push_failed:{key}:{push_res.reason}"
+    return None
+
+
+def _cycle_should_proceed(daily: bool) -> str | None:
+    """Honor maintenance / candidate gating while inside the cycle lock.
+
+    Returns a short status string to return early (skipping generation/commit)
+    when the cycle must not proceed, or ``None`` to proceed. The published
+    ``version_info`` global is never advanced here; the candidate is only
+    advanced by ``_generate_and_publish`` after a successful publication.
+
+    Maintenance and the simple-mode candidate are determined here (under the
+    held process + repo locks) so no decision is taken outside the locked cycle.
+    """
+    global is_in_maintenance
+    if check_update_simple_mode:
+        # Simple mode: only proceed when a new version is detected. The candidate
+        # is computed here but never pushed to the published global.
+        ver_res = check_versions_simple()
+        if not ver_res["new_version"]:
+            logger.info("[cycle] simple mode: no new version; skipping")
+            return "no_new_version"
+        is_in_maintenance = False
+        return None
+
+    if daily:
+        # Daily / full-refresh run: request the server version/CN info only to
+        # honor maintenance. The new-version gate is intentionally bypassed so a
+        # daily run always re-fetches and republishes the full data set; the
+        # published global is still not advanced when maintenance is active.
+        check_version_res = jsonrpc_client.request("check_versions", [version_info])
+        if check_version_res["maintenance"]:
+            logger.warning("PJSK server is in maintenance, skipping cycle")
+            is_in_maintenance = True
+            return "maintenance"
+        is_in_maintenance = False
+        return None
+
+    # Ordinary run: standard mode must respect the new-version gate computed by
+    # the server. When the candidate version matches the published global there
+    # is nothing to publish, so we skip cleanly.
+    check_version_res = jsonrpc_client.request("check_versions", [version_info])
+    if check_version_res["maintenance"]:
+        logger.warning("PJSK server is in maintenance, skipping cycle")
+        is_in_maintenance = True
+        return "maintenance"
+    is_in_maintenance = False
+    if not check_version_res.get("new_version", False):
+        logger.info("[cycle] ordinary run: versions match, nothing to publish")
+        return "no_new_version"
+    return None
+
+
+def _run_update_cycle_locked(daily: bool) -> str:
+    """Body of the cycle, executed while all locks are held.
+
+    Returns a short status string for tests/observability.
+    """
+    # 0) Maintenance / candidate gating (inside the lock, no global mutation).
+    should_not_proceed = _cycle_should_proceed(daily)
+    if should_not_proceed is not None:
+        return should_not_proceed
+
+    # 1) Prepare every enabled repository; stop before generation if any is not
+    #    ready (never mutates on a blocked repository).
+    enabled = []
+    if update_options["master"]:
+        enabled.append(("master", masterdb_diff_repo))
+    if update_options["i18n"]:
+        enabled.append(("i18n", i18n_diff_repo))
+
+    for key, repo in enabled:
+        prep = prepare_repo_for_update(repo, branch="main")
+        if prep.outcome != GitOutcome.OK:
+            logger.warning(
+                "[cycle] repository %s not ready: %s; skipping cycle", key, prep.reason
+            )
+            return f"not_ready:{key}:{prep.reason}"
+
+    # 2) Generate (staging) + validate + publish atomically. A generation or
+    #    validation failure is "generation_failed"; a publication (os.replace)
+    #    failure is "publication_failed" and must not be reported as generation.
+    try:
+        manifest = _generate_and_publish(daily)
+    except PublicationError:
+        return "publication_failed"
+    except Exception:
+        return "generation_failed"
+
+    # 3) Commit all enabled repositories before any push (explicit manifests).
+    commits = _commit_enabled_repositories(enabled, manifest)
+
+    # If any commit failed, do not push anything (preserve all local commits).
+    if any(c.outcome is GitOutcome.FAILED for c in commits.values()):
+        logger.error("[cycle] a commit failed; skipping push to avoid partial publish")
+        return "commit_failed"
+
+    # 4) Push in deterministic order; stop after the first failure, preserving
+    #    every local unpushed commit.
+    push_status = _push_enabled_repositories(commits)
+    if push_status is not None:
+        return push_status
+
+    return "ok"
+
+
+def _run_update_cycle(daily: bool) -> str:
+    """Single update-cycle entry point guarded by the in-process + flock locks.
+
+    Overlapping same-process triggers *skip* (non-blocking in-process lock);
+    a held cross-process flock also causes a skip. Locks are released on every
+    exit path.
+    """
+    acquired = _PROCESS_LOCK.acquire()
+    if not acquired:
+        logger.info("[cycle] skipped: another update cycle is already running")
+        return "skipped:in_process"
+
+    lock_files = [masterdb_diff_folder_path + ".lock"]
+    if update_options["i18n"]:
+        lock_files.append(i18n_diff_folder_path + ".lock")
+    try:
+        try:
+            with repo_file_locks(lock_files, non_blocking=True):
+                return _run_update_cycle_locked(daily)
+        except RepoLockUnavailable as err:
+            logger.warning("[cycle] skipped: could not acquire repo locks: %s", err)
+            return "skipped:repo_lock"
+    finally:
+        _PROCESS_LOCK.release()
 
 
 def _bootstrap_init_client() -> None:
@@ -757,29 +1257,17 @@ def _bootstrap_prepare_repositories() -> None:
 
 
 def _bootstrap_try_refresh() -> bool:
+    """Check the PJSK server for maintenance before the initial cycle.
+
+    This is a no-side-effect read only: it returns ``False`` to ask bootstrap to
+    retry after a delay. All user-info writes and commits happen exclusively
+    inside the unified locked cycle (``_run_update_cycle_locked``), never here.
+    """
     check_version_res = jsonrpc_client.request("check_versions")
     if check_version_res["maintenance"]:
         logger.warning("[bootstrap] Server in maintenance, retry after 10 minutes")
         sleep(10 * 60)
         return False
-
-    logger.debug(
-        "[bootstrap] Pull %s repo remote changes before making any local changes",
-        local_git_folder_names["masterDBDiff"],
-    )
-    if masterdb_diff_repo is None:
-        raise RuntimeError("Master data repository is not initialized")
-    masterdb_diff_repo.remote().pull()
-    if update_options["userInfo"]:
-        jsonrpc_client.request("login")
-        save_info_from_suite_user()
-
-    global version_info
-    version_info = _require_dict_response(
-        jsonrpc_client.request("version_info"), "fetch version info"
-    )
-    if update_options["master"]:
-        refresh_version()
     return True
 
 
@@ -806,11 +1294,9 @@ def bootstrap():
             sleep(10 * 60)
     logger.info("[bootstrap] Fetched current available version info")
 
-    if commit_master_diff():
-        logger.info("Updated and committed master data")
-        if update_options["i18n"]:
-            commit_i18n_files()
-            logger.info("Updated and committed i18n data")
+    # Run the single locked cycle (prepare + generate + publish + commit + push).
+    status = _run_update_cycle(daily=True)
+    logger.info("[bootstrap] initial cycle status: %s", status)
 
     logger.info(
         "[bootstrap] Finished, will look for new PJSK game data version at "
@@ -840,31 +1326,8 @@ def bootstrap_simple():
         i18n_diff_repo = check_git_folder(i18n_diff_folder_path, remote_git_url_base)
     logger.info("[bootstrap] Local git folders checked")
 
-    while True:
-        try:
-            logger.debug(
-                "[bootstrap] Pull %s repo remote changes before making any "
-                "local changes",
-                local_git_folder_names["masterDBDiff"],
-            )
-            masterdb_diff_repo.remote().pull()
-
-            if update_options["master"]:
-                refresh_version()
-            break
-        except Exception:
-            logging.error(traceback.format_exc())
-            logger.error(
-                "[bootstrap] Failed to bootstrap simple mode. Retry after 10 minutes."
-            )
-            sleep(10 * 60)
-    logger.info("[bootstrap] Fetched current available version info")
-
-    if commit_master_diff():
-        logger.info("Updated and committed master data")
-        if update_options["i18n"]:
-            commit_i18n_files()
-            logger.info("Updated and committed i18n data")
+    status = _run_update_cycle(daily=True)
+    logger.info("[bootstrap] initial simple-mode cycle status: %s", status)
 
     logger.info(
         "[bootstrap] Finished, will look for new PJSK game data version at "

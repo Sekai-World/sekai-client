@@ -6,6 +6,7 @@ from unittest.mock import Mock, call
 import requests
 
 import check_update
+from utils.git import GitOutcome
 
 
 def test_jp_refresh_updates_split_paths_without_full_relogin(monkeypatch):
@@ -66,32 +67,138 @@ def test_merge_existing_file_data_replaces_matching_ids(tmp_path):
     ]
 
 
-def test_commit_master_diff_returns_false_on_push_failure(monkeypatch):
-    """A failed commit/push must be reported as failure, not swallowed silently.
+def test_commit_master_diff_returns_pending_on_push_failure(monkeypatch):
+    """A push failure must be reported as PENDING_PUSH while keeping the commit.
 
-    NOTE: The current code deletes and re-clones the local repo on failure
-    (see commit_master_diff / check_update.py). That data-loss behavior is a
-    known issue tracked for remediation phase 4 and MUST NOT be asserted as
-    correct here. This test only locks in the failure *return contract* and
-    that cleanup is mocked (no real filesystem/git side effects).
+    The repository must NOT be deleted, recloned, reset, or force-pushed. The
+    historical boolean contract (``__bool__``) maps an ``OK`` result to truthy
+    and a ``PENDING_PUSH`` result to falsy, so production
+    ``if commit_master_diff():`` paths still treat push failure as failure.
     """
     repo = Mock()
     repo.is_dirty.return_value = True
-    repo.remote.return_value.push.return_value.raise_if_error.side_effect = (
-        RuntimeError("push rejected")
+    # push_current_head returns a GitResult; emulate a PENDING_PUSH push.
+    pending = check_update.GitResult(
+        outcome=GitOutcome.PENDING_PUSH, reason="push_rejected", local_sha="abc"
     )
+    monkeypatch.setattr(check_update, "push_current_head", Mock(return_value=pending))
     monkeypatch.setattr(check_update, "masterdb_diff_repo", repo)
     monkeypatch.setattr(
         check_update, "version_info", {"dataVersion": "1", "assetVersion": "1"}
     )
-    monkeypatch.setattr(check_update.shutil, "rmtree", Mock())
-    monkeypatch.setattr(check_update, "check_git_folder", Mock(return_value=repo))
+    # Ensure no destructive cleanup helpers are reachable from this path.
+    monkeypatch.setattr(check_update, "check_git_folder", Mock())
 
     result = check_update.commit_master_diff()
 
-    assert result is False
+    assert result.outcome is GitOutcome.PENDING_PUSH
+    assert bool(result) is False
     repo.index.commit.assert_called_once()
-    repo.remote.return_value.push.return_value.raise_if_error.assert_called_once()
+    check_update.push_current_head.assert_called_once()
+    # The repo must not be recloned/destroyed on push failure.
+    check_update.check_git_folder.assert_not_called()
+
+
+def test_commit_master_diff_returns_failed_on_commit_error(monkeypatch):
+    """A commit (stage/commit) failure is distinct from a push failure."""
+    repo = Mock()
+    repo.is_dirty.return_value = True
+    repo.index.commit.side_effect = RuntimeError("nothing staged")
+
+    monkeypatch.setattr(check_update, "masterdb_diff_repo", repo)
+    monkeypatch.setattr(
+        check_update, "version_info", {"dataVersion": "1", "assetVersion": "1"}
+    )
+    monkeypatch.setattr(check_update, "push_current_head", Mock())
+
+    result = check_update.commit_master_diff()
+
+    assert result.outcome is GitOutcome.FAILED
+    assert result.reason == "commit_failed"
+    assert bool(result) is False
+    # A failed commit must never attempt to push.
+    check_update.push_current_head.assert_not_called()
+
+
+def test_commit_master_diff_returns_nothing_to_do_when_clean(monkeypatch):
+    repo = Mock()
+    repo.is_dirty.return_value = False
+    monkeypatch.setattr(check_update, "masterdb_diff_repo", repo)
+    monkeypatch.setattr(
+        check_update, "version_info", {"dataVersion": "1", "assetVersion": "1"}
+    )
+    monkeypatch.setattr(check_update, "push_current_head", Mock())
+
+    result = check_update.commit_master_diff()
+
+    assert result.outcome is GitOutcome.NOTHING_TO_DO
+    repo.index.commit.assert_not_called()
+    check_update.push_current_head.assert_not_called()
+
+
+def test_commit_master_diff_returns_failed_when_repo_missing(monkeypatch):
+    monkeypatch.setattr(check_update, "masterdb_diff_repo", None)
+    monkeypatch.setattr(
+        check_update, "version_info", {"dataVersion": "1", "assetVersion": "1"}
+    )
+    monkeypatch.setattr(check_update, "push_current_head", Mock())
+
+    result = check_update.commit_master_diff()
+
+    assert result.outcome is GitOutcome.FAILED
+    assert result.reason == "repo_missing"
+    check_update.push_current_head.assert_not_called()
+
+
+def test_commit_master_diff_returns_failed_when_version_info_missing(monkeypatch):
+    repo = Mock()
+    repo.is_dirty.return_value = True
+    monkeypatch.setattr(check_update, "masterdb_diff_repo", repo)
+    monkeypatch.setattr(check_update, "version_info", None)
+    monkeypatch.setattr(check_update, "push_current_head", Mock())
+
+    result = check_update.commit_master_diff()
+
+    assert result.outcome is GitOutcome.FAILED
+    assert result.reason == "version_info_missing"
+    repo.index.commit.assert_not_called()
+    check_update.push_current_head.assert_not_called()
+
+
+def test_commit_i18n_files_parity_with_master(monkeypatch):
+    """i18n wrapper is symmetric with master: same structured contract."""
+    repo = Mock()
+    repo.is_dirty.return_value = True
+    pending = check_update.GitResult(
+        outcome=GitOutcome.PENDING_PUSH, reason="push_rejected", local_sha="abc"
+    )
+    monkeypatch.setattr(check_update, "push_current_head", Mock(return_value=pending))
+    monkeypatch.setattr(check_update, "i18n_diff_repo", repo)
+    monkeypatch.setattr(
+        check_update, "version_info", {"dataVersion": "1", "assetVersion": "1"}
+    )
+    monkeypatch.setattr(check_update, "check_git_folder", Mock())
+
+    result = check_update.commit_i18n_files()
+
+    assert result.outcome is GitOutcome.PENDING_PUSH
+    assert bool(result) is False
+    repo.index.commit.assert_called_once()
+    check_update.push_current_head.assert_called_once()
+    check_update.check_git_folder.assert_not_called()
+
+
+def test_commit_i18n_files_failed_when_repo_missing(monkeypatch):
+    monkeypatch.setattr(check_update, "i18n_diff_repo", None)
+    monkeypatch.setattr(
+        check_update, "version_info", {"dataVersion": "1", "assetVersion": "1"}
+    )
+    monkeypatch.setattr(check_update, "push_current_head", Mock())
+
+    result = check_update.commit_i18n_files()
+
+    assert result.outcome is GitOutcome.FAILED
+    assert result.reason == "repo_missing"
 
 
 def test_post_strapi_ids_uses_authorization_header_not_query(monkeypatch):
