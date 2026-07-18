@@ -268,6 +268,7 @@ uv run --extra dev pytest tests/
 - 2026-07-18：在分支 `fix/phase-4-update-git-safety` 完成阶段 4。统一 scheduler cycle 在 04:00 保留 daily/full-refresh 语义、普通周期执行版本 gate；增加进程内非阻塞锁和按规范化路径排序的跨进程 `flock`。Git 更新改为显式 fetch/fast-forward/pending-push 状态机，push 失败保留本地提交并由后续周期恢复，禁止删除或重克隆已有仓库。
 - 2026-07-18：生成流程改为 repository-adjacent staging、JSON 重新解析校验、文件级 `os.replace` 发布；所有 master 非版本文件和 i18n 文件完成后，最后发布 master `versions.json`，仅成功后推进 published `version_info`。publication 失败清理两个 staging root，但保留已替换的 dirty 工作树供诊断；明确接受这不是多文件事务或跨仓库 2PC。
 - 2026-07-18：commit 仅使用 cycle manifest；所有仓库先 commit 再按固定顺序 push，首个 push 失败停止后续 push，保留所有 pending local SHA。通过本地 bare remote、spawn 锁和真实 staging 路径完成验收；未访问生产仓库或外部网络。
+- 2026-07-18：为后续“一小时硬期限与 04:00 daily 抢占”增加严格 owner metadata 基础（尚未接入生产）：包含 canonical schema、Linux `/proc` 身份字段、0600 原子 owner 文件、完整 metadata matched-delete、多锁写失败回滚和持有 `flock` 期间的 cleanup 协议。该提交不创建或终止 worker，不改变 scheduler 行为；owner/watchdog、进程树终止和 daily 抢占必须在 Linux CI/隔离环境完成真实信号验证后另行接入。
 
 ## 阶段 5：区域 Bootstrap 与客户端状态机
 
