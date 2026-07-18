@@ -3,6 +3,7 @@
 import json
 from unittest.mock import Mock, call
 
+import pytest
 import requests
 
 import check_update
@@ -269,3 +270,60 @@ def test_get_splitted_master_data_uses_fetch_master_split(monkeypatch):
         for method, _ in fake.calls
         if method != "master_split_paths"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Deadline unit tests (cooperative update-cycle deadline)
+# --------------------------------------------------------------------------- #
+
+
+def test_deadline_disabled_never_expires():
+    """A ``None`` deadline is disabled and never raises."""
+    d = check_update.Deadline(None)
+    assert d.enabled is False
+    assert d.expired() is False
+    d.check()  # must not raise
+
+
+def test_deadline_valid_finite_nonnegative():
+    """Finite non-negative seconds build an enabled, not-yet-expired deadline."""
+    d = check_update.Deadline(3600)
+    assert d.enabled is True
+    assert d.expired() is False
+    d.check()  # must not raise
+
+
+def test_deadline_zero_is_expired_immediately():
+    """A zero-second deadline is already expired at construction."""
+    d = check_update.Deadline(0)
+    assert d.enabled is True
+    assert d.expired() is True
+    with pytest.raises(check_update.CycleDeadlineExceeded):
+        d.check()
+
+
+def test_deadline_rejects_negative():
+    with pytest.raises(ValueError):
+        check_update.Deadline(-1)
+
+
+def test_deadline_rejects_infinite():
+    with pytest.raises(ValueError):
+        check_update.Deadline(float("inf"))
+
+
+def test_deadline_rejects_non_number():
+    with pytest.raises(ValueError):
+        check_update.Deadline("3600")  # type: ignore[arg-type]
+
+
+def test_deadline_expires_after_interval(monkeypatch):
+    """A deadline expires once the monotonic budget elapses."""
+    fake = {"t": 1000.0}
+    monkeypatch.setattr(check_update, "_monotonic", lambda: fake["t"])
+    d = check_update.Deadline(10)
+    assert d.expired() is False
+    fake["t"] = 1010.0
+    assert d.expired() is True
+    with pytest.raises(check_update.CycleDeadlineExceeded):
+        d.check()

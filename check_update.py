@@ -6,6 +6,7 @@ import sys
 import traceback
 from datetime import datetime
 from os import getenv, path
+from time import monotonic as _monotonic
 from time import sleep
 from typing import Any
 
@@ -84,6 +85,67 @@ _PROCESS_LOCK = ProcessCycleLock()
 
 # Repositories are prepared/committed/pushed in this deterministic order.
 _REPO_ORDER = ("master", "i18n")
+
+# Default cooperative deadline (seconds) for an ordinary update cycle. A daily
+# cycle never uses a deadline (it must always run to completion). Tests may pass
+# a smaller value via ``_run_update_cycle``'s ``deadline_seconds`` parameter.
+DEFAULT_ORDINARY_DEADLINE_SECONDS = 3600
+
+
+class CycleDeadlineExceeded(Exception):
+    """Raised cooperatively when an ordinary update cycle's deadline elapses.
+
+    This is a *cooperative* (not forced) deadline: the cycle checks it only at
+    safe seams and, on expiry, returns a stable ``deadline_exceeded`` status
+    rather than interrupting an in-flight atomic operation. A daily cycle never
+    raises this (its deadline is disabled).
+    """
+
+
+class Deadline:
+    """Monotonic, finite, non-negative countdown used to cooperatively bound a
+    single update cycle.
+
+    The deadline is validated at construction: ``seconds`` must be a finite,
+    non-negative real number. A ``None`` deadline is *disabled* (never expires),
+    which is what daily cycles use so they are never cooperatively cancelled.
+
+    Checks use a monotonic clock (``time.monotonic``) so wall-clock jumps (NTP,
+    suspend/resume) cannot shorten or extend the budget.
+    """
+
+    def __init__(self, seconds: float | None) -> None:
+        # ``None`` disables the deadline entirely (used by daily cycles).
+        if seconds is None:
+            self._deadline: float | None = None
+            return
+        if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+            raise ValueError("deadline seconds must be a real number or None")
+        is_finite = seconds == seconds and seconds not in (float("inf"), float("-inf"))
+        if not is_finite:
+            raise ValueError("deadline seconds must be finite")
+        if seconds < 0:
+            raise ValueError("deadline seconds must be non-negative")
+        self._deadline = _monotonic() + float(seconds)
+
+    @property
+    def enabled(self) -> bool:
+        """``True`` when the deadline is active; ``False`` when disabled."""
+        return self._deadline is not None
+
+    def expired(self) -> bool:
+        """Return ``True`` if the deadline is enabled and has elapsed."""
+        if self._deadline is None:
+            return False
+        return _monotonic() >= self._deadline
+
+    def check(self) -> None:
+        """Raise :class:`CycleDeadlineExceeded` if the deadline has elapsed.
+
+        A disabled deadline never raises.
+        """
+        if self.expired():
+            raise CycleDeadlineExceeded("update cycle deadline exceeded")
 
 
 def _staging_master_root() -> str:
@@ -1158,15 +1220,38 @@ def _cycle_should_proceed(daily: bool) -> str | None:
     return None
 
 
-def _run_update_cycle_locked(daily: bool) -> str:
+def _check_deadline(deadline: "Deadline | None") -> None:
+    """Cooperative deadline check at a safe seam.
+
+    A ``None`` deadline is disabled (daily cycles) and never raises. An enabled
+    deadline raises :class:`CycleDeadlineExceeded` once it has elapsed.
+    """
+    if deadline is not None:
+        deadline.check()
+
+
+def _run_update_cycle_locked(daily: bool, deadline: "Deadline | None" = None) -> str:
     """Body of the cycle, executed while all locks are held.
 
     Returns a short status string for tests/observability.
+
+    ``deadline`` is a cooperative :class:`Deadline` checked only at safe seams
+    (after existing maintenance/candidate gating, before any repo/network
+    preparation, before each prepare, between prepare and generation, before
+    commit, before push). It is never checked inside ``_publish_staging`` or an
+    individual atomic ``os.replace``. When ``daily`` is ``True`` the deadline
+    must be disabled (``None``) so a daily cycle is never cooperatively
+    cancelled by it.
     """
     # 0) Maintenance / candidate gating (inside the lock, no global mutation).
+    #    The deadline is checked only AFTER this gating and BEFORE any repo /
+    #    network preparation, so the gate itself is never cooperatively skipped.
     should_not_proceed = _cycle_should_proceed(daily)
     if should_not_proceed is not None:
         return should_not_proceed
+
+    # Safe seam: after gating, before any repo/network preparation work.
+    _check_deadline(deadline)
 
     # 1) Prepare every enabled repository; stop before generation if any is not
     #    ready (never mutates on a blocked repository).
@@ -1177,12 +1262,18 @@ def _run_update_cycle_locked(daily: bool) -> str:
         enabled.append(("i18n", i18n_diff_repo))
 
     for key, repo in enabled:
+        # Safe seam: before each prepare repo (network/disk work).
+        _check_deadline(deadline)
         prep = prepare_repo_for_update(repo, branch="main")
         if prep.outcome != GitOutcome.OK:
             logger.warning(
                 "[cycle] repository %s not ready: %s; skipping cycle", key, prep.reason
             )
             return f"not_ready:{key}:{prep.reason}"
+
+    # Safe seam: between prepare and generation (before the expensive network
+    # master-data fetch + staging generation).
+    _check_deadline(deadline)
 
     # 2) Generate (staging) + validate + publish atomically. A generation or
     #    validation failure is "generation_failed"; a publication (os.replace)
@@ -1195,6 +1286,8 @@ def _run_update_cycle_locked(daily: bool) -> str:
         return "generation_failed"
 
     # 3) Commit all enabled repositories before any push (explicit manifests).
+    #    Safe seam: before commit.
+    _check_deadline(deadline)
     commits = _commit_enabled_repositories(enabled, manifest)
 
     # If any commit failed, do not push anything (preserve all local commits).
@@ -1203,7 +1296,8 @@ def _run_update_cycle_locked(daily: bool) -> str:
         return "commit_failed"
 
     # 4) Push in deterministic order; stop after the first failure, preserving
-    #    every local unpushed commit.
+    #    every local unpushed commit. Safe seam: before push.
+    _check_deadline(deadline)
     push_status = _push_enabled_repositories(commits)
     if push_status is not None:
         return push_status
@@ -1211,13 +1305,33 @@ def _run_update_cycle_locked(daily: bool) -> str:
     return "ok"
 
 
-def _run_update_cycle(daily: bool) -> str:
+def _run_update_cycle(
+    daily: bool,
+    deadline: "Deadline | None" = None,
+    deadline_seconds: float | None = None,
+) -> str:
     """Single update-cycle entry point guarded by the in-process + flock locks.
 
     Overlapping same-process triggers *skip* (non-blocking in-process lock);
     a held cross-process flock also causes a skip. Locks are released on every
     exit path.
+
+    The cooperative ``deadline`` is created/received once here. When ``daily`` is
+    ``True`` the deadline is always disabled (``None``) so a daily cycle is never
+    cooperatively cancelled. Otherwise, an explicit ``deadline`` is used, or one
+    is built from ``deadline_seconds`` (defaulting to
+    :data:`DEFAULT_ORDINARY_DEADLINE_SECONDS`). On
+    :class:`CycleDeadlineExceeded` the cycle returns the stable ``deadline_exceeded``
+    status; the existing ``finally`` still releases the process/flock locks.
     """
+    # A daily cycle must never be cooperatively cancelled by a deadline.
+    if daily:
+        deadline = None
+    elif deadline is None:
+        if deadline_seconds is None:
+            deadline_seconds = DEFAULT_ORDINARY_DEADLINE_SECONDS
+        deadline = Deadline(deadline_seconds)
+
     acquired = _PROCESS_LOCK.acquire()
     if not acquired:
         logger.info("[cycle] skipped: another update cycle is already running")
@@ -1229,10 +1343,13 @@ def _run_update_cycle(daily: bool) -> str:
     try:
         try:
             with repo_file_locks(lock_files, non_blocking=True):
-                return _run_update_cycle_locked(daily)
+                return _run_update_cycle_locked(daily, deadline=deadline)
         except RepoLockUnavailable as err:
             logger.warning("[cycle] skipped: could not acquire repo locks: %s", err)
             return "skipped:repo_lock"
+        except CycleDeadlineExceeded:
+            logger.warning("[cycle] skipped: cooperative deadline exceeded")
+            return "deadline_exceeded"
     finally:
         _PROCESS_LOCK.release()
 

@@ -356,6 +356,36 @@ UNINITIALIZED
 
 - 待填写
 
+### 子项 A：协作式更新周期 Deadline（已落地，独立于 RPC/队列 deadline）
+
+本子项实现阶段 6 中“更新周期时间预算”的最小、协作式（非强制）版本，仅作用于 `check_update._run_update_cycle` 的单一更新周期，不接入 PM2 进程树、不发送信号、不终止 worker、不做 daily 抢占。
+
+#### 已接受的边界（Accepted Boundary）
+
+- **普通周期默认预算**：`DEFAULT_ORDINARY_DEADLINE_SECONDS = 3600` 秒（1 小时）。可通过 `_run_update_cycle(daily=False, deadline_seconds=...)` 或显式 `Deadline` 由测试/调用方控制；不新增环境变量配置（沿用既有函数参数/默认值机制）。
+- **协作式检查点（cooperative checkpoints only）**：deadline 仅在安全接缝处检查，绝不中断正在进行的原子操作。检查点顺序为：
+  1. 现有 maintenance / candidate 门控（`_cycle_should_proceed`）**之后**；
+  2. 任意仓库/网络准备**之前**（首个准备前接缝）；
+  3. 每个 `prepare_repo_for_update` **之前**；
+  4. prepare 与 generation **之间**（昂贵网络 fetch + staging 生成之前）；
+  5. commit **之前**；
+  6. push **之前**。
+- **不强制终止（no forced termination）**：deadline 过期只让周期在下一个安全接缝返回稳定状态 `deadline_exceeded`；不杀进程、不抛信号、不调用 `os.kill`、不触发任何跨 PM2 抢占（no cross-PM2 preemption）。`_publish_staging` 与单个 `os.replace` 原子替换内部**不检查** deadline，保证发布原子性不被打断。
+- **被阻塞调用可能超过预算（blocked calls may exceed budget until next seam）**：若某个 prepare / 网络 fetch / commit 在检查点之间被阻塞（例如慢网络、被 `flock` 等待），该调用允许运行到完成，周期仅在**下一个**检查点发现过期；预算是协作上界而非硬实时上界。
+- **daily 禁用 deadline（daily disables the deadline）**：`daily=True` 时 deadline 强制为 `None`，daily/full-refresh 周期永不被协作式取消；即使调用方显式传入 `Deadline` 也会被忽略。
+- **锁释放语义不变**：`deadline_exceeded` 经由现有 `finally` 释放进程内锁与仓库 `flock`，不回滚本地 commit，不改变发布/push 安全行为；后续周期可正常获取锁。
+
+#### 验收证据（协作式 deadline）
+
+- `tests/test_check_update.py`：`Deadline` 单元测试——`None` 禁用永不过期、有限非负秒构建、零秒立即过期、拒绝负数/无穷/非数字；通过 monkeypatch `check_update._monotonic` 验证间隔后过期（无 sleep）。
+- `tests/test_update_cycle_safety.py`：
+  - `test_ordinary_expired_deadline_returns_deadline_exceeded`：普通周期过期 deadline 返回 `deadline_exceeded` 且不进入昂贵生成阶段。
+  - `test_daily_ignores_expired_deadline_and_proceeds`：daily 忽略过期 deadline 并继续完成。
+  - `test_deadline_exceeded_releases_outer_process_lock_and_repo_flock`：deadline 路径释放进程锁 + 仓库 flock，后续周期可获取并完成。
+  - `test_deadline_exceeded_before_commit_skips_push`：确定性 deadline 替身（无 sleep）放行门控/prepare/generation 接缝、仅在 pre-commit 接缝抛出；证明 generation 已发生而 commit/push 未发生。
+  - `test_deadline_disabled_for_daily_even_if_passed`：显式传入过期 deadline 时 daily 仍禁用并继续。
+- 验证（2026-07-19）：`ruff check` 通过；`pytest tests/test_check_update.py tests/test_update_cycle_safety.py tests/test_update_cycle_lock_integration.py`：84 passed。
+
 ## 阶段 7：Event Tracker Outbox 与 API 响应校验
 
 ### 目标

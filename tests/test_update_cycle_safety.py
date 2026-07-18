@@ -171,6 +171,18 @@ def _stub_jsonrpc(
     monkeypatch.setattr(cu.jsonrpc_client, "request", _request)
 
 
+def _lock_paths(tmp_path):
+    """Return (master_folder, i18n_folder, master_lock, i18n_lock) for tmp."""
+    master_folder = str(tmp_path / "masterDBDiff")
+    i18n_folder = str(tmp_path / "i18n")
+    return (
+        master_folder,
+        i18n_folder,
+        master_folder + ".lock",
+        i18n_folder + ".lock",
+    )
+
+
 # --------------------------------------------------------------------------- #
 # A. Scheduling
 # --------------------------------------------------------------------------- #
@@ -1423,7 +1435,7 @@ def test_run_update_cycle_propagates_body_runtime_error_and_releases_lock(monkey
 
     monkeypatch.setattr(cu, "repo_file_locks", _ok_locks)
 
-    def _boom_locked(daily):
+    def _boom_locked(daily, deadline=None):
         raise RuntimeError("cycle body failed")
 
     monkeypatch.setattr(cu, "_run_update_cycle_locked", _boom_locked)
@@ -1988,3 +2000,190 @@ def test_bootstrap_body_has_no_forbidden_calls_or_version_assign():
     assert "refresh_version" not in called
     assert "refresh_information" not in called
     assert not _has_version_info_assignment(func)
+
+
+# --------------------------------------------------------------------------- #
+# N. Cooperative deadline (ordinary expires -> deadline_exceeded; daily ignores)
+# --------------------------------------------------------------------------- #
+
+
+def test_ordinary_expired_deadline_returns_deadline_exceeded(monkeypatch, tmp_path):
+    """An ordinary run whose deadline already expired must return
+    ``deadline_exceeded`` without invoking the expensive generation phase."""
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+
+    generation_ran = {"flag": False}
+    monkeypatch.setattr(
+        cu, "_generate_and_publish",
+        lambda *a, **k: generation_ran.__setitem__("flag", True) or {},
+    )
+    monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
+    monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
+
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+    # A zero-second deadline is already expired at the first safe seam.
+    status = cu._run_update_cycle(daily=False, deadline_seconds=0)
+    assert status == "deadline_exceeded"
+    # The expensive generation phase must NOT have run.
+    assert generation_ran["flag"] is False
+
+
+def test_daily_ignores_expired_deadline_and_proceeds(monkeypatch, tmp_path):
+    """A daily run must ignore an expired deadline and proceed to completion."""
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+
+    generation_ran = {"flag": False}
+    monkeypatch.setattr(
+        cu, "_generate_and_publish",
+        lambda *a, **k: generation_ran.__setitem__("flag", True) or {},
+    )
+    monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
+    monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
+
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+    # Even with an expired deadline, daily must proceed (deadline disabled).
+    status = cu._run_update_cycle(daily=True, deadline_seconds=0)
+    assert status == "ok"
+    assert generation_ran["flag"] is True
+
+
+def test_deadline_exceeded_releases_outer_process_lock_and_repo_flock(
+    monkeypatch, tmp_path
+):
+    """The deadline path must release the outer process lock + repo flock so a
+    follow-up run can acquire them and complete."""
+    master_folder, _i18n_folder, master_lock, _i18n_lock = _lock_paths(tmp_path)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_folder)
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", _i18n_folder)
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+    monkeypatch.setattr(cu, "_generate_and_publish", lambda *a, **k: {})
+    monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
+    monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+
+    # First ordinary run hits the expired deadline and returns deadline_exceeded.
+    status1 = cu._run_update_cycle(daily=False, deadline_seconds=0)
+    assert status1 == "deadline_exceeded"
+
+    # The in-process cycle lock is free again.
+    assert cu._PROCESS_LOCK.acquire() is True
+    cu._PROCESS_LOCK.release()
+
+    # The repo flock is free again: a fresh process can re-acquire it.
+    with repo_file_locks([master_lock], non_blocking=True):
+        pass  # acquired cleanly after the deadline-exceeded cycle
+
+    # A follow-up run can acquire both locks and complete normally.
+    status2 = cu._run_update_cycle(daily=False, deadline_seconds=3600)
+    assert status2 == "ok"
+
+
+def test_deadline_exceeded_before_commit_skips_push(monkeypatch, tmp_path):
+    """If the deadline expires specifically at the pre-commit seam (after
+    generation succeeds), the cycle returns ``deadline_exceeded``, generation
+    occurred, but no commit/push happened. Uses a deterministic deadline test
+    double (no sleeps) that permits every seam up to and including generation,
+    then raises only at the pre-commit check."""
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+
+    committed = {"n": 0}
+    pushed = {"n": 0}
+    monkeypatch.setattr(
+        cu, "_commit_enabled_repositories",
+        lambda *a, **k: committed.__setitem__("n", committed["n"] + 1) or {},
+    )
+    monkeypatch.setattr(
+        cu, "_push_enabled_repositories",
+        lambda *a, **k: pushed.__setitem__("n", pushed["n"] + 1) or None,
+    )
+
+    generation_ran = {"flag": False}
+
+    def _refresh_ok(*args, **kwargs):
+        generation_ran["flag"] = True
+        cu._write_master_file("cards.json", [{"id": 1}])
+        cu._write_master_file("versions.json", {"dataVersion": "1"})
+
+    monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
+
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+
+    # Deterministic deadline double: permits the gating-after, prepare, and
+    # between-prepare/generation seams (so generation runs), then raises only at
+    # the pre-commit seam. Built on the disabled Deadline base (None seconds) and
+    # overrides ``check`` so the early seams pass and only pre-commit trips.
+    calls = {"n": 0}
+
+    class _PreCommitDeadline(cu.Deadline):
+        def __init__(self):
+            super().__init__(None)  # disabled base; we override check()
+
+        def check(self):
+            # The pre-commit seam is the 4th call: gating-after, prepare, and
+            # between-prepare/generation are calls 1-3; the 4th is pre-commit.
+            calls["n"] += 1
+            if calls["n"] >= 4:
+                raise cu.CycleDeadlineExceeded("expired at pre-commit seam")
+
+    status = cu._run_update_cycle(daily=False, deadline=_PreCommitDeadline())
+    assert status == "deadline_exceeded"
+    # Generation ran (early seams were permitted), but commit/push did not.
+    assert generation_ran["flag"] is True
+    assert committed["n"] == 0
+    assert pushed["n"] == 0
+
+
+def test_deadline_disabled_for_daily_even_if_passed(monkeypatch, tmp_path):
+    """Even if a caller passes an explicit deadline, daily=True disables it."""
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+
+    generation_ran = {"flag": False}
+    monkeypatch.setattr(
+        cu, "_generate_and_publish",
+        lambda *a, **k: generation_ran.__setitem__("flag", True) or {},
+    )
+    monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
+    monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
+
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+    explicit_deadline = cu.Deadline(0)  # already expired
+    status = cu._run_update_cycle(daily=True, deadline=explicit_deadline)
+    assert status == "ok"
+    assert generation_ran["flag"] is True
