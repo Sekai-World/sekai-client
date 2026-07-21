@@ -39,6 +39,13 @@ import pytest
 
 import check_update as cu
 from utils.git_lock import repo_file_locks
+from utils.update_transaction import (
+    RepoState,
+    TransactionJournal,
+    TxnPhase,
+    new_transaction_id,
+    staging_dir_for,
+)
 
 # Project root so spawned children can ``import utils.git_lock`` (spawn re-execs
 # Python without pytest's injected sys.path).
@@ -162,9 +169,10 @@ def test_held_master_lock_returns_skipped_repo_lock_then_runs(monkeypatch, tmp_p
     prepare_calls = []
     monkeypatch.setattr(
         cu, "prepare_repo_for_update",
-        lambda repo, branch="main": prepare_calls.append(repo) or _prepare_ok(),
+        lambda repo, branch="main", allow_push=True: prepare_calls.append(repo)
+        or _prepare_ok(),
     )
-    monkeypatch.setattr(cu, "_generate_and_publish", lambda daily: {})
+    monkeypatch.setattr(cu, "_generate_and_publish", lambda daily, **kwargs: {})
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
     _stub_gate(monkeypatch)
@@ -222,14 +230,14 @@ def test_both_real_locks_held_during_first_prepare(monkeypatch, tmp_path):
     _stub_gate(monkeypatch)
 
     # Stub the rest of the body so the cycle completes after the prepare probe.
-    monkeypatch.setattr(cu, "_generate_and_publish", lambda daily: {})
+    monkeypatch.setattr(cu, "_generate_and_publish", lambda daily, **kwargs: {})
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
 
     lock_paths = [master_lock, i18n_lock]
     first_probe = {"done": False}
 
-    def _fake_prepare(repo, branch="main"):
+    def _fake_prepare(repo, branch="main", allow_push=True):
         # Only probe on the very first (master) prepare call.
         if not first_probe["done"]:
             first_probe["done"] = True
@@ -279,7 +287,7 @@ def test_body_runtime_error_propagates_not_skipped(monkeypatch, tmp_path):
     # The RuntimeError must be raised by the prepare step (NOT inside
     # ``_generate_and_publish``, which would be caught and reported as
     # ``generation_failed``). A body exception is meant to propagate unchanged.
-    def _boom_prepare(repo, branch="main"):
+    def _boom_prepare(repo, branch="main", allow_push=True):
         raise RuntimeError("boom in cycle body")
 
     monkeypatch.setattr(cu, "prepare_repo_for_update", _boom_prepare)
@@ -355,3 +363,45 @@ def test_partial_lock_failure_skips_and_frees_acquired_lock(monkeypatch, tmp_pat
     assert result.get(timeout=30) == ("ok", None)
     with repo_file_locks([master_lock, i18n_lock], non_blocking=True):
         pass  # both free now
+
+
+def test_recovery_journal_adds_lock_for_now_disabled_i18n(monkeypatch, tmp_path):
+    """Recovery locks journal-enabled repos even after options disable i18n."""
+    master_folder, i18n_folder, master_lock, i18n_lock = _lock_paths(tmp_path)
+    master_repo = cu.Repo.init(master_folder)
+    i18n_repo = cu.Repo.init(i18n_folder)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_folder)
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_folder)
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+
+    txn_id = new_transaction_id()
+    repos = {
+        "master": RepoState(
+            staging_dir=staging_dir_for(master_folder, txn_id),
+            repo_root=os.path.realpath(master_folder),
+        ),
+        "i18n": RepoState(
+            staging_dir=staging_dir_for(i18n_folder, txn_id),
+            repo_root=os.path.realpath(i18n_folder),
+        ),
+    }
+    # This test exercises lock selection only; the journal need not contain a
+    # publishable file set because no recovery body is entered here.
+    journal = TransactionJournal(
+        master_git_dir=master_repo.git_dir,
+        transaction_id=txn_id,
+        candidate={},
+        enabled_repos=["master", "i18n"],
+        publish_order=["master", "i18n"],
+        repos=repos,
+        phase=TxnPhase.PUBLISHING,
+    )
+    journal.write()
+
+    selected = {os.path.realpath(p) for p in cu._cycle_lock_paths()}
+    assert os.path.realpath(master_lock) in selected
+    assert os.path.realpath(i18n_lock) in selected

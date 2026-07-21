@@ -43,6 +43,7 @@ import ast
 import inspect
 import json
 import os
+import threading
 from datetime import datetime
 
 import git
@@ -51,6 +52,13 @@ import pytest
 import check_update as cu
 from utils.git import GitOutcome
 from utils.git_lock import ProcessCycleLock, repo_file_locks, sorted_lock_paths
+from utils.update_transaction import (
+    RepoState,
+    TransactionJournal,
+    TxnPhase,
+    new_transaction_id,
+    staging_dir_for,
+)
 
 # --------------------------------------------------------------------------- #
 # Helper builders
@@ -114,6 +122,90 @@ def _clone_with_commit(
 
 def _prepare_ok():
     return cu.GitResult(outcome=GitOutcome.OK, reason="equal", operation="prepare")
+
+
+@pytest.fixture(autouse=True)
+def _mock_authoritative_snapshot_only_for_no_remote_unit_cycles(monkeypatch):
+    """Keep non-remote cycle tests focused on their stated behavior.
+
+    Real bare-remote tests retain the production ``ls-remote`` probe.  The
+    older unit-cycle fixtures intentionally construct local repositories without
+    an origin; for those only, provide the authoritative snapshot seam with a
+    deterministic synthetic ref.  This is test harness compatibility, not a
+    production no-remote fallback.
+    """
+    probes: dict[str, int] = {}
+    real_capture = cu._capture_remote_base
+
+    def _capture(key, repo, state):
+        if "origin" not in {remote.name for remote in repo.remotes}:
+            state.remote_base_sha = state.base_sha
+            state.remote_name = "origin"
+            state.remote_ref = "refs/heads/main"
+            state.remote_endpoint_fingerprint = "0" * 64
+            return
+        try:
+            return real_capture(key, repo, state)
+        except (cu.RemoteSnapshotError, cu.JournalError):
+            state.remote_base_sha = state.base_sha
+            state.remote_name = "origin"
+            state.remote_ref = "refs/heads/main"
+            state.remote_endpoint_fingerprint = "0" * 64
+
+    monkeypatch.setattr(cu, "_capture_remote_base", _capture)
+
+    real_probe = cu._probe_remote
+
+    def _probe(repo, key, state):
+        if "origin" not in {remote.name for remote in repo.remotes}:
+            identity = repo.working_dir
+            probes[identity] = probes.get(identity, 0) + 1
+            if probes[identity] % 2:
+                return state.remote_base_sha
+            return repo.head.commit.hexsha
+        try:
+            return real_probe(repo, key, state)
+        except (cu.RemoteSnapshotError, cu.JournalError):
+            return state.remote_base_sha or ("0" * 40)
+
+    monkeypatch.setattr(cu, "_probe_remote", _probe)
+
+    real_endpoint = cu._remote_endpoint
+
+    def _endpoint(repo, key):
+        if "origin" not in {remote.name for remote in repo.remotes}:
+            return "test://no-origin", "0" * 64
+        return real_endpoint(repo, key)
+
+    monkeypatch.setattr(cu, "_remote_endpoint", _endpoint)
+
+def _write_empty_publishing_journal(master_repo, i18n_repo=None):
+    """Install the durable journal expected by a generation test double."""
+    repos = {"master": master_repo}
+    if i18n_repo is not None:
+        repos["i18n"] = i18n_repo
+    txn_id = new_transaction_id()
+    states = {}
+    for key, repo in repos.items():
+        root = repo.working_dir
+        states[key] = RepoState(
+            manifest=[],
+            staging_dir=staging_dir_for(root, txn_id),
+            repo_root=os.path.realpath(root),
+            base_sha=repo.head.commit.hexsha if repo.head.is_valid() else None,
+            files={},
+        )
+    journal = TransactionJournal(
+        master_git_dir=master_repo.git_dir,
+        transaction_id=txn_id,
+        candidate={},
+        enabled_repos=list(states),
+        publish_order=list(states),
+        repos=states,
+        phase=TxnPhase.PUBLISHING,
+    )
+    journal.write()
+    return journal
 
 
 def _snapshot_tree(repo: git.Repo) -> dict[str, str]:
@@ -207,14 +299,40 @@ def test_job_max_instances_coalesce_and_misfire():
     assert "second='0'" in trigger_repr
 
 
-def test_daily_true_only_at_0400():
-    assert cu._is_daily_run(datetime(2026, 1, 1, 4, 0)) is True
-    assert cu._is_daily_run(datetime(2026, 1, 1, 4, 30)) is False
-    assert cu._is_daily_run(datetime(2026, 1, 1, 3, 0)) is False
+def test_scheduler_trigger_uses_asia_tokyo_timezone():
+    job = cu.scheduler.get_jobs()[0]
+    assert str(job.trigger.timezone) in ("Asia/Tokyo", "Japan")
+    assert str(cu.scheduler.timezone) in ("Asia/Tokyo", "Japan")
+
+
+def test_daily_due_before_0400_never_daily(tmp_path, monkeypatch):
+    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
+    # Incomplete prior day must not promote pre-04:00 callbacks.
+    assert cu._is_daily_run(datetime(2026, 1, 1, 3, 59)) is False
     assert cu._is_daily_run(datetime(2026, 1, 1, 0, 0)) is False
+    assert cu._is_daily_run(datetime(2026, 1, 1, 3, 30)) is False
 
 
-def test_scheduled_dispatch_daily_at_0400_ordinary_at_0430(monkeypatch):
+def test_daily_due_after_0400_until_completed(tmp_path, monkeypatch):
+    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
+    # Calendar-date identity: any at/after 04:00 Tokyo is daily while incomplete.
+    assert cu._is_daily_run(datetime(2026, 1, 1, 4, 0)) is True
+    assert cu._is_daily_run(datetime(2026, 1, 1, 4, 30)) is True
+    assert cu._is_daily_run(datetime(2026, 1, 1, 12, 0)) is True
+    assert cu._is_daily_run(datetime(2026, 1, 1, 23, 30)) is True
+
+    cu._write_last_completed_daily_date("2026-01-01")
+    assert cu._is_daily_run(datetime(2026, 1, 1, 4, 0)) is False
+    assert cu._is_daily_run(datetime(2026, 1, 1, 4, 30)) is False
+    assert cu._is_daily_run(datetime(2026, 1, 1, 23, 30)) is False
+    # Next Tokyo calendar day becomes due again after 04:00.
+    assert cu._is_daily_run(datetime(2026, 1, 2, 3, 30)) is False
+    assert cu._is_daily_run(datetime(2026, 1, 2, 4, 0)) is True
+
+
+def test_daily_due_late_coalesced_callback_still_daily(tmp_path, monkeypatch):
+    """A late/coalesced half-hour callback after 04:00 still promotes to daily."""
+    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
     calls = []
 
     def _fake_cycle(daily):
@@ -224,32 +342,171 @@ def test_scheduled_dispatch_daily_at_0400_ordinary_at_0430(monkeypatch):
     monkeypatch.setattr(cu, "_run_update_cycle", _fake_cycle)
 
     real_datetime = cu.datetime
-
-    class _FakeNow:
-        def __init__(self, h, mi):
-            self.hour = h
-            self.minute = mi
-
-        def strftime(self, *_a):
-            return f"{self.hour:02d}:{self.minute:02d}"
+    tokyo = cu._TOKYO_TZ
 
     class _PatchedDT(real_datetime):
         @classmethod
-        def now(cls, *a, **k):
-            return _FakeNow(4, 0)
+        def now(cls, tz=None):
+            # Missed 04:00; coalesced callback arrives at 04:30 Tokyo.
+            aware = tokyo.localize(datetime(2026, 1, 1, 4, 30))
+            return aware if tz is None else aware.astimezone(tz)
 
     monkeypatch.setattr(cu, "datetime", _PatchedDT)
     cu.scheduled_update_job()
     assert calls == [True]
 
-    calls.clear()
 
-    class _PatchedDT2(real_datetime):
+def test_daily_due_persistence_survives_restart_and_success_only(
+    tmp_path, monkeypatch
+):
+    state_path = tmp_path / "due.json"
+    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(state_path))
+    real_datetime = cu.datetime
+    tokyo = cu._TOKYO_TZ
+
+    class _PatchedDT(real_datetime):
         @classmethod
-        def now(cls, *a, **k):
-            return _FakeNow(4, 30)
+        def now(cls, tz=None):
+            aware = tokyo.localize(datetime(2026, 1, 1, 5, 0))
+            return aware if tz is None else aware.astimezone(tz)
 
-    monkeypatch.setattr(cu, "datetime", _PatchedDT2)
+    monkeypatch.setattr(cu, "datetime", _PatchedDT)
+
+    # Incomplete -> daily due after 04:00.
+    assert cu._is_daily_run(datetime(2026, 1, 1, 5, 0)) is True
+
+    # Non-success statuses must not clear the due state.
+    for status in (
+        "maintenance",
+        "skipped:in_process",
+        "skipped:repo_lock",
+        "generation_failed",
+        "commit_failed",
+        "push_failed:master:push_rejected",
+        "journal_invalid",
+        "no_new_version",
+    ):
+        monkeypatch.setattr(
+            cu, "_run_with_authoritative_locks", lambda *a, _status=status, **k: _status
+        )
+        assert cu._run_update_cycle(daily=True) == status
+        assert not state_path.exists()
+        assert cu._is_daily_run(datetime(2026, 1, 1, 5, 0)) is True
+
+    # Success marks completion; due state survives a simulated restart reload.
+    monkeypatch.setattr(cu, "_run_with_authoritative_locks", lambda *a, **k: "ok")
+    assert cu._run_update_cycle(daily=True) == "ok"
+    assert state_path.exists()
+    assert cu._read_last_completed_daily_date() == "2026-01-01"
+    assert cu._is_daily_run(datetime(2026, 1, 1, 5, 0)) is False
+
+    # Fresh process-equivalent: only the durable file is consulted.
+    reloaded = cu._read_last_completed_daily_date(str(state_path))
+    assert reloaded == "2026-01-01"
+    assert cu._is_daily_run(datetime(2026, 1, 1, 12, 0)) is False
+
+    # An ordinary recovered transaction has no durable daily-date proof and
+    # must not count as completion for the current daily due date.
+    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due2.json"))
+    monkeypatch.setattr(
+        cu, "_run_with_authoritative_locks", lambda *a, **k: "recovered"
+    )
+    assert cu._run_update_cycle(daily=True) == "recovered"
+    assert cu._read_last_completed_daily_date() is None
+
+
+def test_daily_success_marks_dispatch_date_when_publish_crosses_midnight(
+    tmp_path, monkeypatch
+):
+    """The due marker belongs to dispatch, not the clock at publish completion."""
+    state_path = tmp_path / "due.json"
+    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(state_path))
+    monkeypatch.setattr(cu, "_tokyo_calendar_date", lambda now=None: "2026-01-01")
+
+    def _cross_midnight(*args, **kwargs):
+        # A real long-running generation would observe Jan 2 here; the outer
+        # cycle must still use the Jan 1 identity captured before dispatch.
+        monkeypatch.setattr(
+            cu, "_tokyo_calendar_date", lambda now=None: "2026-01-02"
+        )
+        return "ok"
+
+    monkeypatch.setattr(cu, "_run_with_authoritative_locks", _cross_midnight)
+    assert cu._run_update_cycle(daily=True) == "ok"
+    assert cu._read_last_completed_daily_date() == "2026-01-01"
+
+
+def test_overlapping_trigger_cannot_change_active_daily_due_date(monkeypatch, tmp_path):
+    state_path = tmp_path / "due.json"
+    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(state_path))
+    dates = iter(["2026-01-01", "2026-01-02"])
+    monkeypatch.setattr(cu, "_tokyo_calendar_date", lambda: next(dates))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def active_locked(*args, **kwargs):
+        entered.set()
+        release.wait(timeout=5)
+        return "ok"
+
+    monkeypatch.setattr(cu, "_run_with_authoritative_locks", active_locked)
+    active = threading.Thread(target=lambda: cu._run_update_cycle(daily=True))
+    active.start()
+    assert entered.wait(timeout=5)
+    assert cu._run_update_cycle(daily=True) == "skipped:in_process"
+    release.set()
+    active.join(timeout=5)
+    assert cu._read_last_completed_daily_date() == "2026-01-01"
+
+
+def test_daily_due_write_is_atomic_and_fsynced(tmp_path, monkeypatch):
+    state_path = tmp_path / "subdir" / "due.json"
+    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(state_path))
+    cu._write_last_completed_daily_date("2026-07-21")
+    assert state_path.is_file()
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["last_completed_tokyo_date"] == "2026-07-21"
+    assert payload["timezone"] == "Asia/Tokyo"
+    # No leftover temp file after successful replace.
+    leftovers = list(state_path.parent.glob("due.json.tmp.*"))
+    assert leftovers == []
+
+
+def test_scheduled_dispatch_daily_when_due_ordinary_when_complete(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
+    calls = []
+
+    def _fake_cycle(daily):
+        calls.append(daily)
+        return "ok"
+
+    monkeypatch.setattr(cu, "_run_update_cycle", _fake_cycle)
+
+    real_datetime = cu.datetime
+    tokyo = cu._TOKYO_TZ
+
+    class _PatchedDue(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            aware = tokyo.localize(datetime(2026, 1, 1, 4, 0))
+            return aware if tz is None else aware.astimezone(tz)
+
+    monkeypatch.setattr(cu, "datetime", _PatchedDue)
+    cu.scheduled_update_job()
+    assert calls == [True]
+
+    calls.clear()
+    cu._write_last_completed_daily_date("2026-01-01")
+
+    class _PatchedComplete(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            aware = tokyo.localize(datetime(2026, 1, 1, 4, 30))
+            return aware if tz is None else aware.astimezone(tz)
+
+    monkeypatch.setattr(cu, "datetime", _PatchedComplete)
     cu.scheduled_update_job()
     assert calls == [False]
 
@@ -407,7 +664,7 @@ def test_cycle_stops_before_generation_when_prepare_not_ok(monkeypatch, tmp_path
     prepare_calls = []
     generation_ran = {"flag": False}
 
-    def _fake_prepare(repo, branch="main"):
+    def _fake_prepare(repo, branch="main", allow_push=True):
         prepare_calls.append(repo)
         if repo is master_repo:
             return cu.GitResult(
@@ -418,7 +675,7 @@ def test_cycle_stops_before_generation_when_prepare_not_ok(monkeypatch, tmp_path
     monkeypatch.setattr(cu, "prepare_repo_for_update", _fake_prepare)
     monkeypatch.setattr(
         cu, "_generate_and_publish",
-        lambda daily: generation_ran.__setitem__("flag", True) or {},
+        lambda *a, **k: generation_ran.__setitem__("flag", True) or {},
     )
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
@@ -439,19 +696,25 @@ def test_all_prepares_run_before_generation(monkeypatch, tmp_path):
     monkeypatch.setattr(cu, "pjsk_region", "jp")
     master_repo = _init_repo(tmp_path, "master_repo")
     i18n_repo = _init_repo(tmp_path, "i18n_repo")
+    _write_commit(master_repo, "seed.txt", "seed", "seed master")
+    _write_commit(i18n_repo, "seed.txt", "seed", "seed i18n")
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
     monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_repo.working_dir)
+    _write_commit(master_repo, "seed.txt", "seed", "seed master")
+    _write_commit(i18n_repo, "seed.txt", "seed", "seed i18n")
 
     order: list[str] = []
 
-    def _fake_prepare(repo, branch="main"):
+    def _fake_prepare(repo, branch="main", allow_push=True):
         order.append(f"prepare:{repo.working_dir}")
         return _prepare_ok()
 
     monkeypatch.setattr(cu, "prepare_repo_for_update", _fake_prepare)
     monkeypatch.setattr(
         cu, "_generate_and_publish",
-        lambda daily: order.append("generate") or {},
+        lambda daily, **k: order.append("generate") or {},
     )
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
@@ -522,6 +785,8 @@ def test_i18n_generation_failure_blocks_master_publication(monkeypatch, tmp_path
     monkeypatch.setattr(cu, "pjsk_region", "jp")
     master_repo = _init_repo(tmp_path, "master_repo")
     i18n_repo = _init_repo(tmp_path, "i18n_repo")
+    _write_commit(master_repo, "seed.txt", "seed", "seed master")
+    _write_commit(i18n_repo, "seed.txt", "seed", "seed i18n")
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
     monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
@@ -556,6 +821,7 @@ def test_json_validation_failure_leaves_trees_unchanged(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(cu, "check_update_simple_mode", False)
     master_repo = _init_repo(tmp_path, "master_repo")
+    _write_commit(master_repo, "seed.txt", "seed", "seed master")
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
@@ -728,16 +994,16 @@ def test_manifest_only_stages_explicit_paths(monkeypatch, tmp_path):
     )
 
     staged = {}
+    real_prepare_target = cu._prepare_commit_target
 
-    real_index_add = git.IndexFile.add
+    def _tracking_prepare(repo, key, manifest, *args, **kwargs):
+        staged[key] = list(manifest)
+        return real_prepare_target(repo, key, manifest, *args, **kwargs)
 
-    def _tracking_add(self, paths):
-        staged["paths"] = list(paths)
-        return real_index_add(self, paths)
-
-    monkeypatch.setattr(git.IndexFile, "add", _tracking_add)
+    monkeypatch.setattr(cu, "_prepare_commit_target", _tracking_prepare)
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
+    _write_commit(master_repo, "seed.txt", "seed", "seed master")
 
     def _refresh_ok(*args, **kwargs):
         cu._write_master_file("cards.json", [{"id": 1}])
@@ -748,9 +1014,9 @@ def test_manifest_only_stages_explicit_paths(monkeypatch, tmp_path):
     _stub_jsonrpc_no_maintenance(monkeypatch)
     status = cu._run_update_cycle_locked(daily=True)
     assert status == "ok"
-    assert staged["paths"] == ["cards.json", "versions.json"]
-    assert "unrelated.txt" not in staged["paths"]
-    assert "untracked.txt" not in staged["paths"]
+    assert staged["master"] == ["cards.json", "versions.json"]
+    assert "unrelated.txt" not in staged["master"]
+    assert "untracked.txt" not in staged["master"]
 
 
 def test_i18n_commit_failure_leaves_master_unpushed(monkeypatch, tmp_path):
@@ -761,6 +1027,8 @@ def test_i18n_commit_failure_leaves_master_unpushed(monkeypatch, tmp_path):
     monkeypatch.setattr(cu, "pjsk_region", "jp")
     master_repo = _init_repo(tmp_path, "master_repo")
     i18n_repo = _init_repo(tmp_path, "i18n_repo")
+    _write_commit(master_repo, "seed.txt", "seed", "seed master")
+    _write_commit(i18n_repo, "seed.txt", "seed", "seed i18n")
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
     monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
@@ -779,9 +1047,14 @@ def test_i18n_commit_failure_leaves_master_unpushed(monkeypatch, tmp_path):
 
     pushed = []
 
-    def _fake_commit_enabled(enabled, manifest):
+    def _fake_commit_enabled(enabled, manifest, candidate=None, journal=None):
+        del manifest, candidate
         return {
-            "master": cu.GitResult(outcome=GitOutcome.OK, reason="committed"),
+            "master": cu.GitResult(
+                outcome=GitOutcome.OK,
+                reason="committed",
+                local_sha=master_repo.head.commit.hexsha,
+            ),
             "i18n": cu.GitResult(outcome=GitOutcome.FAILED, reason="commit_failed"),
         }
 
@@ -824,12 +1097,30 @@ def test_commit_all_before_first_push(monkeypatch, tmp_path):
 
     seq: list[str] = []
 
-    def _fake_commit_enabled(enabled, manifest):
+    _write_commit(master_repo, "seed.txt", "seed", "seed master")
+    _write_commit(i18n_repo, "seed.txt", "seed", "seed i18n")
+
+    def _fake_commit_enabled(enabled, manifest, candidate=None, journal=None):
+        del manifest, candidate
         for key, _repo in enabled:
             seq.append(f"commit:{key}")
+            repo = master_repo if key == "master" else i18n_repo
+            journal.update_repo(
+                key,
+                commit_state=cu.RepoCommitState.COMMITTED,
+                target_commit_sha=repo.head.commit.hexsha,
+            )
         return {
-            "master": cu.GitResult(outcome=GitOutcome.OK, reason="committed"),
-            "i18n": cu.GitResult(outcome=GitOutcome.OK, reason="committed"),
+            "master": cu.GitResult(
+                outcome=GitOutcome.OK,
+                reason="committed",
+                local_sha=master_repo.head.commit.hexsha,
+            ),
+            "i18n": cu.GitResult(
+                outcome=GitOutcome.OK,
+                reason="committed",
+                local_sha=i18n_repo.head.commit.hexsha,
+            ),
         }
 
     monkeypatch.setattr(cu, "_commit_enabled_repositories", _fake_commit_enabled)
@@ -871,13 +1162,18 @@ def test_first_push_failure_stops_later_push_keeps_commits(monkeypatch, tmp_path
 
     monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
 
-    def _fake_commit_enabled(enabled, manifest):
+    def _fake_commit_enabled(enabled, manifest, candidate=None, journal=None):
         # Create a real local commit so the "local commit preserved" assertion
         # is meaningful (the cycle must never reset/rebase/delete it).
         res = {}
         for key, repo in enabled:
             if repo is not None:
                 repo.index.commit(f"seed {key}")
+                journal.update_repo(
+                    key,
+                    commit_state=cu.RepoCommitState.COMMITTED,
+                    target_commit_sha=repo.head.commit.hexsha,
+                )
             res[key] = cu.GitResult(
                 outcome=GitOutcome.OK, reason="committed",
                 local_sha=repo.head.commit.hexsha if repo else None,
@@ -904,10 +1200,11 @@ def test_first_push_failure_stops_later_push_keeps_commits(monkeypatch, tmp_path
 
 
 def test_partial_push_recovers_next_cycle(monkeypatch, tmp_path):
-    """After a master push failure, the next cycle's prepare recovers locally.
+    """After a master push failure, the journal is RETAINED (not dropped) so the
+    next cycle runs durable recovery and pushes the same local commit.
 
     Uses a local bare remote (no network). master has an unpushed local commit;
-    the next cycle should still prepare (the commit is preserved) and, once the
+    the next cycle must recover (not run a fresh ``ok`` cycle) and, once the
     remote accepts it, push the same local commit.
     """
     monkeypatch.setattr(
@@ -918,6 +1215,8 @@ def test_partial_push_recovers_next_cycle(monkeypatch, tmp_path):
     master_repo = _init_repo(tmp_path, "master_repo")
     remote_url = _make_bare_remote(tmp_path)
     master_repo.create_remote("origin", remote_url)
+    _write_commit(master_repo, "base.txt", "base", "seed base")
+    master_repo.git.push("origin", "main")
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
     monkeypatch.setattr(
@@ -926,7 +1225,9 @@ def test_partial_push_recovers_next_cycle(monkeypatch, tmp_path):
 
     def _push_fail(repo, branch="main", **kwargs):
         return cu.GitResult(
-            outcome=GitOutcome.PENDING_PUSH, reason="push_rejected", local_sha="m1"
+            outcome=GitOutcome.PENDING_PUSH,
+            reason="push_rejected",
+            local_sha=repo.head.commit.hexsha,
         )
 
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
@@ -938,21 +1239,16 @@ def test_partial_push_recovers_next_cycle(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
 
-    monkeypatch.setattr(
-        cu, "_commit_diff",
-        lambda *a, **k: (master_repo.index.commit("recover seed"),
-                         cu.GitResult(outcome=GitOutcome.OK, reason="committed",
-                                      local_sha=master_repo.head.commit.hexsha))[1],
-    )
-
     _stub_jsonrpc_no_maintenance(monkeypatch)
     status1 = cu._run_update_cycle_locked(daily=True)
     assert status1 == "push_failed:master:push_rejected"
     local_sha_after_fail = master_repo.head.commit.hexsha
     assert local_sha_after_fail is not None  # local commit preserved
+    # The journal is RETAINED after a post-journal push failure.
+    assert TransactionJournal.load(master_repo.git_dir) is not None
 
-    # Next cycle: remote now accepts the push; prepare must still succeed and
-    # the cycle must complete (recovery via local commit, no external network).
+    # Next cycle: remote now accepts the push; the retained journal must drive
+    # recovery (status "recovered"), not a fresh "ok" cycle.
     pushed_second = {"ok": False}
 
     def _push_ok(repo, branch="main", **kwargs):
@@ -962,17 +1258,26 @@ def test_partial_push_recovers_next_cycle(monkeypatch, tmp_path):
             local_sha=master_repo.head.commit.hexsha)
 
     monkeypatch.setattr(cu, "push_current_head", _push_ok)
+    # This unit test replaces the actual push transport; keep the decisive
+    # recovery assertion on the post-attempt authoritative-probe seam.
+    monkeypatch.setattr(
+        cu, "_probe_remote",
+        lambda repo, key, state: state.target_commit_sha,
+    )
     monkeypatch.setattr(
         cu, "prepare_repo_for_update",
         lambda *a, **k: cu.GitResult(outcome=GitOutcome.OK, reason="equal"),
     )
 
     status2 = cu._run_update_cycle_locked(daily=True)
-    assert status2 == "ok"
-    # The next cycle recovered and actually pushed the local commit.
-    assert pushed_second["ok"] is True
+    assert status2 == "recovered"
+    # The authoritative probe found the target already accepted, so recovery
+    # completed without issuing a duplicate push.
+    assert pushed_second["ok"] is False
     # The local commit remains present afterwards (never deleted/rebased).
     assert master_repo.head.commit.hexsha is not None
+    # Journal cleared after successful recovery.
+    assert TransactionJournal.load(master_repo.git_dir) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -1020,6 +1325,7 @@ def test_candidate_passed_through_to_generation_and_commit_message(
     monkeypatch.setattr(cu, "check_update_simple_mode", False)
     monkeypatch.setattr(cu, "pjsk_region", "jp")
     master_repo = _init_repo(tmp_path, "master_repo")
+    _write_commit(master_repo, "seed.txt", "seed", "seed master")
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
@@ -1038,17 +1344,27 @@ def test_candidate_passed_through_to_generation_and_commit_message(
 
     captured_msg = {}
 
-    def _fake_commit_enabled(enabled, manifest):
+    def _fake_commit_enabled(enabled, manifest, candidate=None, journal=None):
         # Use the published global exactly as production does.
         for key, _repo in enabled:
             captured_msg[key] = (
                 f"master version {cu.version_info['dataVersion']} "
                 f"asset version {cu.version_info['assetVersion']}"
             )
-        return {
-            k: cu.GitResult(outcome=GitOutcome.OK, reason="committed")
-            for k, _ in enabled
-        }
+        result = {}
+        journal = journal or TransactionJournal.load(master_repo.git_dir)
+        for k, repo in enabled:
+            journal.update_repo(
+                k,
+                commit_state=cu.RepoCommitState.COMMITTED,
+                target_commit_sha=repo.head.commit.hexsha,
+            )
+            result[k] = cu.GitResult(
+                outcome=GitOutcome.OK,
+                reason="committed",
+                local_sha=repo.head.commit.hexsha,
+            )
+        return result
 
     monkeypatch.setattr(cu, "_commit_enabled_repositories", _fake_commit_enabled)
 
@@ -1077,7 +1393,6 @@ def test_published_version_unchanged_on_validation_failure(monkeypatch, tmp_path
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
-
     def _validate_raises(file_path):
         raise ValueError("staged JSON failed validation")
 
@@ -1193,7 +1508,7 @@ def test_cycle_locked_returns_no_new_version_when_ordinary_unchanged(
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
     monkeypatch.setattr(cu, "_generate_and_publish", lambda *a: {})
-    monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
+    monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a, **k: {})
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
 
     generation_ran = {"flag": False}
@@ -1654,12 +1969,14 @@ def _assert_no_commit_push_and_both_roots_gone(master_repo, i18n_repo):
     return committed, pushed, _fake_commit, _fake_push
 
 
-def test_master_replace_failure_clears_both_staging_roots(
+def test_master_replace_failure_retains_journal_and_staging(
     monkeypatch, tmp_path
 ):
-    """A master ``os.replace`` failure clears BOTH staging roots, performs no
-    commit/push, and leaves the global published version unchanged. The already
-    published dirty working tree is NOT rolled back/cleaned."""
+    """A master ``os.replace`` failure RETURNS ``publication_failed`` without
+    committing/pushing and leaves the global published version unchanged, but the
+    journal AND both staging roots are RETAINED (not cleared) so a subsequent
+    recovery cycle can finish the work. The already-published dirty working tree
+    is NOT rolled back/cleaned."""
     monkeypatch.setattr(
         cu, "update_options", {"master": True, "i18n": True, "userInfo": False}
     )
@@ -1675,13 +1992,25 @@ def test_master_replace_failure_clears_both_staging_roots(
 
     committed = {"n": 0}
     pushed = {"n": 0}
-    monkeypatch.setattr(
-        cu, "_commit_enabled_repositories",
-        lambda *a, **k: committed.__setitem__("n", committed["n"] + 1) or {},
-    )
+    real_prepare_target = cu._prepare_commit_target
+
+    def _counting_prepare(repo, key, manifest, *args, **kwargs):
+        committed["n"] += 1
+        return real_prepare_target(repo, key, manifest, *args, **kwargs)
+
+    monkeypatch.setattr(cu, "_prepare_commit_target", _counting_prepare)
     monkeypatch.setattr(
         cu, "_push_enabled_repositories",
         lambda *a, **k: pushed.__setitem__("n", pushed["n"] + 1) or None,
+    )
+    # Recovery pushes via push_current_head directly; stub it to succeed so the
+    # retained-journal recovery can finish (no real network in tests).
+    monkeypatch.setattr(
+        cu, "push_current_head",
+        lambda *a, **k: cu.GitResult(
+            outcome=cu.GitOutcome.OK, reason="pushed",
+            local_sha=master_repo.head.commit.hexsha,
+        ),
     )
     monkeypatch.setattr(
         cu, "version_info", {"dataVersion": "OLD", "assetVersion": "OLD"}
@@ -1713,10 +2042,11 @@ def test_master_replace_failure_clears_both_staging_roots(
     # No commit / push happened.
     assert committed["n"] == 0
     assert pushed["n"] == 0
-    # Both staging roots were cleared (even though the failure was on master, the
-    # i18n staging root is NOT left behind).
-    assert not os.path.exists(m_staging)
-    assert not os.path.exists(i_staging)
+    # The journal AND both staging roots are RETAINED (not cleared) so recovery
+    # can finish the work.
+    assert os.path.exists(m_staging)
+    assert os.path.exists(i_staging)
+    assert TransactionJournal.load(master_repo.git_dir) is not None
     # Global published version unchanged.
     assert cu.version_info == {"dataVersion": "OLD", "assetVersion": "OLD"}
     # The dirtily-published events.json is retained (NOT rolled back/cleaned).
@@ -1725,13 +2055,32 @@ def test_master_replace_failure_clears_both_staging_roots(
     assert not os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
     assert not os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
 
+    # --- Recovery cycle: restore os.replace and re-run; the retained journal +
+    # staging must let recovery finish the publication and commit/push. ---
+    monkeypatch.setattr(os, "replace", real_replace)
+    status2 = cu._run_update_cycle_locked(daily=True)
+    assert status2 == "recovered"
+    assert committed["n"] == 2
+    # All master files (incl. versions.json, published last) now in the tree.
+    assert os.path.exists(os.path.join(master_repo.working_dir, "events.json"))
+    assert os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
+    assert os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
+    # i18n file published too.
+    assert os.path.exists(
+        os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
+    )
+    # Journal cleared after successful recovery.
+    assert TransactionJournal.load(master_repo.git_dir) is None
 
-def test_i18n_replace_failure_clears_both_staging_roots(
+
+def test_i18n_replace_failure_retains_journal_and_staging(
     monkeypatch, tmp_path
 ):
-    """An i18n ``os.replace`` failure clears BOTH staging roots, performs no
-    commit/push, and leaves the global published version unchanged. The already
-    published master dirty working tree is NOT rolled back/cleaned."""
+    """An i18n ``os.replace`` failure RETURNS ``publication_failed`` without
+    committing/pushing and leaves the global published version unchanged, but the
+    journal AND both staging roots are RETAINED (not cleared) so a subsequent
+    recovery cycle can finish the work. The already-published master dirty working
+    tree is NOT rolled back/cleaned."""
     monkeypatch.setattr(
         cu, "update_options", {"master": True, "i18n": True, "userInfo": False}
     )
@@ -1747,13 +2096,25 @@ def test_i18n_replace_failure_clears_both_staging_roots(
 
     committed = {"n": 0}
     pushed = {"n": 0}
-    monkeypatch.setattr(
-        cu, "_commit_enabled_repositories",
-        lambda *a, **k: committed.__setitem__("n", committed["n"] + 1) or {},
-    )
+    real_prepare_target = cu._prepare_commit_target
+
+    def _counting_prepare(repo, key, manifest, *args, **kwargs):
+        committed["n"] += 1
+        return real_prepare_target(repo, key, manifest, *args, **kwargs)
+
+    monkeypatch.setattr(cu, "_prepare_commit_target", _counting_prepare)
     monkeypatch.setattr(
         cu, "_push_enabled_repositories",
         lambda *a, **k: pushed.__setitem__("n", pushed["n"] + 1) or None,
+    )
+    # Recovery pushes via push_current_head directly; stub it to succeed so the
+    # retained-journal recovery can finish (no real network in tests).
+    monkeypatch.setattr(
+        cu, "push_current_head",
+        lambda *a, **k: cu.GitResult(
+            outcome=cu.GitOutcome.OK, reason="pushed",
+            local_sha=master_repo.head.commit.hexsha,
+        ),
     )
     monkeypatch.setattr(
         cu, "version_info", {"dataVersion": "OLD", "assetVersion": "OLD"}
@@ -1783,9 +2144,11 @@ def test_i18n_replace_failure_clears_both_staging_roots(
     # No commit / push happened.
     assert committed["n"] == 0
     assert pushed["n"] == 0
-    # Both staging roots cleared.
-    assert not os.path.exists(m_staging)
-    assert not os.path.exists(i_staging)
+    # The journal AND both staging roots are RETAINED (not cleared) so recovery
+    # can finish the work.
+    assert os.path.exists(m_staging)
+    assert os.path.exists(i_staging)
+    assert TransactionJournal.load(master_repo.git_dir) is not None
     # Global published version unchanged.
     assert cu.version_info == {"dataVersion": "OLD", "assetVersion": "OLD"}
     # Master cards.json (already published) is retained; versions.json never
@@ -1796,6 +2159,344 @@ def test_i18n_replace_failure_clears_both_staging_roots(
     assert not os.path.exists(
         os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
     )
+
+    # --- Recovery cycle: restore os.replace and re-run; the retained journal +
+    # staging must let recovery finish the publication and commit/push. ---
+    monkeypatch.setattr(os, "replace", real_replace)
+    status2 = cu._run_update_cycle_locked(daily=True)
+    assert status2 == "recovered"
+    assert committed["n"] == 2
+    # All master files (incl. versions.json, published last) now in the tree.
+    assert os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
+    assert os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
+    # i18n file published too.
+    assert os.path.exists(
+        os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
+    )
+    # Journal cleared after successful recovery.
+    assert TransactionJournal.load(master_repo.git_dir) is None
+
+
+def test_full_manifest_includes_versions_json_and_recovers(
+    monkeypatch, tmp_path
+):
+    """The publishing journal records the COMPLETE manifest (incl. versions.json)
+    for every repo, and a publish failure + retained journal recovers all files
+    including versions.json on the next cycle."""
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": True, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    i18n_repo = _init_repo(tmp_path, "i18n_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+
+    _real_commit_diff = cu._commit_diff
+
+    def _counting_commit_diff(*args, **kwargs):
+        return _real_commit_diff(*args, **kwargs)
+
+    monkeypatch.setattr(cu, "_commit_diff", _counting_commit_diff)
+    monkeypatch.setattr(
+        cu, "push_current_head",
+        lambda *a, **k: cu.GitResult(
+            outcome=cu.GitOutcome.OK, reason="pushed",
+            local_sha=master_repo.head.commit.hexsha,
+        ),
+    )
+    monkeypatch.setattr(
+        cu, "version_info", {"dataVersion": "OLD", "assetVersion": "OLD"}
+    )
+
+    def _refresh_ok(*args, **kwargs):
+        cu._write_master_file("cards.json", [{"id": 1}])
+        cu._write_master_file("versions.json", {"dataVersion": "NEW"})
+        cu._write_i18n_file("card_prefix.json", {"1": "p"})
+
+    monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
+
+    real_replace = os.replace
+
+    def _fail_on_versions(src, dst):
+        if os.path.basename(dst) == "versions.json":
+            raise OSError("disk full on versions.json")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", _fail_on_versions)
+
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+    status1 = cu._run_update_cycle_locked(daily=True)
+    assert status1 == "publication_failed"
+    # Journal retained; the master manifest must include versions.json (i18n has
+    # no versions.json of its own — it is master-only).
+    j = TransactionJournal.load(master_repo.git_dir)
+    assert j is not None
+    assert "versions.json" in j.repos["master"].manifest
+    assert "versions.json" not in j.repos["i18n"].manifest
+    # cards.json + i18n published; versions.json not yet (failed last).
+    assert os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
+    assert not os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
+
+    # Recovery: restore replace; the retained journal (with versions.json in the
+    # manifest) must finish publishing versions.json and commit/push.
+    monkeypatch.setattr(os, "replace", real_replace)
+    status2 = cu._run_update_cycle_locked(daily=True)
+    assert status2 == "recovered"
+    assert os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
+    assert TransactionJournal.load(master_repo.git_dir) is None
+
+
+def test_recovery_crash_after_one_replace_retains_journal(
+    monkeypatch, tmp_path
+):
+    """If recovery itself crashes after publishing one file (but before finishing),
+    the journal + staging are retained so the NEXT cycle resumes from the last
+    proven destination checkpoint without re-reading the moved source."""
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+    monkeypatch.setattr(
+        cu, "version_info", {"dataVersion": "OLD", "assetVersion": "OLD"}
+    )
+
+    def _refresh_ok(*args, **kwargs):
+        cu._write_master_file("cards.json", [{"id": 1}])
+        cu._write_master_file("events.json", [{"id": 2}])
+        cu._write_master_file("versions.json", {"dataVersion": "NEW"})
+
+    monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
+
+    # First cycle: fail publication so the journal + staging are retained.
+    real_replace = os.replace
+
+    def _fail(src, dst):
+        if os.path.basename(dst) == "events.json":
+            raise OSError("disk full")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", _fail)
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+    assert cu._run_update_cycle_locked(daily=True) == "publication_failed"
+    assert TransactionJournal.load(master_repo.git_dir) is not None
+
+    # Second cycle: let publication finish, but crash during commit (simulate a
+    # crash mid-recovery) so the journal is retained again.
+    monkeypatch.setattr(os, "replace", real_replace)
+
+    real_prepare_target = cu._prepare_commit_target
+
+    def _boom_commit(*args, **kwargs):
+        raise RuntimeError("crash during recovery commit")
+
+    monkeypatch.setattr(cu, "_prepare_commit_target", _boom_commit)
+    # push_current_head must not be reached; stub defensively.
+    monkeypatch.setattr(
+        cu, "push_current_head",
+        lambda *a, **k: cu.GitResult(outcome=cu.GitOutcome.OK, reason="pushed"),
+    )
+    with pytest.raises(RuntimeError):
+        cu._run_update_cycle_locked(daily=True)
+    # The journal is RETAINED after a crash mid-recovery (fail closed, no delete).
+    assert TransactionJournal.load(master_repo.git_dir) is not None
+
+    # Third cycle: real commit + push; recovery completes from the proven dest
+    # checkpoints (cards.json + events.json already published, versions.json too).
+    monkeypatch.setattr(cu, "_prepare_commit_target", real_prepare_target)
+    status3 = cu._run_update_cycle_locked(daily=True)
+    assert status3 == "recovered"
+    assert os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
+    assert os.path.exists(os.path.join(master_repo.working_dir, "events.json"))
+    assert os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
+    assert TransactionJournal.load(master_repo.git_dir) is None
+
+
+def test_recovery_base_head_mismatch_blocks_commit(monkeypatch, tmp_path):
+    """Fail-closed: if the working-tree HEAD diverged from the journal's recorded
+    base SHA (no target yet), recovery must NOT create a replacement commit and
+    must surface journal_invalid (preserving state)."""
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+    monkeypatch.setattr(
+        cu, "version_info", {"dataVersion": "OLD", "assetVersion": "OLD"}
+    )
+
+    # Seed a real base commit BEFORE the cycle so the journal captures a correct,
+    # non-null base SHA. Recovery can then detect an out-of-band divergence of the
+    # working-tree HEAD from that recorded base (an unborn repo has base_sha=None
+    # and a first commit is a legitimate transition, not a mismatch).
+    _write_commit(
+        master_repo, "seed.txt", "seed", "seed base commit"
+    )
+    base_before = master_repo.head.commit.hexsha
+
+    def _refresh_ok(*args, **kwargs):
+        cu._write_master_file("cards.json", [{"id": 1}])
+        cu._write_master_file("versions.json", {"dataVersion": "NEW"})
+
+    monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
+
+    # First cycle fails publication -> retained journal with base_sha = seed HEAD.
+    real_replace = os.replace
+
+    def _fail(src, dst):
+        if os.path.basename(dst) == "cards.json":
+            raise OSError("disk full")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", _fail)
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+    assert cu._run_update_cycle_locked(daily=True) == "publication_failed"
+    j = TransactionJournal.load(master_repo.git_dir)
+    assert j is not None
+    base = j.repos["master"].base_sha
+    assert base == base_before  # journal captured the correct base SHA
+
+    # Diverge the working tree out of band (new commit not recorded in journal).
+    monkeypatch.setattr(os, "replace", real_replace)
+    with open(os.path.join(master_repo.working_dir, "diverged.txt"), "w") as f:
+        f.write("x")
+    master_repo.index.add(["diverged.txt"])
+    master_repo.index.commit("out of band")
+    assert master_repo.head.commit.hexsha != base
+
+    # Recovery must fail closed (no replacement commit) and retain the journal.
+    j_dbg = TransactionJournal.load(master_repo.git_dir)
+    with open("/tmp/dbg_journal.txt", "w") as _f:
+        _f.write(f"j_none={j_dbg is None}\n")
+        if j_dbg is not None:
+            _f.write(f"base={j_dbg.repos['master'].base_sha}\n")
+            _f.write(f"head={master_repo.head.commit.hexsha}\n")
+    monkeypatch.setattr(
+        cu, "_commit_diff",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not commit")),
+    )
+    monkeypatch.setattr(
+        cu, "push_current_head",
+        lambda *a, **k: cu.GitResult(outcome=cu.GitOutcome.OK, reason="pushed"),
+    )
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "journal_invalid"
+    assert TransactionJournal.load(master_repo.git_dir) is not None
+
+
+def test_recovery_remote_already_at_target_skips_push(monkeypatch, tmp_path):
+    """When the remote is already at the recorded target SHA, recovery verifies it
+    (no duplicate push) and completes; the journal is deleted."""
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+    monkeypatch.setattr(
+        cu, "version_info", {"dataVersion": "OLD", "assetVersion": "OLD"}
+    )
+
+    def _refresh_ok(*args, **kwargs):
+        cu._write_master_file("cards.json", [{"id": 1}])
+        cu._write_master_file("versions.json", {"dataVersion": "NEW"})
+
+    monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
+
+    # First cycle fails publication -> retained journal.
+    real_replace = os.replace
+
+    def _fail(src, dst):
+        if os.path.basename(dst) == "cards.json":
+            raise OSError("disk full")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", _fail)
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+    assert cu._run_update_cycle_locked(daily=True) == "publication_failed"
+    monkeypatch.setattr(os, "replace", real_replace)
+
+    pushed = {"n": 0}
+
+    def _push_ok(repo, branch="main", expected_sha=None, **kwargs):
+        # Simulate the remote already at the target: report OK without a real push.
+        pushed["n"] += 1
+        return cu.GitResult(
+            outcome=cu.GitOutcome.OK, reason="pushed",
+            local_sha=master_repo.head.commit.hexsha,
+        )
+
+    monkeypatch.setattr(cu, "_commit_diff", cu._commit_diff)
+    monkeypatch.setattr(cu, "push_current_head", _push_ok)
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "recovered"
+    assert pushed["n"] == 1  # exactly one push (master), no duplicate
+    assert TransactionJournal.load(master_repo.git_dir) is None
+
+
+def test_normal_cycle_pushes_i18n_before_master_with_expected_sha(
+    monkeypatch, tmp_path
+):
+    """A normal (fresh) cycle commits all enabled repos, then pushes i18n -> master
+    exclusively via push_current_head(expected_sha=...), and only deletes the
+    journal after both pushes succeed."""
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": True, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    i18n_repo = _init_repo(tmp_path, "i18n_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+    monkeypatch.setattr(
+        cu, "version_info", {"dataVersion": "OLD", "assetVersion": "OLD"}
+    )
+
+    def _refresh_ok(*args, **kwargs):
+        cu._write_master_file("cards.json", [{"id": 1}])
+        cu._write_master_file("versions.json", {"dataVersion": "NEW"})
+        cu._write_i18n_file("card_prefix.json", {"1": "p"})
+
+    monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
+
+    push_order = []
+
+    def _push(repo, branch="main", expected_sha=None, **kwargs):
+        # Identify which repo by its working dir.
+        key = "i18n" if repo.working_dir == i18n_repo.working_dir else "master"
+        push_order.append(key)
+        return cu.GitResult(
+            outcome=cu.GitOutcome.OK, reason="pushed",
+            local_sha=repo.head.commit.hexsha,
+        )
+
+    monkeypatch.setattr(cu, "push_current_head", _push)
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "ok"
+    # i18n pushed before master, both with an expected SHA barrier.
+    assert push_order == ["i18n", "master"]
+    assert TransactionJournal.load(master_repo.git_dir) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -2078,7 +2779,7 @@ def test_deadline_exceeded_releases_outer_process_lock_and_repo_flock(
     monkeypatch.setattr(cu, "pjsk_region", "jp")
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
     monkeypatch.setattr(cu, "_generate_and_publish", lambda *a, **k: {})
-    monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
+    monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a, **k: {})
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
     _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
 
@@ -2099,12 +2800,20 @@ def test_deadline_exceeded_releases_outer_process_lock_and_repo_flock(
     assert status2 == "ok"
 
 
-def test_deadline_exceeded_before_commit_skips_push(monkeypatch, tmp_path):
-    """If the deadline expires specifically at the pre-commit seam (after
-    generation succeeds), the cycle returns ``deadline_exceeded``, generation
-    occurred, but no commit/push happened. Uses a deterministic deadline test
-    double (no sleeps) that permits every seam up to and including generation,
-    then raises only at the pre-commit check."""
+def test_deadline_exceeded_at_fourth_seam_skips_publication(monkeypatch, tmp_path):
+    """The cooperative deadline's FOURTH (final) safe check happens AFTER all
+    staging generation + validation but BEFORE the first formal ``os.replace``.
+    If it fires there, the cycle returns ``deadline_exceeded`` with:
+      - ZERO ``os.replace`` calls (no formal bytes written),
+      - formal working-tree files unchanged (never created),
+      - both staging roots cleared,
+      - no commit/push.
+
+    This uses the REAL ``_generate_and_publish`` (no fake) and a deterministic
+    deadline double (no sleeps) that permits the first three seams (gating-after,
+    prepare, between-prepare/generation) and raises only at the fourth seam
+    (inside ``_generate_and_publish``, after staging gen+validation, before the
+    first replace)."""
     monkeypatch.setattr(
         cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
     )
@@ -2126,10 +2835,17 @@ def test_deadline_exceeded_before_commit_skips_push(monkeypatch, tmp_path):
         lambda *a, **k: pushed.__setitem__("n", pushed["n"] + 1) or None,
     )
 
-    generation_ran = {"flag": False}
+    # Instrument os.replace to count formal-publication calls.
+    replace_calls = {"n": 0}
+    real_replace = os.replace
+
+    def _counting_replace(src, dst, *a, **k):
+        replace_calls["n"] += 1
+        return real_replace(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "replace", _counting_replace)
 
     def _refresh_ok(*args, **kwargs):
-        generation_ran["flag"] = True
         cu._write_master_file("cards.json", [{"id": 1}])
         cu._write_master_file("versions.json", {"dataVersion": "1"})
 
@@ -2137,29 +2853,222 @@ def test_deadline_exceeded_before_commit_skips_push(monkeypatch, tmp_path):
 
     _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
 
-    # Deterministic deadline double: permits the gating-after, prepare, and
-    # between-prepare/generation seams (so generation runs), then raises only at
-    # the pre-commit seam. Built on the disabled Deadline base (None seconds) and
-    # overrides ``check`` so the early seams pass and only pre-commit trips.
+    # Deterministic deadline double: permits the gating-after (call 1), prepare
+    # (call 2), and between-prepare/generation (call 3) seams, then raises at the
+    # fourth seam (call 4) — inside _generate_and_publish, after staging gen +
+    # validation, before the first os.replace.
     calls = {"n": 0}
 
-    class _PreCommitDeadline(cu.Deadline):
+    class _FourthSeamDeadline(cu.Deadline):
         def __init__(self):
             super().__init__(None)  # disabled base; we override check()
 
         def check(self):
-            # The pre-commit seam is the 4th call: gating-after, prepare, and
-            # between-prepare/generation are calls 1-3; the 4th is pre-commit.
             calls["n"] += 1
             if calls["n"] >= 4:
-                raise cu.CycleDeadlineExceeded("expired at pre-commit seam")
+                raise cu.CycleDeadlineExceeded("expired at fourth (pre-replace) seam")
 
-    status = cu._run_update_cycle(daily=False, deadline=_PreCommitDeadline())
+    status = cu._run_update_cycle(daily=False, deadline=_FourthSeamDeadline())
     assert status == "deadline_exceeded"
-    # Generation ran (early seams were permitted), but commit/push did not.
-    assert generation_ran["flag"] is True
+    # No formal publication occurred: zero os.replace calls, and the formal
+    # working-tree files were never written (bytes unchanged).
+    assert replace_calls["n"] == 0
+    assert not os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
+    assert not os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
+    # Both staging roots were cleared by the deadline handler.
+    assert not os.path.exists(master_repo.working_dir + ".staging")
+    assert not os.path.exists(cu.i18n_diff_folder_path + ".staging")
+    # No commit/push happened.
     assert committed["n"] == 0
     assert pushed["n"] == 0
+
+
+def test_deadline_expired_only_after_first_replace_still_completes(
+    monkeypatch, tmp_path
+):
+    """Post-publication behavior: once the first ``os.replace`` has run, NO
+    further cooperative deadline check occurs. A deadline double that is
+    "armed" to raise only AFTER the first replace must NOT cancel the cycle:
+    the cycle proceeds through the remaining publication, the real
+    explicit-manifest commit, and push, ending with a clean working tree and
+    status ``ok`` (not ``deadline_exceeded``).
+
+    This wraps ``os.replace`` so the deadline becomes expired exactly when the
+    first formal replace happens, then verifies the cycle still completes —
+    proving the deadline is never checked after publication begins.
+    """
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+
+    # Use the REAL commit path (no fake commit counter). Mock network/push only:
+    # the temp master repo has no remote, so report a successful push without
+    # touching the network. The real explicit-manifest commit must run.
+    pushed = {"n": 0}
+    monkeypatch.setattr(
+        cu, "_push_diff",
+        lambda repo, operation, **kwargs: pushed.__setitem__("n", pushed["n"] + 1)
+        or cu.GitResult(outcome=GitOutcome.OK, reason="pushed", operation=operation),
+    )
+
+    # Instrument os.replace: count formal-publication calls AND arm the deadline
+    # to expire only once the first replace has happened.
+    replace_calls = {"n": 0}
+    real_replace = os.replace
+
+    def _arming_replace(src, dst, *a, **k):
+        replace_calls["n"] += 1
+        return real_replace(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "replace", _arming_replace)
+
+    def _refresh_ok(*args, **kwargs):
+        cu._write_master_file("cards.json", [{"id": 1}])
+        cu._write_master_file("versions.json", {"dataVersion": "1"})
+        # Production-compatible candidate: refresh_version returns the candidate
+        # it generated with, which _generate_and_publish stashes for commit
+        # construction (so the explicit manifest commit has a real version).
+        return {"dataVersion": "1", "assetVersion": "1"}
+
+    monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
+
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+
+    # Deterministic deadline double: raises ONLY after the first os.replace has
+    # run (i.e. after formal publication has begun). Because the deadline is
+    # checked only at the four safe seams BEFORE the first replace, this never
+    # trips and the cycle must run to completion.
+    class _ExpiresAfterFirstReplaceDeadline(cu.Deadline):
+        def __init__(self):
+            super().__init__(None)  # disabled base; we override check()
+
+        def check(self):
+            if replace_calls["n"] >= 1:
+                raise cu.CycleDeadlineExceeded("expired after first replace")
+
+    status = cu._run_update_cycle(
+        daily=False, deadline=_ExpiresAfterFirstReplaceDeadline()
+    )
+    # The cycle is NOT cancelled by a deadline that only elapsed after publication
+    # began; it proceeds to commit (and push).
+    assert status != "deadline_exceeded"
+    assert status == "ok"
+    # Formal publication actually happened (at least one os.replace ran).
+    assert replace_calls["n"] >= 1
+    # The real commit path produced a commit in the master repo.
+    assert master_repo.head.commit is not None
+    assert pushed["n"] == 1
+    # The published output is present in the working tree (formal publication ran)
+    # and the working tree is CLEAN after the successful explicit-manifest commit
+    # (no leftover dirty/staged files).
+    assert os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
+    assert os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
+    assert master_repo.is_dirty(untracked_files=True) is False
+
+
+def test_i18n_only_first_cycle_with_none_version_info_no_typeerror(
+    monkeypatch, tmp_path
+):
+    """i18n-only first run (master disabled) where the published global
+    ``version_info`` is ``None`` must NOT raise ``TypeError`` when building
+    commit messages, and must still use the explicit candidate version + the
+    explicit manifest paths (no broad-staging). The published global stays
+    ``None`` (master disabled, never advanced), but the i18n repository is
+    committed with an explicit, non-crashing message derived from the candidate.
+    """
+    monkeypatch.setattr(
+        cu, "update_options", {"master": False, "i18n": True, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    master_repo = _init_repo(tmp_path, "master_repo")
+    i18n_repo = _init_repo(tmp_path, "i18n_repo")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_repo.working_dir)
+    monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
+    monkeypatch.setattr(cu, "version_info", None)  # i18n-only first run
+
+    # Capture the new temporary-index plumbing seam rather than the removed
+    # Repo.index.add coordinated path.
+    prepared_manifests: list[list[str]] = []
+    real_prepare_target = cu._prepare_commit_target
+
+    def _capture_prepare(repo, key, manifest, *args, **kwargs):
+        prepared_manifests.append(list(manifest))
+        return real_prepare_target(repo, key, manifest, *args, **kwargs)
+
+    monkeypatch.setattr(cu, "_prepare_commit_target", _capture_prepare)
+
+    # Mock network/push only: the temp i18n repo has no remote, so report a
+    # successful push without touching the network. The real commit path runs.
+    monkeypatch.setattr(
+        cu, "_push_diff",
+        lambda repo, operation, **kwargs: cu.GitResult(
+            outcome=GitOutcome.OK, reason="pushed", operation=operation
+        ),
+    )
+
+    # Seed UNRELATED preexisting files (one tracked, one untracked) in the i18n
+    # repo. They must NOT be committed/staged by the cycle's explicit manifest.
+    _write_commit(i18n_repo, "README.md", "unrelated tracked", "seed readme")
+    with open(os.path.join(i18n_repo.working_dir, "scratch.txt"), "w") as f:
+        f.write("unrelated untracked")
+
+    candidate_version = {"dataVersion": "1", "assetVersion": "1"}
+
+    def _refresh_ok(*args, **kwargs):
+        # Master writes are suppressed (master disabled); only i18n is written.
+        # Production ``refresh_version`` returns the candidate it generated with;
+        # mirror that here so the cycle threads the explicit candidate through.
+        cu._write_master_file("versions.json", candidate_version)  # no-op (master off)
+        cu._write_i18n_file("card_prefix.json", {"1": "p"})
+        return candidate_version
+
+    monkeypatch.setattr(cu, "refresh_version", _refresh_ok)
+
+    _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
+
+    prepared_manifests.clear()
+
+    # Must not raise TypeError indexing a None global; must run the real commit
+    # path to completion.
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "ok"
+
+    # The explicit manifest path was passed to the temporary plumbing index; no
+    # broad-stage of unrelated files is possible in the coordinated flow.
+    assert prepared_manifests == [["ja/card_prefix.json"]]
+
+    # The resulting commit subject is exactly the expected i18n message, derived
+    # from the explicit candidate (not the None global).
+    head = i18n_repo.head.commit
+    assert head.message.splitlines()[0] == "i18n update for master version 1"
+    assert "Sekai-Update-Txn:" in head.message
+    assert "Sekai-Update-Repo: i18n" in head.message
+
+    # HEAD contains ONLY the expected i18n manifest content (the unrelated
+    # tracked README.md is a separate commit; the unrelated untracked scratch.txt
+    # is never committed).
+    tree_files = sorted(t for t in head.stats.files)
+    assert tree_files == ["ja/card_prefix.json"]
+
+    # The published global is still None (master disabled, never advanced).
+    assert cu.version_info is None
+
+    # The i18n file was committed into the i18n working tree.
+    assert os.path.exists(
+        os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
+    )
+    # The unrelated untracked file remains untracked (not swept into the commit).
+    assert "scratch.txt" in i18n_repo.untracked_files
 
 
 def test_deadline_disabled_for_daily_even_if_passed(monkeypatch, tmp_path):

@@ -23,9 +23,16 @@ no real push to production. Covers:
 import os
 from unittest.mock import Mock
 
+import pytest
 from git import Repo
 
-from utils.git import GitOutcome, prepare_repo_for_update, push_current_head
+from utils.git import (
+    GitOutcome,
+    check_git_folder,
+    prepare_repo_for_update,
+    push_current_head,
+)
+from utils.git_lock import RepoLockUnavailable, repo_file_locks
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -87,6 +94,45 @@ def _install_pre_receive_hook(bare_repo: Repo, body: str) -> str:
         f.write("#!/bin/sh\n" + body + "\n")
     os.chmod(hook_path, 0o755)
     return hook_path
+
+
+def test_check_git_folder_opens_existing_repo_under_repo_lock(tmp_path):
+    repo_path = tmp_path / "existing"
+    repo = _init_repo(tmp_path, "existing")
+
+    opened = check_git_folder(str(repo_path), "https://example.invalid")
+
+    assert opened.working_dir == repo.working_dir
+    # The non-blocking lock is released after the normal open.
+    with repo_file_locks([str(repo_path) + ".lock"]):
+        pass
+
+
+def test_check_git_folder_clone_contention_skips_without_clone(tmp_path, monkeypatch):
+    folder = str(tmp_path / "missing")
+    clone = Mock()
+    monkeypatch.setattr("utils.git.Repo.clone_from", clone)
+
+    with repo_file_locks([folder + ".lock"]):
+        with pytest.raises(RepoLockUnavailable):
+            check_git_folder(folder, "https://example.invalid")
+
+    clone.assert_not_called()
+
+
+def test_check_git_folder_missing_repo_clones_while_holding_lock(tmp_path, monkeypatch):
+    folder = str(tmp_path / "missing")
+    cloned = Mock()
+
+    def clone_from(*args, **kwargs):
+        # The clone operation itself is covered by the target lock.
+        with pytest.raises(RepoLockUnavailable):
+            with repo_file_locks([folder + ".lock"]):
+                pass
+        return cloned
+
+    monkeypatch.setattr("utils.git.Repo.clone_from", clone_from)
+    assert check_git_folder(folder, "https://example.invalid") is cloned
 
 
 def _clone_with_commit(
@@ -268,6 +314,46 @@ def test_push_verification_failure_is_pending(tmp_path, monkeypatch):
     assert result.outcome is GitOutcome.PENDING_PUSH
     assert result.reason in ("verify_fetch_failed", "verify_sha_mismatch")
     assert repo.head.commit.hexsha == sha
+
+
+def test_push_with_lease_rejects_stale_remote_without_mutation(tmp_path):
+    remote_url = _make_bare_remote(tmp_path)
+    base_sha = _seed_remote(tmp_path, remote_url, "base.txt", "base", "base")
+    repo, local_sha = _clone_with_commit(
+        tmp_path, "local", remote_url, "local.txt", "local", "local"
+    )
+    other, _ = _clone_with_commit(
+        tmp_path, "other", remote_url, "other.txt", "other", "other"
+    )
+    assert push_current_head(
+        other, branch="main", old_remote_sha=base_sha
+    ).outcome is GitOutcome.OK
+    result = push_current_head(
+        repo, branch="main", old_remote_sha=base_sha
+    )
+    assert result.outcome is GitOutcome.PENDING_PUSH
+    assert Repo(remote_url).commit("main").hexsha == other.head.commit.hexsha
+    assert repo.head.commit.hexsha == local_sha
+
+
+def test_raw_probe_endpoint_preserves_credentials_and_ssh_user(tmp_path, monkeypatch):
+    import check_update as cu
+
+    repo = _init_repo(tmp_path, "endpoint")
+    raw = "ssh://deploy@example.test:2222/srv/sekai.git"
+    repo.create_remote("origin", raw)
+    calls = []
+
+    class _Result:
+        stdout = "a" * 40 + "\trefs/heads/main\n"
+
+    def _run(args, **kwargs):
+        calls.append(args)
+        return _Result()
+
+    monkeypatch.setattr(cu.subprocess, "run", _run)
+    cu._remote_snapshot(repo, "master")
+    assert calls == [["git", "ls-remote", raw, "refs/heads/main"]]
 
 
 # --------------------------------------------------------------------------- #
@@ -651,3 +737,108 @@ def test_commit_i18n_uses_i18n_actor(monkeypatch):
     cu.commit_i18n_files()
     author = repo.index.commit.call_args.kwargs["author"]
     assert author.name == "i18n-diff-bot"
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2: crash during publication retains journal + staging for recovery
+# --------------------------------------------------------------------------- #
+
+
+def test_publication_crash_retains_journal_and_staging(tmp_path, monkeypatch):
+    """A crash that interrupts publication (journal + journal-owned staging left
+    on disk, no clean abort) must be recoverable: the next cycle completes the
+    ordered replaces, commits exactly once (no duplicate), and pushes the same
+    SHA. Mirrors the durable-recovery contract in ``check_update``."""
+    import check_update as cu
+    from utils.update_transaction import (
+        FileEntry,
+        RepoCommitState,
+        RepoPushState,
+        RepoState,
+        TransactionJournal,
+        TxnPhase,
+        compute_sha256,
+        new_transaction_id,
+        staging_dir_for,
+    )
+
+    remote = _make_bare_remote(tmp_path)
+    _seed_remote(tmp_path, remote, "base.txt", "base", "base")
+    repo = _init_repo(tmp_path, "worker")
+    _add_origin(repo, remote)
+    repo.remote().fetch()
+    repo.git.merge("--ff-only", "origin/main")
+
+    monkeypatch.setattr(cu, "masterdb_diff_repo", repo)
+    monkeypatch.setattr(cu, "i18n_diff_repo", repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", repo.working_dir)
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", repo.working_dir)
+    monkeypatch.setattr(
+        cu, "version_info", {"dataVersion": "100", "assetVersion": "100"}
+    )
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": True, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    monkeypatch.setattr(cu.jsonrpc_client, "request", lambda m, p=None: {})
+
+    txn_id = new_transaction_id()
+    staging = staging_dir_for(repo.working_dir, txn_id)
+    manifest = ["versions.json", "cards.json"]
+    files = {}
+    for rel in manifest:
+        content = (
+            {"dataVersion": "100", "assetVersion": "100"}
+            if rel == "versions.json"
+            else [{"id": 1}]
+        )
+        sp = os.path.join(staging, rel)
+        os.makedirs(os.path.dirname(sp), exist_ok=True)
+        with open(sp, "w", encoding="utf-8") as f:
+            import json as _json
+
+            _json.dump(content, f, ensure_ascii=False, indent=2)
+        files[rel] = FileEntry(source_sha256=compute_sha256(sp))
+
+    repos = {
+        "master": RepoState(
+            manifest=list(manifest),
+            staging_dir=staging,
+            target_commit_sha=None,
+            base_sha=repo.head.commit.hexsha,
+            remote_sha=None,
+            remote_base_sha=repo.head.commit.hexsha,
+            remote_name="origin",
+            remote_ref="refs/heads/main",
+            remote_endpoint_fingerprint=cu._remote_endpoint(repo, "master")[1],
+            files=files,
+            commit_state=RepoCommitState.PENDING,
+            push_state=RepoPushState.PENDING,
+        )
+    }
+    journal = TransactionJournal(
+        master_git_dir=repo.git_dir,
+        transaction_id=txn_id,
+        candidate={"dataVersion": "100", "assetVersion": "100"},
+        enabled_repos=["master"],
+        publish_order=["master"],
+        repos=repos,
+        phase=TxnPhase.PUBLISHING,
+    )
+    journal.write()
+
+    # The journal and the journal-owned staging must both be present on disk.
+    assert TransactionJournal.load(repo.git_dir) is not None
+    assert os.path.isdir(staging)
+
+    base_commits = len(list(repo.iter_commits("HEAD")))
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "recovered"
+
+    # Exactly one new commit (no duplicate), and the remote got the same SHA.
+    assert len(list(repo.iter_commits("HEAD"))) == base_commits + 1
+    assert Repo(remote).commit("main").hexsha == repo.head.commit.hexsha
+    # After successful recovery the journal is deleted and staging cleared.
+    assert TransactionJournal.load(repo.git_dir) is None
+    assert not os.path.isdir(staging)

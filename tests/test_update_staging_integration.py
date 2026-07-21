@@ -1,423 +1,936 @@
-"""Phase 4.2 final staging acceptance evidence lane.
+"""Phase 2 durable recovery integration tests (staging + journal).
 
-This file is the *last* staging-acceptance lane. It exercises the real production
-write helpers against a temporary master/i18n working directory and a controlled
-JSON-RPC stub, proving that every real candidate write lands in the **active
-staging root** (never the formal working tree) until publication, and that a real
-i18n generation failure leaves both formal trees byte-identical, the published
-global ``version_info`` un-advanced, and both staging roots cleared.
+These tests drive the REAL ``check_update`` cycle machinery (recovery runs
+FIRST, before the maintenance/new-version gate and generation) against two
+temporary bare remotes and two worker repositories, with no network.
 
-Covered production functions (called for real, not mocked):
-  1) ``save_info_from_suite_user()``  -> real banner + suite user info write into
-     the active master staging root; formal master tree untouched until publish.
-  2) ``refresh_information()``        -> real write into the active master staging
-     root; formal tree untouched.
-  3) ``_write_compact_master_alias_if_needed()`` + ``restore_compact_data()`` ->
-     real compact alias write into master staging; formal tree untouched.
-  4) A real ``update_i18n_files()`` / ``I18N_SPECIAL_HANDLERS`` path (``stamps``)
-     writing into i18n staging, followed by a real i18n handler exception
-     (malformed ``cards`` data) that drives the real ``_generate_and_publish``
-     generation/publication boundary. The external master fetch is stubbed, but
-     the i18n handler itself is NOT mocked. Master and i18n formal trees are
-     asserted byte-identical via ``read_bytes`` snapshots (directory-relative
-     paths), the global ``version_info`` is not advanced, and both staging roots
-     are cleared.
-  5) A success path: real ``_generate_and_publish`` generates + validates (via the
-     real ``_validate_staged_json``) + publishes; every staged JSON is valid and
-     every manifest path corresponds to a real write helper; the published global
-     and formal trees advance only after success.
+Covered decisive scenarios:
 
-All network/RPC is stubbed; no production systems are touched. Snapshot helpers
-read bytes and include directory-relative paths. No conditional assertions,
-skips, or xfails.
+  A. Recovery runs BEFORE the ordinary ``new_version=False`` gate and the
+     maintenance gate: when a journal is present, neither the RPC gate nor
+     generation is invoked, and recovery re-pushes the SAME target SHA.
+  B. A crash during publication (journal + staging retained on disk, no clean
+     abort) is recovered: the ordered source/destination hashes complete the
+     replaces, the commit is created exactly once (no duplicate commit), and the
+     push uses the expected-SHA workflow.
+  C. A crash after the replace but before the journal advances to COMMITTING is
+     recovered without a duplicate commit (HEAD already equals target SHA).
+  D. The remote already has the target SHA (push accepted) but the journal was
+     not advanced: recovery recognizes the remote SHA and performs NO duplicate
+     push / commit.
+  E. Fail-closed: a malformed journal, a staging hash mismatch, or manifest-
+     external dirt makes the cycle return ``journal_invalid`` with NO generation,
+     NO reset, and NO force-push.
 """
 
+import json
 import os
-import pathlib
+import subprocess
 
+import git
 import pytest
 
 import check_update as cu
-from utils.array_to_dict import restore_compact_data
+from utils.update_transaction import (
+    FileEntry,
+    RepoCommitState,
+    RepoPushState,
+    RepoState,
+    TransactionJournal,
+    TxnPhase,
+    compute_sha256,
+    new_transaction_id,
+    staging_dir_for,
+)
 
-# --------------------------------------------------------------------------- #
-# Snapshot helpers: read bytes, include directory-relative paths
-# --------------------------------------------------------------------------- #
-
-
-def _snapshot_bytes(root: str) -> dict[str, bytes]:
-    """Return {relative posix path: file bytes} for every file under ``root``.
-
-    Uses ``pathlib.Path.read_bytes`` (never text) and stores directory-relative
-    paths so two trees can be compared byte-for-byte by relative path.
-    """
-    out: dict[str, bytes] = {}
-    base = pathlib.Path(root)
-    if not base.exists():
-        return out
-    for p in base.rglob("*"):
-        if not p.is_file():
-            continue
-        if ".git" in p.parts:
-            continue
-        rel = p.relative_to(root).as_posix()
-        out[rel] = p.read_bytes()
-    return out
+CANDIDATE = {"dataVersion": "100", "assetVersion": "100"}
 
 
-# --------------------------------------------------------------------------- #
-# JSON-RPC stub
-# --------------------------------------------------------------------------- #
+def _make_bare_remote(tmp_path, name):
+    remote_path = tmp_path / f"{name}.git"
+    bare = git.Repo.init(str(remote_path), bare=True)
+    bare.git.symbolic_ref("HEAD", "refs/heads/main")
+    return str(remote_path)
 
 
-def _install_jsonrpc(monkeypatch, spec: dict):
-    """Controlled JSON-RPC stub: ``spec`` maps method -> value or callable."""
+_SEED_COUNTER = [0]
+
+
+def _seed_remote(tmp_path, remote_url, filename, content, msg):
+    _SEED_COUNTER[0] += 1
+    seed_dir = str(tmp_path / f"seed_{_SEED_COUNTER[0]}")
+    seed = git.Repo.init(seed_dir)
+    with seed.config_writer() as cw:
+        cw.set_value("user", "name", "s")
+        cw.set_value("user", "email", "s@example.com")
+        cw.set_value("init", "defaultBranch", "main")
+    if not seed.head.is_valid() or seed.active_branch.name != "main":
+        seed.git.checkout("-b", "main")
+    seed.create_remote("origin", remote_url)
+    p = os.path.join(seed.working_dir, filename)
+    with open(p, "w") as f:
+        f.write(content)
+    seed.index.add([filename])
+    seed.index.commit(msg)
+    seed.git.push("origin", "main")
+    return seed.head.commit.hexsha
+
+
+def _clone_worker(tmp_path, name, remote_url):
+    worker = git.Repo.clone_from(remote_url, str(tmp_path / name))
+    with worker.config_writer() as cw:
+        cw.set_value("user", "name", "w")
+        cw.set_value("user", "email", "w@example.com")
+    if worker.active_branch.name != "main":
+        worker.git.checkout("-b", "main")
+    return worker
+
+
+def _write_json(repo, relpath, data):
+    full = os.path.join(repo.working_dir, relpath)
+    parent = os.path.dirname(full)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(full, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _set_globals(monkeypatch, master_repo, i18n_repo):
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_repo.working_dir)
+    monkeypatch.setattr(cu, "version_info", dict(CANDIDATE))
+    monkeypatch.setattr(
+        cu, "update_options", {"master": True, "i18n": True, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+
+
+def _rpc_calls():
+    calls = []
 
     def _request(method, params=None):
-        if method not in spec:
-            raise AssertionError(f"unexpected JSON-RPC request: {method}")
-        handler = spec[method]
-        if callable(handler):
-            return handler(params)
-        return handler
+        calls.append(method)
+        if method in ("check_versions", "check_versions_simple"):
+            return {"maintenance": False, "new_version": False}
+        return {}
 
-    monkeypatch.setattr(cu.jsonrpc_client, "request", _request)
+    return calls
 
 
-def _activate_manifest(monkeypatch, master_staging: str, i18n_staging: str):
-    """Simulate an in-flight cycle by pointing the module globals at staging."""
-    monkeypatch.setattr(cu, "_MASTER_STAGING_ROOT", master_staging)
-    monkeypatch.setattr(cu, "_I18N_STAGING_ROOT", i18n_staging)
-    monkeypatch.setattr(
-        cu, "_STAGING_MANIFEST", {"master": [], "i18n": []}
-    )
+def _setup_two_repo(tmp_path, monkeypatch):
+    master_remote = _make_bare_remote(tmp_path, "master_remote")
+    i18n_remote = _make_bare_remote(tmp_path, "i18n_remote")
+    _seed_remote(tmp_path, master_remote, "base.txt", "m", "m")
+    _seed_remote(tmp_path, i18n_remote, "base.txt", "i", "i")
+    master_repo = _clone_worker(tmp_path, "master_worker", master_remote)
+    i18n_repo = _clone_worker(tmp_path, "i18n_worker", i18n_remote)
+    _set_globals(monkeypatch, master_repo, i18n_repo)
+    return master_remote, i18n_remote, master_repo, i18n_repo
 
 
-# =========================================================================== #
-# 1) save_info_from_suite_user() writes banner + user info to master staging
-# =========================================================================== #
+def _canonical_content(key, rel):
+    if rel == "versions.json":
+        return CANDIDATE
+    if rel == "cards.json":
+        return [{"id": 1}]
+    if rel.endswith("card_prefix.json"):
+        return {"1": "p"}
+    return {}
 
 
-def test_save_info_from_suite_user_writes_staging_only(monkeypatch, tmp_path):
-    formal_master = str(tmp_path / "formal_master")
-    staging_master = str(tmp_path / "staging_master")
-    staging_i18n = str(tmp_path / "staging_i18n")
-    os.makedirs(formal_master, exist_ok=True)
-    os.makedirs(staging_i18n, exist_ok=True)
-
-    monkeypatch.setattr(cu, "masterdb_diff_folder_path", formal_master)
-    monkeypatch.setattr(
-        cu, "update_options",
-        {"master": True, "i18n": True, "userInfo": True},
-    )
-    monkeypatch.setattr(cu, "pjsk_region", "jp")  # not en -> writes userInformations
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "OLD", "assetVersion": "OLD"}
-    )
-    _activate_manifest(monkeypatch, staging_master, staging_i18n)
-
-    suite_user = {
-        "userHomeBanners": [{"id": 1, "title": "Banner A"}],
-        "userInformations": [{"id": 99, "title": "Info X"}],
-    }
-    _install_jsonrpc(monkeypatch, {"login_user_info": suite_user})
-
-    before = _snapshot_bytes(formal_master)
-
-    returned = cu.save_info_from_suite_user()
-
-    # Real banner write landed in the active master staging root.
-    banner_path = os.path.join(staging_master, "userHomeBanners.json")
-    info_path = os.path.join(staging_master, "userInformations.json")
-    assert os.path.exists(banner_path)
-    assert os.path.exists(info_path)
-    import json
-
-    assert json.loads(
-        pathlib.Path(banner_path).read_text(encoding="utf-8")
-    ) == suite_user["userHomeBanners"]
-    assert json.loads(
-        pathlib.Path(info_path).read_text(encoding="utf-8")
-    ) == suite_user["userInformations"]
-    # Manifest recorded both real write-helper paths.
-    assert "userHomeBanners.json" in cu._STAGING_MANIFEST["master"]
-    assert "userInformations.json" in cu._STAGING_MANIFEST["master"]
-    # The function returns the suite user (real return contract).
-    assert returned == suite_user
-    # The formal master working tree is byte-identical (untouched until publish).
-    assert _snapshot_bytes(formal_master) == before
+def _write_json_path(full, data):
+    parent = os.path.dirname(full)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(full, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# =========================================================================== #
-# 2) refresh_information() writes to master staging only
-# =========================================================================== #
-
-
-def test_refresh_information_writes_staging_only(monkeypatch, tmp_path):
-    formal_master = str(tmp_path / "formal_master")
-    staging_master = str(tmp_path / "staging_master")
-    staging_i18n = str(tmp_path / "staging_i18n")
-    os.makedirs(formal_master, exist_ok=True)
-    os.makedirs(staging_i18n, exist_ok=True)
-
-    monkeypatch.setattr(cu, "masterdb_diff_folder_path", formal_master)
-    monkeypatch.setattr(
-        cu, "update_options",
-        {"master": True, "i18n": True, "userInfo": True},
-    )
-    monkeypatch.setattr(cu, "pjsk_region", "jp")
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "OLD", "assetVersion": "OLD"}
-    )
-    _activate_manifest(monkeypatch, staging_master, staging_i18n)
-
-    _install_jsonrpc(
-        monkeypatch,
-        {"fetch_information": {"informations": [{"id": 7, "title": "News"}]}},
-    )
-
-    before = _snapshot_bytes(formal_master)
-
-    cu.refresh_information()
-
-    info_path = os.path.join(staging_master, "userInformations.json")
-    assert os.path.exists(info_path)
-    import json
-
-    assert json.loads(
-        pathlib.Path(info_path).read_text(encoding="utf-8")
-    ) == [{"id": 7, "title": "News"}]
-    assert "userInformations.json" in cu._STAGING_MANIFEST["master"]
-    # Formal master tree unchanged.
-    assert _snapshot_bytes(formal_master) == before
-
-
-# =========================================================================== #
-# 3) _write_compact_master_alias_if_needed() + restore_compact_data()
-# =========================================================================== #
-
-
-def test_compact_master_alias_writes_staging_only(monkeypatch, tmp_path):
-    formal_master = str(tmp_path / "formal_master")
-    staging_master = str(tmp_path / "staging_master")
-    staging_i18n = str(tmp_path / "staging_i18n")
-    os.makedirs(formal_master, exist_ok=True)
-    os.makedirs(staging_i18n, exist_ok=True)
-
-    monkeypatch.setattr(cu, "masterdb_diff_folder_path", formal_master)
-    monkeypatch.setattr(
-        cu, "update_options",
-        {"master": True, "i18n": True, "userInfo": False},
-    )
-    monkeypatch.setattr(cu, "pjsk_region", "tw")  # cn/tw/kr triggers compact alias
-    _activate_manifest(monkeypatch, staging_master, staging_i18n)
-
-    compact = {"__ENUM__": {}, "id": [10, 20], "name": ["A", "B"]}
-    expected = restore_compact_data(compact)
-
-    before = _snapshot_bytes(formal_master)
-
-    cu._write_compact_master_alias_if_needed("compactCards", compact)
-
-    alias_path = os.path.join(staging_master, "cards.json")
-    assert os.path.exists(alias_path)
-    import json
-
-    assert json.loads(
-        pathlib.Path(alias_path).read_text(encoding="utf-8")
-    ) == expected
-    # restore_compact_data produced the documented list-of-dicts mapping.
-    assert expected == [
-        {"id": 10, "name": "A"},
-        {"id": 20, "name": "B"},
-    ]
-    assert "cards.json" in cu._STAGING_MANIFEST["master"]
-    # Formal master tree unchanged.
-    assert _snapshot_bytes(formal_master) == before
-
-    # No-op outside cn/tw/kr: re-point region and confirm nothing is written.
-    monkeypatch.setattr(cu, "pjsk_region", "jp")
-    before_count = len(cu._STAGING_MANIFEST["master"])
-    cu._write_compact_master_alias_if_needed("compactCards", compact)
-    assert len(cu._STAGING_MANIFEST["master"]) == before_count
-
-
-# =========================================================================== #
-# 4) Real i18n special-handler write + real handler exception: generation
-#    boundary discards staging, formal trees byte-identical, global unchanged
-# =========================================================================== #
-
-
-def test_real_i18n_handler_failure_keeps_trees_and_clears_staging(
-    monkeypatch, tmp_path
+def _seed_journal_and_staging(
+    master_repo, i18n_repo, txn_id, *, published=None, phase=TxnPhase.PUBLISHING
 ):
-    formal_master = str(tmp_path / "formal_master")
-    formal_i18n = str(tmp_path / "formal_i18n")
-    os.makedirs(formal_master, exist_ok=True)
-    os.makedirs(formal_i18n, exist_ok=True)
-    master_staging = formal_master + ".staging"
-    i18n_staging = formal_i18n + ".staging"
+    """Pre-seed a durable journal + journal-owned staging on disk (simulating a
+    crash that left both intact). ``published`` maps repo-> {rel: content} that
+    should already be in the formal working tree (simulating a partial replace
+    that completed before the crash)."""
+    published = published or {}
+    master_staging = staging_dir_for(master_repo.working_dir, txn_id)
+    i18n_staging = staging_dir_for(i18n_repo.working_dir, txn_id)
 
-    monkeypatch.setattr(cu, "masterdb_diff_folder_path", formal_master)
-    monkeypatch.setattr(cu, "i18n_diff_folder_path", formal_i18n)
-    monkeypatch.setattr(
-        cu, "update_options",
-        {"master": True, "i18n": True, "userInfo": False},
-    )
-    monkeypatch.setattr(cu, "check_update_simple_mode", False)
-    monkeypatch.setattr(cu, "pjsk_region", "jp")
-    baseline = {"dataVersion": "OLD", "assetVersion": "OLD"}
-    monkeypatch.setattr(cu, "version_info", dict(baseline))
-
-    candidate = {
-        "dataVersion": "NEW",
-        "assetVersion": "NEW",
-        "appVersion": "",
-        "cdnVersion": 1,
-    }
-    # External master fetch is stubbed; the i18n handler itself is NOT mocked.
-    # "stamps" is valid and writes i18n staging successfully; "cards" is malformed
-    # (missing "prefix") and raises a real exception inside _update_i18n_cards.
-    def _fetch_master_split(params):
-        split = params[0] if params else None
-        if split == "stamps":
-            return {"stamps": [{"id": 1, "name": "StampA"}]}
-        return {"cards": [{"id": 2}]}  # cards: missing "prefix" -> handler raises
-
-    _install_jsonrpc(
-        monkeypatch,
-        {
-            "is_login": True,
-            "refresh_master_split_paths": {},
-            "version_info": candidate,
-            "master_split_paths": ["stamps", "cards"],
-            "fetch_master_split": _fetch_master_split,
-        },
-    )
-
-    master_before = _snapshot_bytes(formal_master)
-    i18n_before = _snapshot_bytes(formal_i18n)
-
-    # Observe the real i18n special-handler output reaching the i18n staging root
-    # *during* generation (the handler itself is never mocked; we only record via
-    # the real _write_i18n_json wrapper).
-    i18n_written_to_staging: list[str] = []
-    real_write_i18n_json = cu._write_i18n_json
-
-    def _record_i18n_json(filename, payload):
-        rel = os.path.join("ja", filename)
-        i18n_written_to_staging.append(rel)
-        assert os.path.join(i18n_staging, rel) == os.path.join(
-            cu._staging_i18n_root(), "ja", filename
+    def _state(key, repo, staging, manifest):
+        files = {}
+        for rel in manifest:
+            content = _canonical_content(key, rel)
+            sp = os.path.join(staging, rel)
+            _write_json_path(sp, content)
+            files[rel] = FileEntry(source_sha256=compute_sha256(sp))
+        return RepoState(
+            manifest=list(manifest),
+            staging_dir=staging,
+            target_commit_sha=None,
+            base_sha=repo.head.commit.hexsha if repo.head.is_valid() else None,
+            remote_base_sha=repo.head.commit.hexsha if repo.head.is_valid() else None,
+            remote_name="origin",
+            remote_ref="refs/heads/main",
+            remote_sha=None,
+            remote_endpoint_fingerprint=cu._remote_endpoint(repo, key)[1],
+            files=files,
+            commit_state=RepoCommitState.PENDING,
+            push_state=RepoPushState.PENDING,
         )
-        return real_write_i18n_json(filename, payload)
 
-    monkeypatch.setattr(cu, "_write_i18n_json", _record_i18n_json)
-
-    # The real generation/publication boundary raises on the i18n handler failure
-    # (the malformed "cards" split lacks the "prefix" key the special handler
-    # requires, so a KeyError propagates out of the real refresh_version path).
-    with pytest.raises(KeyError):
-        cu._generate_and_publish(daily=True)
-
-    # 4a) A real i18n special-handler path (stamps) wrote into i18n staging during
-    #     generation: the real handler wrote ja/stamp_name.json to the staging root.
-    assert "ja/stamp_name.json" in i18n_written_to_staging
-    # The formal master tree is byte-identical (no versions.json / no stamps.json).
-    assert _snapshot_bytes(formal_master) == master_before
-    # Formal i18n tree is byte-identical (no ja/stamp_name.json published).
-    assert _snapshot_bytes(formal_i18n) == i18n_before
-    # Global published version_info is NOT advanced past the candidate.
-    assert cu.version_info == baseline
-    # Both staging roots were cleared by the generation-failure boundary.
-    assert not os.path.exists(master_staging)
-    assert not os.path.exists(i18n_staging)
-
-
-# =========================================================================== #
-# 5) Success path: real _generate_and_publish validates every staged JSON via
-#    the real _validate_staged_json, manifests map to real write helpers, and
-#    only after success do the formal trees + global advance.
-# =========================================================================== #
-
-
-def test_success_path_validates_staged_json_and_publishes(monkeypatch, tmp_path):
-    formal_master = str(tmp_path / "formal_master")
-    formal_i18n = str(tmp_path / "formal_i18n")
-    os.makedirs(formal_master, exist_ok=True)
-    os.makedirs(formal_i18n, exist_ok=True)
-    master_staging = formal_master + ".staging"
-    i18n_staging = formal_i18n + ".staging"
-
-    monkeypatch.setattr(cu, "masterdb_diff_folder_path", formal_master)
-    monkeypatch.setattr(cu, "i18n_diff_folder_path", formal_i18n)
-    monkeypatch.setattr(
-        cu, "update_options",
-        {"master": True, "i18n": True, "userInfo": False},
-    )
-    monkeypatch.setattr(cu, "check_update_simple_mode", False)
-    monkeypatch.setattr(cu, "pjsk_region", "jp")
-    baseline = {"dataVersion": "OLD", "assetVersion": "OLD"}
-    monkeypatch.setattr(cu, "version_info", dict(baseline))
-
-    candidate = {
-        "dataVersion": "NEW",
-        "assetVersion": "NEW",
-        "appVersion": "",
-        "cdnVersion": 1,
+    master_manifest = ["versions.json", "cards.json"]
+    i18n_manifest = [os.path.join("ja", "card_prefix.json")]
+    repos = {
+        "master": _state("master", master_repo, master_staging, master_manifest),
+        "i18n": _state("i18n", i18n_repo, i18n_staging, i18n_manifest),
     }
-    # A single valid "stamps" split exercises the real I18N_SPECIAL_HANDLERS path.
-    _install_jsonrpc(
-        monkeypatch,
-        {
-            "is_login": True,
-            "refresh_master_split_paths": {},
-            "version_info": candidate,
-            "master_split_paths": ["stamps"],
-            "fetch_master_split": lambda p: {"stamps": [{"id": 1, "name": "StampA"}]},
+    for key, relmap in published.items():
+        repo = master_repo if key == "master" else i18n_repo
+        for rel, content in relmap.items():
+            _write_json_path(os.path.join(repo.working_dir, rel), content)
+            repos[key].files[rel].dest_sha256 = compute_sha256(
+                os.path.join(repo.working_dir, rel)
+            )
+    j = TransactionJournal(
+        master_git_dir=master_repo.git_dir,
+        transaction_id=txn_id,
+        candidate=dict(CANDIDATE),
+        enabled_repos=["master", "i18n"],
+        publish_order=["master", "i18n"],
+        repos=repos,
+        phase=phase,
+    )
+    j.write()
+    return j
+
+
+def _base_commits(repo):
+    # The worker was cloned from a seeded remote (1 base commit).
+    return 1
+
+
+def _prepared_target(repo, base, content, message, parent=None):
+    """Create a commit-tree target without moving HEAD or installing its index."""
+    target_path = os.path.join(repo.working_dir, "target.json")
+    with open(target_path, "w", encoding="utf-8") as stream:
+        stream.write(content)
+    temp_index = os.path.join(repo.git_dir, "gate3-test-index")
+    env = {**os.environ, "GIT_INDEX_FILE": temp_index}
+    try:
+        subprocess.run(
+            ["git", "read-tree", base], cwd=repo.working_dir, env=env, check=True
+        )
+        blob = subprocess.run(
+            ["git", "hash-object", "-w", target_path],
+            cwd=repo.working_dir,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            [
+                "git",
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                f"100644,{blob},target.json",
+            ],
+            cwd=repo.working_dir,
+            env=env,
+            check=True,
+        )
+        tree = subprocess.run(
+            ["git", "write-tree"],
+            cwd=repo.working_dir,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        args = ["git", "commit-tree", tree, "-p", parent or base]
+        return subprocess.run(
+            args,
+            cwd=repo.working_dir,
+            env={
+                **env,
+                "GIT_AUTHOR_NAME": "gate3",
+                "GIT_AUTHOR_EMAIL": "gate3@example.com",
+                "GIT_COMMITTER_NAME": "gate3",
+                "GIT_COMMITTER_EMAIL": "gate3@example.com",
+            },
+            input=message,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    finally:
+        if os.path.exists(temp_index):
+            os.remove(temp_index)
+
+
+def _prepared_target_journal(master_repo, target, txn_id, base):
+    staging = staging_dir_for(master_repo.working_dir, txn_id)
+    source = os.path.join(staging, "target.json")
+    _write_json_path(source, {"value": "good"})
+    destination = os.path.join(master_repo.working_dir, "target.json")
+    _write_json_path(destination, {"value": "good"})
+    journal = TransactionJournal(
+        master_git_dir=master_repo.git_dir,
+        transaction_id=txn_id,
+        candidate=dict(CANDIDATE),
+        enabled_repos=["master"],
+        publish_order=["master"],
+        repos={
+            "master": RepoState(
+                manifest=["target.json"],
+                staging_dir=staging,
+                repo_root=master_repo.working_dir,
+                target_commit_sha=target,
+                base_sha=base,
+                remote_sha=None,
+                remote_base_sha=base,
+                remote_name="origin",
+                remote_ref="refs/heads/main",
+                remote_endpoint_fingerprint=cu._remote_endpoint(
+                    master_repo, "master"
+                )[1],
+                files={
+                    "target.json": FileEntry(source_sha256=compute_sha256(source))
+                },
+                commit_state=RepoCommitState.PREPARED,
+                push_state=RepoPushState.PENDING,
+            )
         },
+        phase=TxnPhase.COMMITTING,
+    )
+    journal.write()
+    return journal
+
+
+def _assert_prepared_target_rejected(
+    master_repo, i18n_repo, monkeypatch, journal, expected_worktree=None
+):
+    _set_globals(monkeypatch, master_repo, i18n_repo)
+    before_head = master_repo.head.commit.hexsha
+    before_index = open(master_repo.index.path, "rb").read()
+    before_journal = open(journal.journal_path, "rb").read()
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "journal_invalid"
+    assert master_repo.head.commit.hexsha == before_head
+    assert open(master_repo.index.path, "rb").read() == before_index
+    assert open(journal.journal_path, "rb").read() == before_journal
+    if expected_worktree is not None:
+        assert open(
+            os.path.join(master_repo.working_dir, "target.json"), encoding="utf-8"
+        ).read() == expected_worktree
+    assert TransactionJournal.load(master_repo.git_dir) is not None
+
+
+def test_prepared_target_wrong_parent_fails_closed(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    _endpoint, endpoint_fingerprint = cu._remote_endpoint(master_repo, "master")
+    other_tree = master_repo.git.rev_parse(f"{base}^{{tree}}")
+    other = subprocess.run(
+        ["git", "commit-tree", other_tree],
+        cwd=master_repo.working_dir,
+        input="unrelated parent\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    target = _prepared_target(
+        master_repo,
+        base,
+        '{"value": "good"}',
+        "prepared\n\nSekai-Transaction-Id: ignored\nSekai-Transaction-Repo: master\n",
+        parent=other,
+    )
+    journal = _prepared_target_journal(master_repo, target, new_transaction_id(), base)
+    _assert_prepared_target_rejected(
+        master_repo, i18n_repo, monkeypatch, journal
     )
 
-    validated: list[str] = []
-    from check_update import _validate_staged_json as _real_validate
 
-    def _tracking_validate(file_path):
-        validated.append(file_path)
-        return _real_validate(file_path)  # real parse-only validation
+def test_noop_target_still_proves_manifest_against_base(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    txn_id = new_transaction_id()
+    journal = _prepared_target_journal(master_repo, base, txn_id, base)
+    _assert_prepared_target_rejected(master_repo, i18n_repo, monkeypatch, journal)
 
-    monkeypatch.setattr(cu, "_validate_staged_json", _tracking_validate)
 
-    manifest = cu._generate_and_publish(daily=True)
+def test_completed_journal_invalid_head_is_retained(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    txn_id = new_transaction_id()
+    journal = TransactionJournal(
+        master_git_dir=master_repo.git_dir,
+        transaction_id=txn_id,
+        candidate=dict(CANDIDATE),
+        enabled_repos=["master"],
+        publish_order=["master"],
+        repos={
+            "master": RepoState(
+                manifest=[],
+                staging_dir=staging_dir_for(master_repo.working_dir, txn_id),
+                repo_root=master_repo.working_dir,
+                target_commit_sha=base,
+                base_sha=base,
+                remote_sha=base,
+                remote_base_sha=base,
+                remote_name="origin",
+                remote_ref="refs/heads/main",
+                remote_endpoint_fingerprint=cu._remote_endpoint(
+                    master_repo, "master"
+                )[1],
+                commit_state=RepoCommitState.COMMITTED,
+                push_state=RepoPushState.PUSHED,
+            )
+        },
+        phase=TxnPhase.COMPLETED,
+    )
+    journal.write()
+    _write_json(master_repo, "diverged.json", {"bad": True})
+    master_repo.index.add(["diverged.json"])
+    master_repo.index.commit("diverged")
+    _set_globals(monkeypatch, master_repo, i18n_repo)
+    assert cu._run_update_cycle_locked(daily=True) == "journal_invalid"
+    assert TransactionJournal.load(master_repo.git_dir) is not None
 
-    # The returned manifest describes exactly what was published.
-    assert set(manifest.keys()) == {"master", "i18n"}
-    assert "versions.json" in manifest["master"]
-    assert "stamps.json" in manifest["master"]
-    assert "ja/stamp_name.json" in manifest["i18n"]
 
-    # Every manifest path was validated (parse-only) by the real helper: staged
-    # JSON was all valid and each path corresponds to a real write helper.
-    validated_rel = set()
-    for fp in validated:
-        if fp.startswith(master_staging):
-            validated_rel.add(os.path.relpath(fp, master_staging))
-        elif fp.startswith(i18n_staging):
-            validated_rel.add(os.path.relpath(fp, i18n_staging))
-    expected_rel = set(manifest["master"]) | set(manifest["i18n"])
-    assert validated_rel == expected_rel
+def test_completed_journal_prohibited_dirt_is_retained(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    _endpoint, endpoint_fingerprint = cu._remote_endpoint(master_repo, "master")
+    txn_id = new_transaction_id()
+    journal = TransactionJournal(
+        master_git_dir=master_repo.git_dir,
+        transaction_id=txn_id,
+        candidate=dict(CANDIDATE),
+        enabled_repos=["master"],
+        publish_order=["master"],
+        repos={
+            "master": RepoState(
+                manifest=[],
+                staging_dir=staging_dir_for(master_repo.working_dir, txn_id),
+                repo_root=master_repo.working_dir,
+                target_commit_sha=base,
+                base_sha=base,
+                remote_sha=base,
+                remote_base_sha=base,
+                remote_endpoint_fingerprint=endpoint_fingerprint,
+                commit_state=RepoCommitState.COMMITTED,
+                push_state=RepoPushState.PUSHED,
+            )
+        },
+        phase=TxnPhase.COMPLETED,
+    )
+    journal.write()
+    with open(os.path.join(master_repo.working_dir, "prohibited.txt"), "w") as f:
+        f.write("dirt")
+    _set_globals(monkeypatch, master_repo, i18n_repo)
+    assert cu._run_update_cycle_locked(daily=True) == "journal_invalid"
+    assert TransactionJournal.load(master_repo.git_dir) is not None
 
-    # Only after a successful generation+publication does the global advance.
-    assert cu.version_info == candidate
-    # The formal master versions.json equals the candidate (real publish).
-    import json
 
-    assert json.loads(
-        pathlib.Path(formal_master).joinpath("versions.json").read_text(
-            encoding="utf-8"
-        )
-    ) == candidate
-    # The formal i18n tree received the real special-handler output.
-    assert pathlib.Path(formal_i18n).joinpath("ja", "stamp_name.json").exists()
-    # Both staging roots are cleared on the success path too.
-    assert not os.path.exists(master_staging)
-    assert not os.path.exists(i18n_staging)
+@pytest.mark.parametrize(
+    "message",
+    [
+        "prepared\n",
+        "prepared\n\nSekai-Transaction-Id: wrong\nSekai-Transaction-Repo: master\n",
+        "prepared\n\nSekai-Transaction-Id: {txn}\nSekai-Transaction-Repo: i18n\n",
+    ],
+    ids=["missing-trailers", "wrong-transaction", "wrong-repo"],
+)
+def test_prepared_target_trailer_mismatch_fails_closed(
+    tmp_path, monkeypatch, message
+):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    txn_id = new_transaction_id()
+    target = _prepared_target(
+        master_repo,
+        base,
+        '{"value": "good"}',
+        message.format(txn=txn_id),
+    )
+    journal = _prepared_target_journal(master_repo, target, txn_id, base)
+    _assert_prepared_target_rejected(
+        master_repo, i18n_repo, monkeypatch, journal
+    )
+
+
+def test_prepared_target_tree_mismatch_fails_closed(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    txn_id = new_transaction_id()
+    target = _prepared_target(
+        master_repo,
+        base,
+        '{"value": "bad"}',
+        f"prepared\n\nSekai-Transaction-Id: {txn_id}\nSekai-Transaction-Repo: master\n",
+    )
+    journal = _prepared_target_journal(master_repo, target, txn_id, base)
+    _assert_prepared_target_rejected(master_repo, i18n_repo, monkeypatch, journal)
+
+
+def test_prepared_target_conflicting_duplicate_trailers_fails_closed(
+    tmp_path, monkeypatch
+):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    txn_id = new_transaction_id()
+    message = (
+        "prepared\n\n"
+        f"Sekai-Update-Txn: {txn_id}\n"
+        "Sekai-Update-Txn: conflicting\n"
+        "Sekai-Update-Repo: master\n"
+        "Sekai-Update-Repo: i18n\n"
+    )
+    target = _prepared_target(master_repo, base, '{"value": "good"}', message)
+    journal = _prepared_target_journal(master_repo, target, txn_id, base)
+    _assert_prepared_target_rejected(master_repo, i18n_repo, monkeypatch, journal)
+
+
+def test_prepared_target_worktree_mismatch_fails_closed(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    txn_id = new_transaction_id()
+    target = _prepared_target(
+        master_repo,
+        base,
+        '{"value": "good"}',
+        f"prepared\n\nSekai-Transaction-Id: {txn_id}\nSekai-Transaction-Repo: master\n",
+    )
+    journal = _prepared_target_journal(master_repo, target, txn_id, base)
+    _write_json(master_repo, "target.json", {"value": "changed"})
+    _assert_prepared_target_rejected(master_repo, i18n_repo, monkeypatch, journal)
+
+
+def test_prepared_target_index_mismatch_fails_closed(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    txn_id = new_transaction_id()
+    target = _prepared_target(
+        master_repo,
+        base,
+        '{"value": "good"}',
+        f"prepared\n\nSekai-Transaction-Id: {txn_id}\nSekai-Transaction-Repo: master\n",
+    )
+    journal = _prepared_target_journal(master_repo, target, txn_id, base)
+    _write_json(master_repo, "target.json", {"value": "staged-bad"})
+    master_repo.index.add(["target.json"])
+    _write_json(master_repo, "target.json", {"value": "good"})
+    _assert_prepared_target_rejected(master_repo, i18n_repo, monkeypatch, journal)
+
+
+def test_post_cas_invalid_index_fails_closed(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    txn_id = new_transaction_id()
+    target = _prepared_target(
+        master_repo,
+        base,
+        '{"value": "good"}',
+        f"prepared\n\nSekai-Update-Txn: {txn_id}\nSekai-Update-Repo: master\n",
+    )
+    journal = _prepared_target_journal(master_repo, target, txn_id, base)
+    master_repo.git.update_ref("refs/heads/main", target, base)
+    master_repo.git.reset("--hard", target)
+    _write_json(master_repo, "target.json", {"value": "third-tree"})
+    master_repo.index.add(["target.json"])
+    _write_json(master_repo, "target.json", {"value": "good"})
+    _assert_prepared_target_rejected(master_repo, i18n_repo, monkeypatch, journal)
+
+
+@pytest.mark.parametrize("mode", ["detached", "wrong-branch"])
+def test_recovery_requires_attached_main_head(tmp_path, monkeypatch, mode):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    base = master_repo.head.commit.hexsha
+    txn_id = new_transaction_id()
+    target = _prepared_target(
+        master_repo,
+        base,
+        '{"value": "good"}',
+        f"prepared\n\nSekai-Update-Txn: {txn_id}\nSekai-Update-Repo: master\n",
+    )
+    journal = _prepared_target_journal(master_repo, target, txn_id, base)
+    main_before = master_repo.git.rev_parse("refs/heads/main")
+    if mode == "detached":
+        master_repo.git.checkout(base)
+    else:
+        master_repo.git.checkout("-b", "feature")
+    _assert_prepared_target_rejected(master_repo, i18n_repo, monkeypatch, journal)
+    assert master_repo.git.rev_parse("refs/heads/main") == main_before
+
+
+def test_bound_loader_and_temporary_index_are_repo_local(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    journal = _seed_journal_and_staging(
+        master_repo, i18n_repo, new_transaction_id(), phase=TxnPhase.PUBLISHING
+    )
+    monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
+    monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_repo.working_dir)
+    loaded = cu._load_bound_journal()
+    assert loaded.transaction_id == journal.transaction_id
+    assert os.path.dirname(cu._temporary_index_path(master_repo)) == os.path.dirname(
+        master_repo.index.path
+    )
+    assert cu._temporary_index_path(master_repo) != master_repo.index.path
+
+
+# --------------------------------------------------------------------------- #
+# A. Recovery runs before the ordinary new_version=False / maintenance gate
+# --------------------------------------------------------------------------- #
+
+
+def test_recovery_runs_before_gate_and_repushes_same_sha(tmp_path, monkeypatch):
+    master_remote, i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    rpc = _rpc_calls()
+    monkeypatch.setattr(cu.jsonrpc_client, "request", rpc)
+
+    txn_id = new_transaction_id()
+    _seed_journal_and_staging(master_repo, i18n_repo, txn_id, phase=TxnPhase.COMMITTING)
+    _write_json(master_repo, "versions.json", CANDIDATE)
+    _write_json(master_repo, "cards.json", [{"id": 1}])
+    _write_json(i18n_repo, os.path.join("ja", "card_prefix.json"), {"1": "p"})
+    cu._commit_enabled_repositories(
+        [("master", master_repo), ("i18n", i18n_repo)],
+        {"master": ["versions.json", "cards.json"],
+         "i18n": [os.path.join("ja", "card_prefix.json")]},
+        CANDIDATE,
+    )
+    j = TransactionJournal.load(master_repo.git_dir)
+    j.update_repo(
+        "master",
+        commit_state=RepoCommitState.COMMITTED,
+        target_commit_sha=master_repo.head.commit.hexsha,
+    )
+    j.update_repo(
+        "i18n",
+        commit_state=RepoCommitState.COMMITTED,
+        target_commit_sha=i18n_repo.head.commit.hexsha,
+    )
+
+    status = cu._run_update_cycle_locked(daily=False)
+    assert status == "recovered"
+    # The gate RPCs must NOT have been called (recovery runs first).
+    assert "check_versions" not in rpc
+    # The remotes now hold the exact local SHAs (same SHA re-pushed).
+    assert (
+        git.Repo(master_remote).commit("main").hexsha
+        == master_repo.head.commit.hexsha
+    )
+    assert (
+        git.Repo(i18n_remote).commit("main").hexsha
+        == i18n_repo.head.commit.hexsha
+    )
+    # Journal deleted after successful recovery.
+    assert TransactionJournal.load(master_repo.git_dir) is None
+
+
+# --------------------------------------------------------------------------- #
+# B. Crash during publication -> recovery completes without duplicate commit
+# --------------------------------------------------------------------------- #
+
+
+def test_crash_during_publication_recovered_no_duplicate_commit(tmp_path, monkeypatch):
+    master_remote, i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(cu.jsonrpc_client, "request", lambda m, p=None: {})
+
+    txn_id = new_transaction_id()
+    _seed_journal_and_staging(master_repo, i18n_repo, txn_id, phase=TxnPhase.PUBLISHING)
+
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "recovered"
+
+    assert os.path.exists(
+        os.path.join(master_repo.working_dir, "cards.json")
+    )
+    assert os.path.exists(
+        os.path.join(master_repo.working_dir, "versions.json")
+    )
+    assert os.path.exists(
+        os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
+    )
+    assert (
+        len(list(master_repo.iter_commits("HEAD")))
+        == 1 + _base_commits(master_repo)
+    )
+    assert (
+        len(list(i18n_repo.iter_commits("HEAD")))
+        == 1 + _base_commits(i18n_repo)
+    )
+    assert (
+        git.Repo(master_remote).commit("main").hexsha
+        == master_repo.head.commit.hexsha
+    )
+    assert (
+        git.Repo(i18n_remote).commit("main").hexsha
+        == i18n_repo.head.commit.hexsha
+    )
+    assert TransactionJournal.load(master_repo.git_dir) is None
+
+
+# --------------------------------------------------------------------------- #
+# C. Crash after replace but before journal advances to COMMITTING
+# --------------------------------------------------------------------------- #
+
+
+def test_crash_after_replace_before_commit_no_duplicate_commit(tmp_path, monkeypatch):
+    master_remote, i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(cu.jsonrpc_client, "request", lambda m, p=None: {})
+
+    txn_id = new_transaction_id()
+    _seed_journal_and_staging(
+        master_repo,
+        i18n_repo,
+        txn_id,
+        published={
+            "master": {"versions.json": CANDIDATE, "cards.json": [{"id": 1}]},
+            "i18n": {os.path.join("ja", "card_prefix.json"): {"1": "p"}},
+        },
+        phase=TxnPhase.PUBLISHING,
+    )
+
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "recovered"
+    assert len(list(master_repo.iter_commits("HEAD"))) == 1 + _base_commits(master_repo)
+    assert len(list(i18n_repo.iter_commits("HEAD"))) == 1 + _base_commits(i18n_repo)
+    assert TransactionJournal.load(master_repo.git_dir) is None
+
+
+# --------------------------------------------------------------------------- #
+# D. Remote already has target SHA; journal not advanced -> no duplicate push
+# --------------------------------------------------------------------------- #
+
+
+def test_remote_already_has_sha_no_duplicate_push(tmp_path, monkeypatch):
+    master_remote, i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(cu.jsonrpc_client, "request", lambda m, p=None: {})
+
+    txn_id = new_transaction_id()
+    _seed_journal_and_staging(master_repo, i18n_repo, txn_id, phase=TxnPhase.COMMITTING)
+    _write_json(master_repo, "versions.json", CANDIDATE)
+    _write_json(master_repo, "cards.json", [{"id": 1}])
+    _write_json(i18n_repo, os.path.join("ja", "card_prefix.json"), {"1": "p"})
+    cu._commit_enabled_repositories(
+        [("master", master_repo), ("i18n", i18n_repo)],
+        {"master": ["versions.json", "cards.json"],
+         "i18n": [os.path.join("ja", "card_prefix.json")]},
+        CANDIDATE,
+    )
+    m_sha = master_repo.head.commit.hexsha
+    i_sha = i18n_repo.head.commit.hexsha
+    master_repo.git.push("origin", "main")
+    i18n_repo.git.push("origin", "main")
+
+    j = TransactionJournal.load(master_repo.git_dir)
+    j.update_repo(
+        "master", commit_state=RepoCommitState.COMMITTED, target_commit_sha=m_sha
+    )
+    j.update_repo(
+        "i18n", commit_state=RepoCommitState.COMMITTED, target_commit_sha=i_sha
+    )
+
+    push_count = {"n": 0}
+    real_push = cu.push_current_head
+
+    def _counting_push(repo, branch="main", **kwargs):
+        push_count["n"] += 1
+        return real_push(repo, branch=branch, **kwargs)
+
+    monkeypatch.setattr(cu, "push_current_head", _counting_push)
+
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "recovered"
+    # The authoritative remote probe proves both targets are already present;
+    # recovery must not issue duplicate pushes.
+    assert push_count["n"] == 0
+    assert git.Repo(master_remote).commit("main").hexsha == m_sha
+    assert git.Repo(i18n_remote).commit("main").hexsha == i_sha
+    assert TransactionJournal.load(master_repo.git_dir) is None
+
+
+def test_probe_third_sha_retains_pending_push_state(tmp_path, monkeypatch):
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(cu.jsonrpc_client, "request", lambda m, p=None: {})
+    txn_id = new_transaction_id()
+    _seed_journal_and_staging(master_repo, i18n_repo, txn_id, phase=TxnPhase.COMMITTING)
+    _write_json(master_repo, "versions.json", CANDIDATE)
+    _write_json(master_repo, "cards.json", [{"id": 1}])
+    _write_json(i18n_repo, os.path.join("ja", "card_prefix.json"), {"1": "p"})
+    cu._commit_enabled_repositories(
+        [("master", master_repo), ("i18n", i18n_repo)],
+        {"master": ["versions.json", "cards.json"],
+         "i18n": [os.path.join("ja", "card_prefix.json")]},
+        CANDIDATE,
+    )
+    journal = TransactionJournal.load(master_repo.git_dir)
+    assert journal is not None
+    third = "f" * 40
+    monkeypatch.setattr(cu, "_probe_remote", lambda *args: third)
+    push = cu._recover_push(journal)
+    assert push == "remote_mismatch:i18n"
+    retained = TransactionJournal.load(master_repo.git_dir)
+    assert retained.repos["i18n"].push_state is RepoPushState.PENDING
+
+
+def test_endpoint_rebind_and_pushurl_ambiguity_fail_closed(tmp_path, monkeypatch):
+    import check_update as cu
+
+    _remote_a, _remote_b, repo, _i18n = _setup_two_repo(tmp_path, monkeypatch)
+    remote = repo.remote("origin").url
+    repo.git.config("--add", "remote.origin.pushurl", remote + "-other")
+    with pytest.raises(cu.RemoteSnapshotError):
+        cu._remote_endpoint(repo, "master")
+
+
+# --------------------------------------------------------------------------- #
+# E. Fail-closed: malformed journal / hash mismatch / external dirt
+# --------------------------------------------------------------------------- #
+
+
+def test_malformed_journal_fails_closed_no_generation(tmp_path, monkeypatch):
+    master_remote, i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    rpc = _rpc_calls()
+    monkeypatch.setattr(cu.jsonrpc_client, "request", rpc)
+    gen_called = {"flag": False}
+    monkeypatch.setattr(
+        cu, "refresh_version", lambda *a, **k: gen_called.__setitem__("flag", True)
+    )
+
+    jdir = os.path.join(master_repo.git_dir, "sekai-update")
+    os.makedirs(jdir, exist_ok=True)
+    with open(os.path.join(jdir, "transaction.json"), "w") as f:
+        f.write("not json at all")
+
+    status = cu._run_update_cycle_locked(daily=False)
+    assert status == "journal_invalid"
+    assert gen_called["flag"] is False
+    assert "check_versions" not in rpc
+
+
+def test_staging_hash_mismatch_fails_closed(tmp_path, monkeypatch):
+    master_remote, i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(cu.jsonrpc_client, "request", lambda m, p=None: {})
+    gen_called = {"flag": False}
+    monkeypatch.setattr(
+        cu, "refresh_version", lambda *a, **k: gen_called.__setitem__("flag", True)
+    )
+
+    txn_id = new_transaction_id()
+    _seed_journal_and_staging(master_repo, i18n_repo, txn_id, phase=TxnPhase.PUBLISHING)
+    bad_src = os.path.join(
+        staging_dir_for(master_repo.working_dir, txn_id), "cards.json"
+    )
+    with open(bad_src, "w") as f:
+        f.write('{"id": 999}')
+
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "journal_invalid"
+    assert gen_called["flag"] is False
+    assert not os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
+
+
+def test_manifest_external_dirt_fails_closed(tmp_path, monkeypatch):
+    master_remote, i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(cu.jsonrpc_client, "request", lambda m, p=None: {})
+    gen_called = {"flag": False}
+    monkeypatch.setattr(
+        cu, "refresh_version", lambda *a, **k: gen_called.__setitem__("flag", True)
+    )
+    with open(os.path.join(master_repo.working_dir, "scratch.txt"), "w") as f:
+        f.write("dirt")
+    jdir = os.path.join(master_repo.git_dir, "sekai-update")
+    os.makedirs(jdir, exist_ok=True)
+    with open(os.path.join(jdir, "transaction.json"), "w") as f:
+        f.write("@@@")
+
+    status = cu._run_update_cycle_locked(daily=True)
+    assert status == "journal_invalid"
+    assert gen_called["flag"] is False
+    assert os.path.exists(os.path.join(master_repo.working_dir, "scratch.txt"))
+
+
+def test_committing_recovery_rejects_actual_external_dirt(tmp_path, monkeypatch):
+    """A valid COMMITTING journal must reject real out-of-manifest worktree dirt."""
+    _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(cu.jsonrpc_client, "request", lambda m, p=None: {})
+    gen_called = {"flag": False}
+    monkeypatch.setattr(
+        cu,
+        "refresh_version",
+        lambda *a, **k: gen_called.__setitem__("flag", True),
+    )
+
+    txn_id = new_transaction_id()
+    _seed_journal_and_staging(
+        master_repo,
+        i18n_repo,
+        txn_id,
+        published={
+            "master": {"versions.json": CANDIDATE, "cards.json": [{"id": 1}]},
+            "i18n": {os.path.join("ja", "card_prefix.json"): {"1": "p"}},
+        },
+        phase=TxnPhase.COMMITTING,
+    )
+    with open(os.path.join(master_repo.working_dir, "external-dirt.txt"), "w") as f:
+        f.write("must not be staged")
+
+    status = cu._run_update_cycle_locked(daily=True)
+
+    assert status == "journal_invalid"
+    assert gen_called["flag"] is False
+    assert os.path.exists(os.path.join(master_repo.working_dir, "external-dirt.txt"))
+    assert TransactionJournal.load(master_repo.git_dir) is not None

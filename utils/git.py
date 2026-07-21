@@ -5,6 +5,8 @@ from os import path
 from git.exc import NoSuchPathError
 from git.repo import Repo
 
+from utils.git_lock import repo_file_locks
+
 
 class GitOutcome(Enum):
     """Converged outcome dimension for Phase 4.1 Git operations.
@@ -70,14 +72,24 @@ def _push_rejected(
 
 
 def check_git_folder(folder_path: str, remote_git_url_base: str):
-    try:
-        return Repo(folder_path)
-    except NoSuchPathError:
-        return Repo.clone_from(
-            f"{remote_git_url_base}/{path.basename(folder_path)}",
-            folder_path,
-            branch="main",
-        )
+    """Open or clone a local repo while holding its repo-adjacent flock.
+
+    Bootstrap may run in multiple processes.  The target repository's canonical
+    ``<folder>.lock`` is acquired before either opening or cloning so a missing
+    checkout cannot be cloned concurrently by two processes.  Contention uses the
+    project-standard non-blocking repo lock behavior: callers get
+    ``RepoLockUnavailable`` from :func:`repo_file_locks` and no destructive cleanup
+    is attempted.
+    """
+    with repo_file_locks([folder_path + ".lock"], non_blocking=True):
+        try:
+            return Repo(folder_path)
+        except NoSuchPathError:
+            return Repo.clone_from(
+                f"{remote_git_url_base}/{path.basename(folder_path)}",
+                folder_path,
+                branch="main",
+            )
 
 
 def push_current_head(
@@ -86,6 +98,8 @@ def push_current_head(
     branch: str = "main",
     expected_sha: str | None = None,
     require_remote_branch: bool = True,
+    old_remote_sha: str | None = None,
+    remote_url: str | None = None,
 ) -> GitResult:
     """Push the current HEAD to ``refs/heads/<branch>`` on the remote.
 
@@ -154,7 +168,8 @@ def push_current_head(
             )
 
     return _do_push_and_verify(
-        repo, remote_name, branch, remote_ref, remote_ref_name, operation, local_sha
+        repo, remote_name, branch, remote_ref, remote_ref_name, operation, local_sha,
+        old_remote_sha, remote_url,
     )
 
 
@@ -166,45 +181,23 @@ def _do_push_and_verify(
     remote_ref_name: str,
     operation: str,
     local_sha: str | None,
+    old_remote_sha: str | None = None,
+    remote_url: str | None = None,
 ) -> GitResult:
     """Push ``HEAD:remote_ref`` and verify the remote matches the local SHA."""
     refspec = f"HEAD:{remote_ref}"
-
-    try:
-        push_results = repo.remote(remote_name).push(refspec=refspec)
-        if not push_results:
-            return _push_rejected(
-                "empty_push_result", operation, local_sha, "push returned no results"
-            )
-        # Explicit per-ref error-flag scan (stable PENDING_PUSH / push_rejected).
-        for info in push_results:
-            if info.remote_ref_string != remote_ref:
-                return _push_rejected(
-                    "unexpected_ref",
-                    operation,
-                    local_sha,
-                    f"pushed to {info.remote_ref_string}, expected {remote_ref}",
-                )
-            if (
-                info.flags
-                & (
-                    info.REJECTED
-                    | info.REMOTE_REJECTED
-                    | info.REMOTE_FAILURE
-                    | info.ERROR
-                    | info.NO_MATCH
-                )
-            ):
-                return _push_rejected(
-                    "push_rejected",
-                    operation,
-                    local_sha,
-                    f"flags={info.flags} summary={getattr(info, 'summary', '')}",
-                )
-        # Backstop: raise on any other error reported by gitpython.
-        push_results.raise_if_error()
-    except Exception as err:  # noqa: BLE001 - keep local commit, surface pending
-        return _push_rejected("push_rejected", operation, local_sha, str(err))
+    push_result = _perform_push(
+        repo,
+        remote_name,
+        remote_ref,
+        refspec,
+        operation,
+        local_sha,
+        old_remote_sha,
+        remote_url,
+    )
+    if push_result is not None:
+        return push_result
 
     # Post-push verification: the remote ref must equal the pre-push SHA.
     try:
@@ -227,6 +220,79 @@ def _do_push_and_verify(
         local_sha=local_sha,
         remote_sha=confirmed_sha,
     )
+
+
+def _perform_push(
+    repo: Repo,
+    remote_name: str,
+    remote_ref: str,
+    refspec: str,
+    operation: str,
+    local_sha: str | None,
+    old_remote_sha: str | None,
+    remote_url: str | None,
+) -> GitResult | None:
+    """Execute one push and return a rejection, or ``None`` when it ran."""
+    push_kwargs = {"refspec": refspec}
+    if old_remote_sha is not None:
+        # GitPython's positional arguments map to ``refspec``; passing the lease
+        # positionally would create two refspec values.
+        push_kwargs["force_with_lease"] = f"{remote_ref}:{old_remote_sha}"
+
+    try:
+        if remote_url is not None:
+            # GitPython's Remote.push resolves pushurl from config.  The
+            # authoritative path supplies the already-resolved raw endpoint so
+            # the operation cannot silently follow a later remote alias.
+            args = [remote_url, refspec]
+            if old_remote_sha is not None:
+                args.insert(
+                    0, "--force-with-lease=" + f"{remote_ref}:{old_remote_sha}"
+                )
+            repo.git.push(*args)
+            push_results = None
+        else:
+            push_results = repo.remote(remote_name).push(**push_kwargs)
+        if push_results is not None and not push_results:
+            return _push_rejected(
+                "empty_push_result", operation, local_sha, "push returned no results"
+            )
+        if push_results is not None:
+            rejected = _scan_push_results(
+                push_results, remote_ref, operation, local_sha
+            )
+            if rejected is not None:
+                return rejected
+            push_results.raise_if_error()
+    except Exception as err:  # noqa: BLE001 - keep local commit, surface pending
+        return _push_rejected("push_rejected", operation, local_sha, str(err))
+    return None
+
+
+def _scan_push_results(push_results, remote_ref, operation, local_sha):
+    """Return a stable rejection for any unexpected GitPython push result."""
+    for info in push_results:
+        if info.remote_ref_string != remote_ref:
+            return _push_rejected(
+                "unexpected_ref",
+                operation,
+                local_sha,
+                f"pushed to {info.remote_ref_string}, expected {remote_ref}",
+            )
+        if info.flags & (
+            info.REJECTED
+            | info.REMOTE_REJECTED
+            | info.REMOTE_FAILURE
+            | info.ERROR
+            | info.NO_MATCH
+        ):
+            return _push_rejected(
+                "push_rejected",
+                operation,
+                local_sha,
+                f"flags={info.flags} summary={getattr(info, 'summary', '')}",
+            )
+    return None
 
 
 def _safe_local_sha(repo: Repo) -> str | None:
