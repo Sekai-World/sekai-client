@@ -154,9 +154,7 @@ def test_partial_acquisition_releases_already_acquired_locks():
         release = ctx.Event()
         result = ctx.Queue()
 
-        holder = ctx.Process(
-            target=_hold_and_wait, args=([p2], ready, release, result)
-        )
+        holder = ctx.Process(target=_hold_and_wait, args=([p2], ready, release, result))
         holder.start()
         assert ready.wait(timeout=30), "child never acquired p2"
 

@@ -156,9 +156,7 @@ def push_current_head(
         try:
             repo.remote(remote_name).fetch(prune=True)
         except Exception as err:  # noqa: BLE001
-            return _push_rejected(
-                "fetch_failed", operation, local_sha, str(err)
-            )
+            return _push_rejected("fetch_failed", operation, local_sha, str(err))
         if remote_ref_name not in [ref.name for ref in repo.remote(remote_name).refs]:
             return GitResult(
                 outcome=GitOutcome.BLOCKED,
@@ -168,8 +166,15 @@ def push_current_head(
             )
 
     return _do_push_and_verify(
-        repo, remote_name, branch, remote_ref, remote_ref_name, operation, local_sha,
-        old_remote_sha, remote_url,
+        repo,
+        remote_name,
+        branch,
+        remote_ref,
+        remote_ref_name,
+        operation,
+        local_sha,
+        old_remote_sha,
+        remote_url,
     )
 
 
@@ -246,9 +251,7 @@ def _perform_push(
             # the operation cannot silently follow a later remote alias.
             args = [remote_url, refspec]
             if old_remote_sha is not None:
-                args.insert(
-                    0, "--force-with-lease=" + f"{remote_ref}:{old_remote_sha}"
-                )
+                args.insert(0, "--force-with-lease=" + f"{remote_ref}:{old_remote_sha}")
             repo.git.push(*args)
             push_results = None
         else:
@@ -372,9 +375,7 @@ def _structural_blocked(
     return None
 
 
-def _fetch_or_fail(
-    repo: Repo, remote_name: str
-) -> GitResult | None:
+def _fetch_or_fail(repo: Repo, remote_name: str) -> GitResult | None:
     """Fetch remote refs (prune), returning a FAILED result on error, else ``None``."""
     try:
         repo.remote(remote_name).fetch(prune=True)

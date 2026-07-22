@@ -137,7 +137,8 @@ class StrapiOutbox:
                 "endpoint": canonical_endpoint,
                 "ids": canonical_values,
                 "transaction_id": (
-                    old.get("transaction_id") if ready and isinstance(old, dict)
+                    old.get("transaction_id")
+                    if ready and isinstance(old, dict)
                     else transaction_id
                 ),
                 "ready": ready,
@@ -160,9 +161,8 @@ class StrapiOutbox:
         with self._locked():
             data = self._load_unlocked()
             for record in data["records"].values():
-                if (
-                    record.get("transaction_id") == transaction_id
-                    and not record.get("ready")
+                if record.get("transaction_id") == transaction_id and not record.get(
+                    "ready"
                 ):
                     record["ready"] = True
                     record["updated_at"] = now
@@ -266,8 +266,15 @@ class StrapiOutbox:
         if not isinstance(record, dict):
             raise StrapiOutboxError(f"Strapi outbox record is invalid: {key!r}")
         required = {
-            "key", "endpoint", "ids", "transaction_id", "ready", "attempts",
-            "created_at", "updated_at", "last_error",
+            "key",
+            "endpoint",
+            "ids",
+            "transaction_id",
+            "ready",
+            "attempts",
+            "created_at",
+            "updated_at",
+            "last_error",
         }
         if set(record) != required or record.get("key") != key:
             raise StrapiOutboxError(f"Strapi outbox record shape is invalid: {key!r}")

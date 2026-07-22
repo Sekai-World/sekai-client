@@ -296,12 +296,10 @@ def _prepared_target_journal(master_repo, target, txn_id, base):
                 remote_base_sha=base,
                 remote_name="origin",
                 remote_ref="refs/heads/main",
-                remote_endpoint_fingerprint=cu._remote_endpoint(
-                    master_repo, "master"
-                )[1],
-                files={
-                    "target.json": FileEntry(source_sha256=compute_sha256(source))
-                },
+                remote_endpoint_fingerprint=cu._remote_endpoint(master_repo, "master")[
+                    1
+                ],
+                files={"target.json": FileEntry(source_sha256=compute_sha256(source))},
                 commit_state=RepoCommitState.PREPARED,
                 push_state=RepoPushState.PENDING,
             )
@@ -325,9 +323,12 @@ def _assert_prepared_target_rejected(
     assert open(master_repo.index.path, "rb").read() == before_index
     assert open(journal.journal_path, "rb").read() == before_journal
     if expected_worktree is not None:
-        assert open(
-            os.path.join(master_repo.working_dir, "target.json"), encoding="utf-8"
-        ).read() == expected_worktree
+        assert (
+            open(
+                os.path.join(master_repo.working_dir, "target.json"), encoding="utf-8"
+            ).read()
+            == expected_worktree
+        )
     assert TransactionJournal.load(master_repo.git_dir) is not None
 
 
@@ -354,9 +355,7 @@ def test_prepared_target_wrong_parent_fails_closed(tmp_path, monkeypatch):
         parent=other,
     )
     journal = _prepared_target_journal(master_repo, target, new_transaction_id(), base)
-    _assert_prepared_target_rejected(
-        master_repo, i18n_repo, monkeypatch, journal
-    )
+    _assert_prepared_target_rejected(master_repo, i18n_repo, monkeypatch, journal)
 
 
 def test_noop_target_still_proves_manifest_against_base(tmp_path, monkeypatch):
@@ -392,9 +391,9 @@ def test_completed_journal_invalid_head_is_retained(tmp_path, monkeypatch):
                 remote_base_sha=base,
                 remote_name="origin",
                 remote_ref="refs/heads/main",
-                remote_endpoint_fingerprint=cu._remote_endpoint(
-                    master_repo, "master"
-                )[1],
+                remote_endpoint_fingerprint=cu._remote_endpoint(master_repo, "master")[
+                    1
+                ],
                 commit_state=RepoCommitState.COMMITTED,
                 push_state=RepoPushState.PUSHED,
             )
@@ -456,9 +455,7 @@ def test_completed_journal_prohibited_dirt_is_retained(tmp_path, monkeypatch):
     ],
     ids=["missing-trailers", "wrong-transaction", "wrong-repo"],
 )
-def test_prepared_target_trailer_mismatch_fails_closed(
-    tmp_path, monkeypatch, message
-):
+def test_prepared_target_trailer_mismatch_fails_closed(tmp_path, monkeypatch, message):
     _master_remote, _i18n_remote, master_repo, i18n_repo = _setup_two_repo(
         tmp_path, monkeypatch
     )
@@ -471,9 +468,7 @@ def test_prepared_target_trailer_mismatch_fails_closed(
         message.format(txn=txn_id),
     )
     journal = _prepared_target_journal(master_repo, target, txn_id, base)
-    _assert_prepared_target_rejected(
-        master_repo, i18n_repo, monkeypatch, journal
-    )
+    _assert_prepared_target_rejected(master_repo, i18n_repo, monkeypatch, journal)
 
 
 def test_prepared_target_tree_mismatch_fails_closed(tmp_path, monkeypatch):
@@ -630,8 +625,10 @@ def test_recovery_runs_before_gate_and_repushes_same_sha(tmp_path, monkeypatch):
     _write_json(i18n_repo, os.path.join("ja", "card_prefix.json"), {"1": "p"})
     cu._commit_enabled_repositories(
         [("master", master_repo), ("i18n", i18n_repo)],
-        {"master": ["versions.json", "cards.json"],
-         "i18n": [os.path.join("ja", "card_prefix.json")]},
+        {
+            "master": ["versions.json", "cards.json"],
+            "i18n": [os.path.join("ja", "card_prefix.json")],
+        },
         CANDIDATE,
     )
     j = TransactionJournal.load(master_repo.git_dir)
@@ -652,13 +649,9 @@ def test_recovery_runs_before_gate_and_repushes_same_sha(tmp_path, monkeypatch):
     assert "check_versions" not in rpc
     # The remotes now hold the exact local SHAs (same SHA re-pushed).
     assert (
-        git.Repo(master_remote).commit("main").hexsha
-        == master_repo.head.commit.hexsha
+        git.Repo(master_remote).commit("main").hexsha == master_repo.head.commit.hexsha
     )
-    assert (
-        git.Repo(i18n_remote).commit("main").hexsha
-        == i18n_repo.head.commit.hexsha
-    )
+    assert git.Repo(i18n_remote).commit("main").hexsha == i18n_repo.head.commit.hexsha
     # Journal deleted after successful recovery.
     assert TransactionJournal.load(master_repo.git_dir) is None
 
@@ -680,31 +673,15 @@ def test_crash_during_publication_recovered_no_duplicate_commit(tmp_path, monkey
     status = cu._run_update_cycle_locked(daily=True)
     assert status == "recovered"
 
-    assert os.path.exists(
-        os.path.join(master_repo.working_dir, "cards.json")
-    )
-    assert os.path.exists(
-        os.path.join(master_repo.working_dir, "versions.json")
-    )
-    assert os.path.exists(
-        os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
-    )
+    assert os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
+    assert os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
+    assert os.path.exists(os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json"))
+    assert len(list(master_repo.iter_commits("HEAD"))) == 1 + _base_commits(master_repo)
+    assert len(list(i18n_repo.iter_commits("HEAD"))) == 1 + _base_commits(i18n_repo)
     assert (
-        len(list(master_repo.iter_commits("HEAD")))
-        == 1 + _base_commits(master_repo)
+        git.Repo(master_remote).commit("main").hexsha == master_repo.head.commit.hexsha
     )
-    assert (
-        len(list(i18n_repo.iter_commits("HEAD")))
-        == 1 + _base_commits(i18n_repo)
-    )
-    assert (
-        git.Repo(master_remote).commit("main").hexsha
-        == master_repo.head.commit.hexsha
-    )
-    assert (
-        git.Repo(i18n_remote).commit("main").hexsha
-        == i18n_repo.head.commit.hexsha
-    )
+    assert git.Repo(i18n_remote).commit("main").hexsha == i18n_repo.head.commit.hexsha
     assert TransactionJournal.load(master_repo.git_dir) is None
 
 
@@ -756,8 +733,10 @@ def test_remote_already_has_sha_no_duplicate_push(tmp_path, monkeypatch):
     _write_json(i18n_repo, os.path.join("ja", "card_prefix.json"), {"1": "p"})
     cu._commit_enabled_repositories(
         [("master", master_repo), ("i18n", i18n_repo)],
-        {"master": ["versions.json", "cards.json"],
-         "i18n": [os.path.join("ja", "card_prefix.json")]},
+        {
+            "master": ["versions.json", "cards.json"],
+            "i18n": [os.path.join("ja", "card_prefix.json")],
+        },
         CANDIDATE,
     )
     m_sha = master_repo.head.commit.hexsha
@@ -804,8 +783,10 @@ def test_probe_third_sha_retains_pending_push_state(tmp_path, monkeypatch):
     _write_json(i18n_repo, os.path.join("ja", "card_prefix.json"), {"1": "p"})
     cu._commit_enabled_repositories(
         [("master", master_repo), ("i18n", i18n_repo)],
-        {"master": ["versions.json", "cards.json"],
-         "i18n": [os.path.join("ja", "card_prefix.json")]},
+        {
+            "master": ["versions.json", "cards.json"],
+            "i18n": [os.path.join("ja", "card_prefix.json")],
+        },
         CANDIDATE,
     )
     journal = TransactionJournal.load(master_repo.git_dir)

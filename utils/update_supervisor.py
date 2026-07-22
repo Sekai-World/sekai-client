@@ -8,6 +8,7 @@ to form complete supervisor system.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import stat
@@ -21,6 +22,8 @@ from enum import StrEnum
 from typing import Any
 
 from utils.git_lock import repo_file_locks
+
+logger = logging.getLogger(__name__)
 
 HARD_TIMEOUT_DEFAULT = 3600.0
 TERM_GRACE_DEFAULT = 10.0
@@ -390,9 +393,7 @@ def _metadata_matches_full(left: OwnerMetadata, right: OwnerMetadata) -> bool:
     )
 
 
-def delete_owner_metadata_if_matched(
-    lock_path: str, metadata: OwnerMetadata
-) -> bool:
+def delete_owner_metadata_if_matched(lock_path: str, metadata: OwnerMetadata) -> bool:
     """Delete owner metadata if it fully matches the provided metadata.
 
     Must be called while holding the corresponding flock to avoid TOCTOU races.
@@ -505,16 +506,19 @@ def claimed_repo_locks(metadata: OwnerMetadata) -> Iterator[None]:
     """Acquire every flock before publishing advisory owner metadata.
 
     On write failure, attempts best-effort cleanup of all owner files while
-    still holding flocks, then raises OwnerCleanupError if any cleanup fails.
-    Lock files are never deleted.
+    still holding flocks. Cleanup failures raise OwnerCleanupError unless the
+    body already raised; in that case the body exception remains primary and
+    cleanup failures are logged and attached as a note. Lock files are never
+    deleted.
     """
     with repo_file_locks(metadata.lock_paths, non_blocking=True):
-        try:
-            write_owner_metadata_for_locks(metadata)
-        except Exception:
-            raise
+        write_owner_metadata_for_locks(metadata)
+        body_error: BaseException | None = None
         try:
             yield
+        except BaseException as error:
+            body_error = error
+            raise
         finally:
             cleanup_failures: list[tuple[str, BaseException]] = []
             for lock_path in metadata.lock_paths:
@@ -523,9 +527,18 @@ def claimed_repo_locks(metadata: OwnerMetadata) -> Iterator[None]:
                 except Exception as error:
                     cleanup_failures.append((lock_path, error))
             if cleanup_failures:
-                raise OwnerCleanupError(
+                cleanup_error = OwnerCleanupError(
                     "owner cleanup had "
                     f"{len(cleanup_failures)} errors while holding flocks",
+                    cleanup_failures,
+                )
+                if body_error is None:
+                    raise cleanup_error
+                body_error.add_note(f"{cleanup_error}: {cleanup_failures!r}")
+                logger.error(
+                    "owner cleanup failed while preserving the context body "
+                    "exception: %s; failures=%r",
+                    cleanup_error,
                     cleanup_failures,
                 )
 

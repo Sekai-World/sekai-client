@@ -469,9 +469,7 @@ def test_coordinator_prepare_passes_allow_push_false(monkeypatch, tmp_path):
     prepare's auto-ahead push."""
     master_remote = _make_bare_remote(tmp_path, "master_remote")
     i18n_remote = _make_bare_remote(tmp_path, "i18n_remote")
-    _seed_remote(
-        tmp_path, master_remote, "base.txt", "master base", "master base"
-    )
+    _seed_remote(tmp_path, master_remote, "base.txt", "master base", "master base")
     _seed_remote(tmp_path, i18n_remote, "base.txt", "i18n base", "i18n base")
 
     master_repo = _clone_worker(tmp_path, "master_worker", master_remote)

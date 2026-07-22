@@ -145,6 +145,7 @@ _STRAPI_OUTBOX_PATH = path.join(
     path.dirname(path.abspath(__file__)), ".check_update_strapi_outbox.json"
 )
 
+
 class CycleDeadlineExceeded(Exception):
     """Raised cooperatively when an ordinary update cycle's deadline elapses.
 
@@ -284,7 +285,7 @@ def _write_master_file(relpath: str, data: Any) -> None:
     file_path = path.join(root, relpath)
     parent = path.dirname(file_path)
     if parent:
-        os.makedirs(parent, exist_ok=True)  # noqa: F821 - os imported below
+        os.makedirs(parent, exist_ok=True)
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     fsync_file(file_path)
@@ -1165,9 +1166,7 @@ def _remote_snapshot(
             text=True,
         )
     except (OSError, subprocess.CalledProcessError) as err:
-        raise RemoteProbeError(
-            f"remote snapshot failed for {key!r}"
-        ) from err
+        raise RemoteProbeError(f"remote snapshot failed for {key!r}") from err
     rows = [line.split() for line in result.stdout.splitlines() if line.strip()]
     if len(rows) != 1 or len(rows[0]) != 2 or rows[0][1] != remote_ref:
         raise RemoteProbeError(f"remote snapshot missing or ambiguous for {key!r}")
@@ -1205,9 +1204,7 @@ def _load_bound_journal() -> TransactionJournal | None:
     if masterdb_diff_repo is None:
         return None
     master_git_dir = path.realpath(masterdb_diff_repo.git_dir)
-    expected_journal = path.join(
-        master_git_dir, "sekai-update", "transaction.json"
-    )
+    expected_journal = path.join(master_git_dir, "sekai-update", "transaction.json")
     journal = TransactionJournal.load(master_git_dir)
     if journal is None:
         return None
@@ -1526,11 +1523,7 @@ def _build_publishing_journal(
             "master", master_staging, masterdb_diff_folder_path, full
         )
     if update_options["i18n"]:
-        full = (
-            i18n_full_manifest
-            if i18n_full_manifest is not None
-            else i18n_manifest
-        )
+        full = i18n_full_manifest if i18n_full_manifest is not None else i18n_manifest
         repos_state["i18n"] = _build_repo_state(
             "i18n", i18n_staging, i18n_diff_folder_path, full
         )
@@ -1586,20 +1579,29 @@ def _publish_all_staged(
     try:
         # 1) All non-master-version files across both repositories.
         _publish_staging(
-            master_staging, masterdb_diff_folder_path, master_manifest,
-            journal=journal, repo_key="master",
+            master_staging,
+            masterdb_diff_folder_path,
+            master_manifest,
+            journal=journal,
+            repo_key="master",
         )
         # 2) i18n: everything except versions.json.
         _publish_staging(
-            i18n_staging, i18n_diff_folder_path, i18n_manifest,
-            journal=journal, repo_key="i18n",
+            i18n_staging,
+            i18n_diff_folder_path,
+            i18n_manifest,
+            journal=journal,
+            repo_key="i18n",
         )
         # 3) global versions.json last and alone, from the master staging root,
         #    but only when master is enabled and actually staged it.
         if "versions.json" in manifest["master"]:
             _publish_staging(
-                master_staging, masterdb_diff_folder_path, ["versions.json"],
-                journal=journal, repo_key="master",
+                master_staging,
+                masterdb_diff_folder_path,
+                ["versions.json"],
+                journal=journal,
+                repo_key="master",
             )
             global_published = True
     except BaseException:
@@ -1725,8 +1727,9 @@ def _generate_and_publish(  # noqa: C901
         enabled.append("i18n")
     publish_order = [k for k in _REPO_ORDER if k in enabled]
 
-    def _build_repo_state(key: str, staging_root: str, working_root: str,
-                          man: list[str]) -> RepoState:
+    def _build_repo_state(
+        key: str, staging_root: str, working_root: str, man: list[str]
+    ) -> RepoState:
         files = {}
         for rel in man:
             src = path.join(staging_root, rel)
@@ -1750,8 +1753,14 @@ def _generate_and_publish(  # noqa: C901
     i18n_manifest = [p for p in manifest["i18n"] if p != "versions.json"]
 
     journal = _build_publishing_journal(
-        txn_id, candidate, enabled, publish_order,
-        master_staging, i18n_staging, master_manifest, i18n_manifest,
+        txn_id,
+        candidate,
+        enabled,
+        publish_order,
+        master_staging,
+        i18n_staging,
+        master_manifest,
+        i18n_manifest,
         master_full_manifest=list(manifest["master"]),
         i18n_full_manifest=list(manifest["i18n"]),
         daily_due_date=daily_due_date if daily else None,
@@ -1761,8 +1770,12 @@ def _generate_and_publish(  # noqa: C901
     # working tree. Only a successful master-enabled publication advances the
     # global. master=False (i18n-only) and all-disabled never reach this branch.
     global_published = _publish_all_staged(
-        journal, manifest, master_staging, i18n_staging,
-        master_manifest, i18n_manifest,
+        journal,
+        manifest,
+        master_staging,
+        i18n_staging,
+        master_manifest,
+        i18n_manifest,
     )
 
     # Only now — after every staged file was generated, validated, and published
@@ -1845,8 +1858,7 @@ def _recover_publish_file(
         dest = compute_sha256(dst)
         if dest != expected_src:
             raise JournalError(
-                f"recovery replace produced unexpected content for {repo_key!r}/"
-                f"{rel!r}"
+                f"recovery replace produced unexpected content for {repo_key!r}/{rel!r}"
             )
         st.files[rel].dest_sha256 = dest
         journal.update_repo(repo_key, rel=rel, dest_sha256=dest)
@@ -2022,9 +2034,7 @@ def _recover_recorded_target(
     st.commit_state = RepoCommitState.COMMITTED
 
 
-def _validate_noop_target(
-    key: str, repo: Repo, st: RepoState, target: str
-) -> None:
+def _validate_noop_target(key: str, repo: Repo, st: RepoState, target: str) -> None:
     """Prove a recorded no-op still represents the published manifest exactly."""
     _validate_target_object(repo, key, target)
     _validate_target_tree(repo, key, st, target)
@@ -2108,9 +2118,7 @@ def _validate_recovery_head(key: str, st: RepoState, head_sha: str | None) -> No
         )
 
 
-def _validate_recovery_manifest_state(
-    key: str, repo: Repo, st: RepoState
-) -> None:
+def _validate_recovery_manifest_state(key: str, repo: Repo, st: RepoState) -> None:
     """Fail closed unless publication and all local dirt are manifest-safe."""
     root = masterdb_diff_folder_path if key == "master" else i18n_diff_folder_path
     manifest = set(st.manifest)
@@ -2151,8 +2159,7 @@ def _validate_recovery_manifest_state(
     outside = sorted(dirty - manifest)
     if outside:
         raise JournalError(
-            f"recovery commit blocked for {key!r}: out-of-manifest dirt "
-            f"{outside!r}"
+            f"recovery commit blocked for {key!r}: out-of-manifest dirt {outside!r}"
         )
 
 
@@ -2166,9 +2173,7 @@ def _target_parent_shas(repo: Repo, target: str) -> list[str]:
     return line.split()[1:]
 
 
-def _validate_target_tree(
-    repo: Repo, key: str, st: RepoState, target: str
-) -> None:
+def _validate_target_tree(repo: Repo, key: str, st: RepoState, target: str) -> None:
     """Prove the target tree is exactly the journal's manifest change."""
     root = masterdb_diff_folder_path if key == "master" else i18n_diff_folder_path
     manifest = set(st.manifest)
@@ -2540,14 +2545,10 @@ def _prepare_commit_target(
                 "master-db-diff-bot" if key == "master" else "i18n-diff-bot"
             ),
             "GIT_COMMITTER_EMAIL": "anonymous@example.com",
-            "GIT_AUTHOR_DATE": _git_command(
-                repo, "show", "-s", "--format=%aI", base
-            )
+            "GIT_AUTHOR_DATE": _git_command(repo, "show", "-s", "--format=%aI", base)
             if base
             else "1970-01-01T00:00:00+0000",
-            "GIT_COMMITTER_DATE": _git_command(
-                repo, "show", "-s", "--format=%aI", base
-            )
+            "GIT_COMMITTER_DATE": _git_command(repo, "show", "-s", "--format=%aI", base)
             if base
             else "1970-01-01T00:00:00+0000",
         },
@@ -2575,9 +2576,7 @@ def _recover_commit(journal: TransactionJournal) -> None:
     for key in journal.enabled_repos:
         st = journal.repos.get(key)
         if st is None or st.commit_state != RepoCommitState.COMMITTED:
-            raise JournalError(
-                f"recovery push blocked: {key!r} not committed"
-            )
+            raise JournalError(f"recovery push blocked: {key!r} not committed")
         head_sha = _safe_head_sha(
             masterdb_diff_repo if key == "master" else i18n_diff_repo
         )
@@ -2617,14 +2616,14 @@ def _recover_push(journal: TransactionJournal) -> "str | None":
         if remote_sha == target:
             st.remote_sha = target
             st.push_state = RepoPushState.PUSHED
-            journal.update_repo(
-                key, push_state=RepoPushState.PUSHED, remote_sha=target
-            )
+            journal.update_repo(key, push_state=RepoPushState.PUSHED, remote_sha=target)
             continue
         if remote_sha != st.remote_base_sha:
             return f"remote_mismatch:{key}"
         push_res = _push_diff(
-            repo, operation=f"push_{key}", expected_sha=target,
+            repo,
+            operation=f"push_{key}",
+            expected_sha=target,
             old_remote_sha=st.remote_base_sha,
             remote_endpoint_fingerprint=st.remote_endpoint_fingerprint,
             remote_state=st,
@@ -2632,9 +2631,7 @@ def _recover_push(journal: TransactionJournal) -> "str | None":
         if push_res.outcome is GitOutcome.OK:
             st.push_state = RepoPushState.PUSHED
             st.remote_sha = target
-            journal.update_repo(
-                key, push_state=RepoPushState.PUSHED, remote_sha=target
-            )
+            journal.update_repo(key, push_state=RepoPushState.PUSHED, remote_sha=target)
         else:
             # Ambiguous/failed push: retain the journal for retry. FAILED is not
             # a durable v2 state, so leave the last proven PENDING checkpoint
@@ -2724,9 +2721,7 @@ def _recover_transaction() -> tuple[str | None, str | None]:
     return "recovered", due_date if isinstance(due_date, str) else None
 
 
-def _commit_message_for(
-    key: str, candidate: dict[str, Any] | None
-) -> str:
+def _commit_message_for(key: str, candidate: dict[str, Any] | None) -> str:
     """Build an explicit, non-crashing commit message for a repository.
 
     The candidate (or, for legacy/standalone callers, the published global) is
@@ -2745,9 +2740,7 @@ def _commit_message_for(
         asset_version = ver.get("assetVersion")
         if data_version is None or asset_version is None:
             return "master data update"
-        return (
-            f"master version {data_version} asset version {asset_version}"
-        )
+        return f"master version {data_version} asset version {asset_version}"
     if ver.get("dataVersion") is None:
         return "i18n data update"
     return f"i18n update for master version {ver['dataVersion']}"
@@ -3119,8 +3112,10 @@ def _run_update_cycle_locked(
     """
     try:
         return _run_update_cycle_locked_body(
-            daily, deadline=deadline, daily_due_date=daily_due_date
-            , daily_context=daily_context
+            daily,
+            deadline=deadline,
+            daily_due_date=daily_due_date,
+            daily_context=daily_context,
         )
     finally:
         _drain_ready_strapi_outbox()
@@ -3217,11 +3212,7 @@ def _run_update_cycle_locked_body(  # noqa: C901
     #    action. A fresh cycle must never commit without the durable publication
     #    record that binds its staged files and base heads.
     try:
-        journal = (
-            _load_bound_journal()
-            if masterdb_diff_repo is not None
-            else None
-        )
+        journal = _load_bound_journal() if masterdb_diff_repo is not None else None
     except JournalError as err:
         logger.error("[cycle] commit journal load failed closed: %s", err)
         return "journal_invalid"
@@ -3344,8 +3335,11 @@ def _run_update_cycle(  # noqa: C901
     try:
         try:
             status = _run_with_authoritative_locks(
-                daily, deadline, lock_files, daily_due_date=daily_due_date
-                , daily_context=cycle_context
+                daily,
+                deadline,
+                lock_files,
+                daily_due_date=daily_due_date,
+                daily_context=cycle_context,
             )
         except RepoLockUnavailable as err:
             logger.warning("[cycle] skipped: could not acquire repo locks: %s", err)

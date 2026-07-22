@@ -325,12 +325,11 @@ def test_push_with_lease_rejects_stale_remote_without_mutation(tmp_path):
     other, _ = _clone_with_commit(
         tmp_path, "other", remote_url, "other.txt", "other", "other"
     )
-    assert push_current_head(
-        other, branch="main", old_remote_sha=base_sha
-    ).outcome is GitOutcome.OK
-    result = push_current_head(
-        repo, branch="main", old_remote_sha=base_sha
+    assert (
+        push_current_head(other, branch="main", old_remote_sha=base_sha).outcome
+        is GitOutcome.OK
     )
+    result = push_current_head(repo, branch="main", old_remote_sha=base_sha)
     assert result.outcome is GitOutcome.PENDING_PUSH
     assert Repo(remote_url).commit("main").hexsha == other.head.commit.hexsha
     assert repo.head.commit.hexsha == local_sha
@@ -468,6 +467,7 @@ def test_prepare_ff_failure_operation_is_fast_forward(tmp_path, monkeypatch):
     class _GitMergeFails:
         def __getattr__(self, name):
             if name == "merge":
+
                 def _raise(*args, **kwargs):
                     raise RuntimeError("ff blocked")
 
@@ -488,9 +488,7 @@ def test_prepare_ff_failure_operation_is_fast_forward(tmp_path, monkeypatch):
 def test_prepare_equal_is_ok(tmp_path):
     remote_url = _make_bare_remote(tmp_path)
     _seed_remote(tmp_path, remote_url, "base.txt", "base", "base")
-    repo, sha = _clone_with_commit(
-        tmp_path, "local", remote_url, "a.txt", "hi", "init"
-    )
+    repo, sha = _clone_with_commit(tmp_path, "local", remote_url, "a.txt", "hi", "init")
     push_current_head(repo, branch="main")
 
     result = prepare_repo_for_update(repo, branch="main")
@@ -665,9 +663,7 @@ def test_commit_pending_emits_credential_safe_warning(monkeypatch, caplog):
     )
     monkeypatch.setattr(cu, "push_current_head", Mock(return_value=pending))
     monkeypatch.setattr(cu, "masterdb_diff_repo", repo)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
     monkeypatch.setattr(cu, "check_git_folder", Mock())
 
     with caplog.at_level(logging.WARNING):
@@ -694,9 +690,7 @@ def test_commit_failed_when_repo_missing(monkeypatch):
     import check_update as cu
 
     monkeypatch.setattr(cu, "masterdb_diff_repo", None)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
     monkeypatch.setattr(cu, "push_current_head", Mock())
 
     result = cu.commit_master_diff()
@@ -729,9 +723,7 @@ def test_commit_i18n_uses_i18n_actor(monkeypatch):
     pending = cu.GitResult(outcome=GitOutcome.PENDING_PUSH, reason="x", local_sha="s")
     monkeypatch.setattr(cu, "push_current_head", Mock(return_value=pending))
     monkeypatch.setattr(cu, "i18n_diff_repo", repo)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
     monkeypatch.setattr(cu, "check_git_folder", Mock())
 
     cu.commit_i18n_files()

@@ -179,6 +179,7 @@ def _mock_authoritative_snapshot_only_for_no_remote_unit_cycles(monkeypatch):
 
     monkeypatch.setattr(cu, "_remote_endpoint", _endpoint)
 
+
 def _write_empty_publishing_journal(master_repo, i18n_repo=None):
     """Install the durable journal expected by a generation test double."""
     repos = {"master": master_repo}
@@ -356,9 +357,7 @@ def test_daily_due_late_coalesced_callback_still_daily(tmp_path, monkeypatch):
     assert calls == [True]
 
 
-def test_daily_due_persistence_survives_restart_and_success_only(
-    tmp_path, monkeypatch
-):
+def test_daily_due_persistence_survives_restart_and_success_only(tmp_path, monkeypatch):
     state_path = tmp_path / "due.json"
     monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(state_path))
     real_datetime = cu.datetime
@@ -426,9 +425,7 @@ def test_daily_success_marks_dispatch_date_when_publish_crosses_midnight(
     def _cross_midnight(*args, **kwargs):
         # A real long-running generation would observe Jan 2 here; the outer
         # cycle must still use the Jan 1 identity captured before dispatch.
-        monkeypatch.setattr(
-            cu, "_tokyo_calendar_date", lambda now=None: "2026-01-02"
-        )
+        monkeypatch.setattr(cu, "_tokyo_calendar_date", lambda now=None: "2026-01-02")
         return "ok"
 
     monkeypatch.setattr(cu, "_run_with_authoritative_locks", _cross_midnight)
@@ -674,7 +671,8 @@ def test_cycle_stops_before_generation_when_prepare_not_ok(monkeypatch, tmp_path
 
     monkeypatch.setattr(cu, "prepare_repo_for_update", _fake_prepare)
     monkeypatch.setattr(
-        cu, "_generate_and_publish",
+        cu,
+        "_generate_and_publish",
         lambda *a, **k: generation_ran.__setitem__("flag", True) or {},
     )
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
@@ -713,7 +711,8 @@ def test_all_prepares_run_before_generation(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cu, "prepare_repo_for_update", _fake_prepare)
     monkeypatch.setattr(
-        cu, "_generate_and_publish",
+        cu,
+        "_generate_and_publish",
         lambda daily, **k: order.append("generate") or {},
     )
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
@@ -934,11 +933,13 @@ def test_replace_failure_no_commit_push_and_dirty_left(monkeypatch, tmp_path):
     committed = {"n": 0}
     pushed = {"n": 0}
     monkeypatch.setattr(
-        cu, "_commit_enabled_repositories",
+        cu,
+        "_commit_enabled_repositories",
         lambda *a, **k: committed.__setitem__("n", committed["n"] + 1) or {},
     )
     monkeypatch.setattr(
-        cu, "_push_enabled_repositories",
+        cu,
+        "_push_enabled_repositories",
         lambda *a, **k: pushed.__setitem__("n", pushed["n"] + 1) or None,
     )
 
@@ -989,9 +990,7 @@ def test_manifest_only_stages_explicit_paths(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
 
     staged = {}
     real_prepare_target = cu._prepare_commit_target
@@ -1033,9 +1032,7 @@ def test_i18n_commit_failure_leaves_master_unpushed(monkeypatch, tmp_path):
     monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
     monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_repo.working_dir)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
 
     def _refresh_ok(*args, **kwargs):
@@ -1060,7 +1057,8 @@ def test_i18n_commit_failure_leaves_master_unpushed(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cu, "_commit_enabled_repositories", _fake_commit_enabled)
     monkeypatch.setattr(
-        cu, "_push_enabled_repositories",
+        cu,
+        "_push_enabled_repositories",
         lambda commits_d: pushed.append(list(commits_d.keys())) or None,
     )
 
@@ -1083,9 +1081,7 @@ def test_commit_all_before_first_push(monkeypatch, tmp_path):
     monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
     monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_repo.working_dir)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
 
     def _refresh_ok(*args, **kwargs):
@@ -1150,9 +1146,7 @@ def test_first_push_failure_stops_later_push_keeps_commits(monkeypatch, tmp_path
     monkeypatch.setattr(cu, "i18n_diff_repo", i18n_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
     monkeypatch.setattr(cu, "i18n_diff_folder_path", i18n_repo.working_dir)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
 
     def _refresh_ok(*args, **kwargs):
@@ -1175,7 +1169,8 @@ def test_first_push_failure_stops_later_push_keeps_commits(monkeypatch, tmp_path
                     target_commit_sha=repo.head.commit.hexsha,
                 )
             res[key] = cu.GitResult(
-                outcome=GitOutcome.OK, reason="committed",
+                outcome=GitOutcome.OK,
+                reason="committed",
                 local_sha=repo.head.commit.hexsha if repo else None,
             )
         return res
@@ -1219,9 +1214,7 @@ def test_partial_push_recovers_next_cycle(monkeypatch, tmp_path):
     master_repo.git.push("origin", "main")
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
 
     def _push_fail(repo, branch="main", **kwargs):
         return cu.GitResult(
@@ -1254,18 +1247,22 @@ def test_partial_push_recovers_next_cycle(monkeypatch, tmp_path):
     def _push_ok(repo, branch="main", **kwargs):
         pushed_second["ok"] = True
         return cu.GitResult(
-            outcome=GitOutcome.OK, reason="pushed",
-            local_sha=master_repo.head.commit.hexsha)
+            outcome=GitOutcome.OK,
+            reason="pushed",
+            local_sha=master_repo.head.commit.hexsha,
+        )
 
     monkeypatch.setattr(cu, "push_current_head", _push_ok)
     # This unit test replaces the actual push transport; keep the decisive
     # recovery assertion on the post-attempt authoritative-probe seam.
     monkeypatch.setattr(
-        cu, "_probe_remote",
+        cu,
+        "_probe_remote",
         lambda repo, key, state: state.target_commit_sha,
     )
     monkeypatch.setattr(
-        cu, "prepare_repo_for_update",
+        cu,
+        "prepare_repo_for_update",
         lambda *a, **k: cu.GitResult(outcome=GitOutcome.OK, reason="equal"),
     )
 
@@ -1393,6 +1390,7 @@ def test_published_version_unchanged_on_validation_failure(monkeypatch, tmp_path
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
+
     def _validate_raises(file_path):
         raise ValueError("staged JSON failed validation")
 
@@ -1439,9 +1437,7 @@ def test_cycle_should_proceed_daily_bypasses_new_version_gate(monkeypatch):
     """daily=True must proceed even when the server reports no new version (the
     new-version gate only blocks ordinary runs); maintenance still stops it."""
     monkeypatch.setattr(cu, "check_update_simple_mode", False)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
 
     # Ordinary-style "no change" response: daily must still proceed.
     _stub_jsonrpc(monkeypatch, maintenance=False, new_version=False)
@@ -1456,9 +1452,7 @@ def test_cycle_should_proceed_ordinary_requires_new_version(monkeypatch):
     """ordinary run must respect the new-version gate and return no_new_version
     when the server reports no change."""
     monkeypatch.setattr(cu, "check_update_simple_mode", False)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
 
     _stub_jsonrpc(monkeypatch, maintenance=False, new_version=False)
     assert cu._cycle_should_proceed(daily=False) == "no_new_version"
@@ -1472,9 +1466,7 @@ def test_cycle_should_proceed_simple_uses_new_version(monkeypatch):
     """simple mode must use the simple-mode new-version check (no maintenance
     gate) and skip when there is no new version."""
     monkeypatch.setattr(cu, "check_update_simple_mode", True)
-    monkeypatch.setattr(
-        cu, "version_info", {"dataVersion": "1", "assetVersion": "1"}
-    )
+    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
     monkeypatch.setattr(cu, "check_update_versions_url", "http://example/versions")
 
     def _fake_fetch_no_change():
@@ -1673,8 +1665,12 @@ def test_commit_diff_empty_paths_is_nothing_to_do(tmp_path, monkeypatch):
     monkeypatch.setattr(git.IndexFile, "add", _track)
 
     res = cu._commit_diff(
-        repo, "op", "label", "msg",
-        git.Actor("b", "b@e.com"), paths=[],
+        repo,
+        "op",
+        "label",
+        "msg",
+        git.Actor("b", "b@e.com"),
+        paths=[],
     )
     assert res.outcome is GitOutcome.NOTHING_TO_DO
     assert res.reason == "no_staged_paths"
@@ -1692,8 +1688,12 @@ def test_commit_diff_none_paths_broad_adds(tmp_path, monkeypatch):
     monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
     res = cu._commit_diff(
-        repo, "op", "label", "msg",
-        git.Actor("b", "b@e.com"), paths=None,
+        repo,
+        "op",
+        "label",
+        "msg",
+        git.Actor("b", "b@e.com"),
+        paths=None,
     )
     assert res.outcome is GitOutcome.OK
     # The broad add staged and committed x.txt (no exception path -> committed).
@@ -1868,9 +1868,7 @@ def _staging_paths():
     )
 
 
-def test_master_disabled_i18n_enabled_does_not_advance_global(
-    monkeypatch, tmp_path
-):
+def test_master_disabled_i18n_enabled_does_not_advance_global(monkeypatch, tmp_path):
     """master=False/i18n=True: the global published version_info is never advanced
     and the formal master versions.json is left at its old value (it is never
     staged/published when master is disabled)."""
@@ -1914,9 +1912,7 @@ def test_master_disabled_i18n_enabled_does_not_advance_global(
     # Formal master versions.json retains its OLD value (never re-published).
     assert _snap_version(master_repo) == old_versions
     # The i18n tree was still published (i18n enabled).
-    assert os.path.exists(
-        os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
-    )
+    assert os.path.exists(os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json"))
 
 
 def test_all_disabled_does_not_advance_global(monkeypatch, tmp_path):
@@ -1969,9 +1965,7 @@ def _assert_no_commit_push_and_both_roots_gone(master_repo, i18n_repo):
     return committed, pushed, _fake_commit, _fake_push
 
 
-def test_master_replace_failure_retains_journal_and_staging(
-    monkeypatch, tmp_path
-):
+def test_master_replace_failure_retains_journal_and_staging(monkeypatch, tmp_path):
     """A master ``os.replace`` failure RETURNS ``publication_failed`` without
     committing/pushing and leaves the global published version unchanged, but the
     journal AND both staging roots are RETAINED (not cleared) so a subsequent
@@ -2000,15 +1994,18 @@ def test_master_replace_failure_retains_journal_and_staging(
 
     monkeypatch.setattr(cu, "_prepare_commit_target", _counting_prepare)
     monkeypatch.setattr(
-        cu, "_push_enabled_repositories",
+        cu,
+        "_push_enabled_repositories",
         lambda *a, **k: pushed.__setitem__("n", pushed["n"] + 1) or None,
     )
     # Recovery pushes via push_current_head directly; stub it to succeed so the
     # retained-journal recovery can finish (no real network in tests).
     monkeypatch.setattr(
-        cu, "push_current_head",
+        cu,
+        "push_current_head",
         lambda *a, **k: cu.GitResult(
-            outcome=cu.GitOutcome.OK, reason="pushed",
+            outcome=cu.GitOutcome.OK,
+            reason="pushed",
             local_sha=master_repo.head.commit.hexsha,
         ),
     )
@@ -2066,16 +2063,12 @@ def test_master_replace_failure_retains_journal_and_staging(
     assert os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
     assert os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
     # i18n file published too.
-    assert os.path.exists(
-        os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
-    )
+    assert os.path.exists(os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json"))
     # Journal cleared after successful recovery.
     assert TransactionJournal.load(master_repo.git_dir) is None
 
 
-def test_i18n_replace_failure_retains_journal_and_staging(
-    monkeypatch, tmp_path
-):
+def test_i18n_replace_failure_retains_journal_and_staging(monkeypatch, tmp_path):
     """An i18n ``os.replace`` failure RETURNS ``publication_failed`` without
     committing/pushing and leaves the global published version unchanged, but the
     journal AND both staging roots are RETAINED (not cleared) so a subsequent
@@ -2104,15 +2097,18 @@ def test_i18n_replace_failure_retains_journal_and_staging(
 
     monkeypatch.setattr(cu, "_prepare_commit_target", _counting_prepare)
     monkeypatch.setattr(
-        cu, "_push_enabled_repositories",
+        cu,
+        "_push_enabled_repositories",
         lambda *a, **k: pushed.__setitem__("n", pushed["n"] + 1) or None,
     )
     # Recovery pushes via push_current_head directly; stub it to succeed so the
     # retained-journal recovery can finish (no real network in tests).
     monkeypatch.setattr(
-        cu, "push_current_head",
+        cu,
+        "push_current_head",
         lambda *a, **k: cu.GitResult(
-            outcome=cu.GitOutcome.OK, reason="pushed",
+            outcome=cu.GitOutcome.OK,
+            reason="pushed",
             local_sha=master_repo.head.commit.hexsha,
         ),
     )
@@ -2170,16 +2166,12 @@ def test_i18n_replace_failure_retains_journal_and_staging(
     assert os.path.exists(os.path.join(master_repo.working_dir, "cards.json"))
     assert os.path.exists(os.path.join(master_repo.working_dir, "versions.json"))
     # i18n file published too.
-    assert os.path.exists(
-        os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
-    )
+    assert os.path.exists(os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json"))
     # Journal cleared after successful recovery.
     assert TransactionJournal.load(master_repo.git_dir) is None
 
 
-def test_full_manifest_includes_versions_json_and_recovers(
-    monkeypatch, tmp_path
-):
+def test_full_manifest_includes_versions_json_and_recovers(monkeypatch, tmp_path):
     """The publishing journal records the COMPLETE manifest (incl. versions.json)
     for every repo, and a publish failure + retained journal recovers all files
     including versions.json on the next cycle."""
@@ -2203,9 +2195,11 @@ def test_full_manifest_includes_versions_json_and_recovers(
 
     monkeypatch.setattr(cu, "_commit_diff", _counting_commit_diff)
     monkeypatch.setattr(
-        cu, "push_current_head",
+        cu,
+        "push_current_head",
         lambda *a, **k: cu.GitResult(
-            outcome=cu.GitOutcome.OK, reason="pushed",
+            outcome=cu.GitOutcome.OK,
+            reason="pushed",
             local_sha=master_repo.head.commit.hexsha,
         ),
     )
@@ -2251,9 +2245,7 @@ def test_full_manifest_includes_versions_json_and_recovers(
     assert TransactionJournal.load(master_repo.git_dir) is None
 
 
-def test_recovery_crash_after_one_replace_retains_journal(
-    monkeypatch, tmp_path
-):
+def test_recovery_crash_after_one_replace_retains_journal(monkeypatch, tmp_path):
     """If recovery itself crashes after publishing one file (but before finishing),
     the journal + staging are retained so the NEXT cycle resumes from the last
     proven destination checkpoint without re-reading the moved source."""
@@ -2302,7 +2294,8 @@ def test_recovery_crash_after_one_replace_retains_journal(
     monkeypatch.setattr(cu, "_prepare_commit_target", _boom_commit)
     # push_current_head must not be reached; stub defensively.
     monkeypatch.setattr(
-        cu, "push_current_head",
+        cu,
+        "push_current_head",
         lambda *a, **k: cu.GitResult(outcome=cu.GitOutcome.OK, reason="pushed"),
     )
     with pytest.raises(RuntimeError):
@@ -2342,9 +2335,7 @@ def test_recovery_base_head_mismatch_blocks_commit(monkeypatch, tmp_path):
     # non-null base SHA. Recovery can then detect an out-of-band divergence of the
     # working-tree HEAD from that recorded base (an unborn repo has base_sha=None
     # and a first commit is a legitimate transition, not a mismatch).
-    _write_commit(
-        master_repo, "seed.txt", "seed", "seed base commit"
-    )
+    _write_commit(master_repo, "seed.txt", "seed", "seed base commit")
     base_before = master_repo.head.commit.hexsha
 
     def _refresh_ok(*args, **kwargs):
@@ -2385,11 +2376,13 @@ def test_recovery_base_head_mismatch_blocks_commit(monkeypatch, tmp_path):
             _f.write(f"base={j_dbg.repos['master'].base_sha}\n")
             _f.write(f"head={master_repo.head.commit.hexsha}\n")
     monkeypatch.setattr(
-        cu, "_commit_diff",
+        cu,
+        "_commit_diff",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not commit")),
     )
     monkeypatch.setattr(
-        cu, "push_current_head",
+        cu,
+        "push_current_head",
         lambda *a, **k: cu.GitResult(outcome=cu.GitOutcome.OK, reason="pushed"),
     )
     status = cu._run_update_cycle_locked(daily=True)
@@ -2438,7 +2431,8 @@ def test_recovery_remote_already_at_target_skips_push(monkeypatch, tmp_path):
         # Simulate the remote already at the target: report OK without a real push.
         pushed["n"] += 1
         return cu.GitResult(
-            outcome=cu.GitOutcome.OK, reason="pushed",
+            outcome=cu.GitOutcome.OK,
+            reason="pushed",
             local_sha=master_repo.head.commit.hexsha,
         )
 
@@ -2486,7 +2480,8 @@ def test_normal_cycle_pushes_i18n_before_master_with_expected_sha(
         key = "i18n" if repo.working_dir == i18n_repo.working_dir else "master"
         push_order.append(key)
         return cu.GitResult(
-            outcome=cu.GitOutcome.OK, reason="pushed",
+            outcome=cu.GitOutcome.OK,
+            reason="pushed",
             local_sha=repo.head.commit.hexsha,
         )
 
@@ -2599,9 +2594,7 @@ def test_bootstrap_delegates_once_daily_and_no_userinfo_write_before_cycle(
             wrote_before_cycle["value"] = True
         raise AssertionError("save_info_from_suite_user called before cycle")
 
-    monkeypatch.setattr(
-        cu, "save_info_from_suite_user", tracking_save, raising=True
-    )
+    monkeypatch.setattr(cu, "save_info_from_suite_user", tracking_save, raising=True)
     monkeypatch.setattr(cu, "check_update_simple_mode", False)
     monkeypatch.setattr(
         cu,
@@ -2620,9 +2613,7 @@ def test_bootstrap_simple_delegates_once_daily(monkeypatch):
     monkeypatch.setattr(cu, "scheduler", MockScheduler())
     monkeypatch.setattr(cu, "check_git_folder", lambda *a, **k: None)
     monkeypatch.setattr(cu, "pjsk_region", "cn")
-    monkeypatch.setattr(
-        cu, "check_update_versions_url", "http://example/versions"
-    )
+    monkeypatch.setattr(cu, "check_update_versions_url", "http://example/versions")
     monkeypatch.setattr(cu, "check_update_simple_mode", True)
     monkeypatch.setattr(
         cu,
@@ -2723,7 +2714,8 @@ def test_ordinary_expired_deadline_returns_deadline_exceeded(monkeypatch, tmp_pa
 
     generation_ran = {"flag": False}
     monkeypatch.setattr(
-        cu, "_generate_and_publish",
+        cu,
+        "_generate_and_publish",
         lambda *a, **k: generation_ran.__setitem__("flag", True) or {},
     )
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
@@ -2751,7 +2743,8 @@ def test_daily_ignores_expired_deadline_and_proceeds(monkeypatch, tmp_path):
 
     generation_ran = {"flag": False}
     monkeypatch.setattr(
-        cu, "_generate_and_publish",
+        cu,
+        "_generate_and_publish",
         lambda *a, **k: generation_ran.__setitem__("flag", True) or {},
     )
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})
@@ -2827,11 +2820,13 @@ def test_deadline_exceeded_at_fourth_seam_skips_publication(monkeypatch, tmp_pat
     committed = {"n": 0}
     pushed = {"n": 0}
     monkeypatch.setattr(
-        cu, "_commit_enabled_repositories",
+        cu,
+        "_commit_enabled_repositories",
         lambda *a, **k: committed.__setitem__("n", committed["n"] + 1) or {},
     )
     monkeypatch.setattr(
-        cu, "_push_enabled_repositories",
+        cu,
+        "_push_enabled_repositories",
         lambda *a, **k: pushed.__setitem__("n", pushed["n"] + 1) or None,
     )
 
@@ -2912,9 +2907,12 @@ def test_deadline_expired_only_after_first_replace_still_completes(
     # touching the network. The real explicit-manifest commit must run.
     pushed = {"n": 0}
     monkeypatch.setattr(
-        cu, "_push_diff",
-        lambda repo, operation, **kwargs: pushed.__setitem__("n", pushed["n"] + 1)
-        or cu.GitResult(outcome=GitOutcome.OK, reason="pushed", operation=operation),
+        cu,
+        "_push_diff",
+        lambda repo, operation, **kwargs: (
+            pushed.__setitem__("n", pushed["n"] + 1)
+            or cu.GitResult(outcome=GitOutcome.OK, reason="pushed", operation=operation)
+        ),
     )
 
     # Instrument os.replace: count formal-publication calls AND arm the deadline
@@ -3010,7 +3008,8 @@ def test_i18n_only_first_cycle_with_none_version_info_no_typeerror(
     # Mock network/push only: the temp i18n repo has no remote, so report a
     # successful push without touching the network. The real commit path runs.
     monkeypatch.setattr(
-        cu, "_push_diff",
+        cu,
+        "_push_diff",
         lambda repo, operation, **kwargs: cu.GitResult(
             outcome=GitOutcome.OK, reason="pushed", operation=operation
         ),
@@ -3064,9 +3063,7 @@ def test_i18n_only_first_cycle_with_none_version_info_no_typeerror(
     assert cu.version_info is None
 
     # The i18n file was committed into the i18n working tree.
-    assert os.path.exists(
-        os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json")
-    )
+    assert os.path.exists(os.path.join(i18n_repo.working_dir, "ja", "card_prefix.json"))
     # The unrelated untracked file remains untracked (not swept into the commit).
     assert "scratch.txt" in i18n_repo.untracked_files
 
@@ -3085,7 +3082,8 @@ def test_deadline_disabled_for_daily_even_if_passed(monkeypatch, tmp_path):
 
     generation_ran = {"flag": False}
     monkeypatch.setattr(
-        cu, "_generate_and_publish",
+        cu,
+        "_generate_and_publish",
         lambda *a, **k: generation_ran.__setitem__("flag", True) or {},
     )
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})

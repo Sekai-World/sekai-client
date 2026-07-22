@@ -68,22 +68,35 @@ STAGING_SUFFIX = ".staging"
 KNOWN_REPOS = ("master", "i18n")
 
 # Strict format matchers (fail closed on any mismatch).
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-)
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 # Git object/commit SHAs are exactly 40 lowercase hex characters.
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 _ROOT_KEYS = {
-    "schema_version", "transaction_id", "candidate", "enabled_repos",
-    "publish_order", "push_order", "phase", "repos",
+    "schema_version",
+    "transaction_id",
+    "candidate",
+    "enabled_repos",
+    "publish_order",
+    "push_order",
+    "phase",
+    "repos",
 }
 _REPO_KEYS = {
-    "manifest", "staging_dir", "repo_root", "target_commit_sha",
-    "base_sha", "remote_sha", "remote_base_sha", "remote_name", "remote_ref",
+    "manifest",
+    "staging_dir",
+    "repo_root",
+    "target_commit_sha",
+    "base_sha",
+    "remote_sha",
+    "remote_base_sha",
+    "remote_name",
+    "remote_ref",
     "remote_endpoint_fingerprint",
-    "files", "commit_state", "push_state",
+    "files",
+    "commit_state",
+    "push_state",
 }
 _FILE_KEYS = {"source_sha256", "dest_sha256"}
 
@@ -316,8 +329,7 @@ def _validate_sha256(key: str, rel: str, kind: str, value: Any) -> None:
         return
     if not isinstance(value, str) or _SHA256_RE.match(value) is None:
         raise JournalError(
-            f"repo {key!r} file {rel!r} {kind} is not a SHA-256 hex digest: "
-            f"{value!r}"
+            f"repo {key!r} file {rel!r} {kind} is not a SHA-256 hex digest: {value!r}"
         )
 
 
@@ -328,9 +340,7 @@ def _validate_git_sha(key: str, kind: str, value: Any) -> None:
     if value is None:
         return
     if not isinstance(value, str) or _GIT_SHA_RE.match(value) is None:
-        raise JournalError(
-            f"repo {key!r} {kind} is not a 40-hex Git SHA: {value!r}"
-        )
+        raise JournalError(f"repo {key!r} {kind} is not a 40-hex Git SHA: {value!r}")
 
 
 def _validate_staging_dir(
@@ -347,8 +357,7 @@ def _validate_staging_dir(
     suffix = os.path.join(STAGING_SUFFIX, transaction_id)
     if not staging.endswith(suffix):
         raise JournalError(
-            f"repo {key!r} staging_dir not bound to txn {transaction_id!r}: "
-            f"{staging!r}"
+            f"repo {key!r} staging_dir not bound to txn {transaction_id!r}: {staging!r}"
         )
     if not isinstance(repo_root, str) or not repo_root or not os.path.isabs(repo_root):
         raise JournalError(f"repo {key!r} missing canonical repo_root")
@@ -415,9 +424,7 @@ def _validate_repo_files(key: str, rd: dict[str, Any]) -> None:
                 f"repo {key!r} manifest entry {rel!r} missing from files"
             )
     if set(files.keys()) != set(manifest):
-        raise JournalError(
-            f"repo {key!r} files keys must exactly match manifest"
-        )
+        raise JournalError(f"repo {key!r} files keys must exactly match manifest")
     for rel, fe in files.items():
         _validate_file_entry(key, rel, fe)
 
@@ -505,8 +512,7 @@ def _validate_push_prefix(
     enabled: list[Any], push_order: list[Any], repos: dict[str, Any]
 ) -> None:
     pushed = {
-        key for key in enabled
-        if repos[key]["push_state"] == RepoPushState.PUSHED.value
+        key for key in enabled if repos[key]["push_state"] == RepoPushState.PUSHED.value
     }
     prefix = push_order[: len(pushed)]
     if set(prefix) != pushed:
@@ -529,15 +535,16 @@ def _validate_repo_phase_state(key: str, rd: dict[str, Any], phase: str) -> None
     target = rd["target_commit_sha"]
     if commit_state == RepoCommitState.PENDING.value and target is not None:
         raise JournalError(f"repo {key!r} pending state has a target SHA")
-    if commit_state in {
-        RepoCommitState.PREPARED.value,
-        RepoCommitState.COMMITTED.value,
-    } and target is None:
-        raise JournalError(f"repo {key!r} committed state has no target SHA")
     if (
-        push_state == RepoPushState.PENDING.value
-        and rd["remote_sha"] is not None
+        commit_state
+        in {
+            RepoCommitState.PREPARED.value,
+            RepoCommitState.COMMITTED.value,
+        }
+        and target is None
     ):
+        raise JournalError(f"repo {key!r} committed state has no target SHA")
+    if push_state == RepoPushState.PENDING.value and rd["remote_sha"] is not None:
         raise JournalError(f"repo {key!r} pending push state has a remote SHA")
     if (
         push_state == RepoPushState.PUSHED.value
@@ -580,9 +587,7 @@ def _validate_durable_push_confirmation(key: str, rd: dict[str, Any]) -> None:
         )
 
 
-def _validate_order_fields(
-    enabled: Any, publish_order: Any, push_order: Any
-) -> None:
+def _validate_order_fields(enabled: Any, publish_order: Any, push_order: Any) -> None:
     _validate_known_repos(enabled)
     _validate_known_repos(publish_order)
     _validate_no_duplicates(enabled, "enabled_repos")
@@ -669,10 +674,7 @@ class TransactionJournal:
     def from_dict(cls, data: dict[str, Any], master_git_dir: str) -> TransactionJournal:
         try:
             cls._validate_schema(data, master_git_dir)
-            repos = {
-                key: RepoState.from_dict(rd)
-                for key, rd in data["repos"].items()
-            }
+            repos = {key: RepoState.from_dict(rd) for key, rd in data["repos"].items()}
             return cls(
                 master_git_dir=master_git_dir,
                 transaction_id=data["transaction_id"],

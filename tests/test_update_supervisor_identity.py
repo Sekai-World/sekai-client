@@ -128,9 +128,7 @@ def test_claim_cleanup_attempts_all_before_unlock(tmp_path, monkeypatch):
 
     monkeypatch.setattr(supervisor, "repo_file_locks", fake_locks)
     monkeypatch.setattr(supervisor, "write_owner_metadata_for_locks", lambda _: None)
-    monkeypatch.setattr(
-        supervisor, "delete_owner_metadata_if_matched", failing_delete
-    )
+    monkeypatch.setattr(supervisor, "delete_owner_metadata_if_matched", failing_delete)
     with pytest.raises(supervisor.OwnerCleanupError):
         with supervisor.claimed_repo_locks(owner):
             events.append(("body",))
@@ -141,6 +139,34 @@ def test_claim_cleanup_attempts_all_before_unlock(tmp_path, monkeypatch):
         "delete",
         "unlocked",
     ]
+
+
+def test_claim_cleanup_does_not_mask_body_exception(tmp_path, monkeypatch):
+    owner = _owner(tmp_path)
+    body_error = ValueError("body failed")
+
+    @contextmanager
+    def fake_locks(paths, non_blocking):
+        yield
+
+    monkeypatch.setattr(supervisor, "repo_file_locks", fake_locks)
+    monkeypatch.setattr(supervisor, "write_owner_metadata_for_locks", lambda _: None)
+
+    def failing_delete(lock_path, metadata):
+        raise OSError(f"cleanup failed for {lock_path}")
+
+    monkeypatch.setattr(supervisor, "delete_owner_metadata_if_matched", failing_delete)
+
+    with pytest.raises(ValueError, match="body failed") as raised:
+        with supervisor.claimed_repo_locks(owner):
+            raise body_error
+
+    assert raised.value is body_error
+    assert len(raised.value.__notes__) == 1
+    assert raised.value.__notes__[0].startswith(
+        "owner cleanup had 1 errors while holding flocks:"
+    )
+    assert "cleanup failed" in raised.value.__notes__[0]
 
 
 def test_proc_parser_and_verify_fail_closed(tmp_path, monkeypatch):

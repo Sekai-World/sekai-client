@@ -168,9 +168,11 @@ def test_held_master_lock_returns_skipped_repo_lock_then_runs(monkeypatch, tmp_p
     # Isolate the body so no network/repo mutation happens on a successful run.
     prepare_calls = []
     monkeypatch.setattr(
-        cu, "prepare_repo_for_update",
-        lambda repo, branch="main", allow_push=True: prepare_calls.append(repo)
-        or _prepare_ok(),
+        cu,
+        "prepare_repo_for_update",
+        lambda repo, branch="main", allow_push=True: (
+            prepare_calls.append(repo) or _prepare_ok()
+        ),
     )
     monkeypatch.setattr(cu, "_generate_and_publish", lambda daily, **kwargs: {})
     monkeypatch.setattr(cu, "_commit_enabled_repositories", lambda *a: {})

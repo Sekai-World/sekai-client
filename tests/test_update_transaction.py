@@ -280,8 +280,10 @@ def test_completed_journal_requires_committed_enabled_repos(tmp_path):
     repo = _init_repo(tmp_path)
     payload = _make_completed_payload(repo.git_dir)
     payload["repos"]["i18n"]["commit_state"] = RepoCommitState.PREPARED.value
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -294,14 +296,14 @@ def test_completed_journal_requires_committed_enabled_repos(tmp_path):
         ("remote_sha", "c" * 40),
     ],
 )
-def test_completed_journal_requires_durable_push_confirmation(
-    tmp_path, field, value
-):
+def test_completed_journal_requires_durable_push_confirmation(tmp_path, field, value):
     repo = _init_repo(tmp_path)
     payload = _make_completed_payload(repo.git_dir)
     payload["repos"]["master"][field] = value
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -309,8 +311,10 @@ def test_completed_journal_requires_durable_push_confirmation(
 def test_valid_completed_journal_loads(tmp_path):
     repo = _init_repo(tmp_path)
     payload = _make_completed_payload(repo.git_dir)
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     loaded = TransactionJournal.load(repo.git_dir)
     assert loaded is not None
     assert loaded.phase == TxnPhase.COMPLETED
@@ -333,8 +337,10 @@ def test_remote_snapshot_fields_are_strict(tmp_path, field, value):
     repo = _init_repo(tmp_path)
     payload = _make_payload(repo.git_dir)
     payload["repos"]["master"][field] = value
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -343,8 +349,10 @@ def test_remote_base_sha_must_equal_base_sha(tmp_path):
     repo = _init_repo(tmp_path)
     payload = _make_payload(repo.git_dir)
     payload["repos"]["master"]["remote_base_sha"] = "c" * 40
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -354,21 +362,23 @@ def test_pushed_repos_must_form_push_order_prefix(tmp_path):
     payload = _make_completed_payload(repo.git_dir)
     payload["repos"]["i18n"]["push_state"] = RepoPushState.PENDING.value
     payload["repos"]["i18n"]["remote_sha"] = None
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
 
-@pytest.mark.parametrize(
-    "push_order", [["master", "i18n"], ["i18n", "i18n"]]
-)
+@pytest.mark.parametrize("push_order", [["master", "i18n"], ["i18n", "i18n"]])
 def test_push_order_rejects_duplicate_or_wrong_order(tmp_path, push_order):
     repo = _init_repo(tmp_path)
     payload = _make_payload(repo.git_dir)
     payload["push_order"] = push_order
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -388,8 +398,10 @@ def test_commit_state_and_target_sha_must_match(
     payload = _make_payload(repo.git_dir)
     payload["repos"]["master"]["commit_state"] = commit_state
     payload["repos"]["master"]["target_commit_sha"] = target_commit_sha
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -398,8 +410,10 @@ def test_pending_push_state_requires_no_remote_sha(tmp_path):
     repo = _init_repo(tmp_path)
     payload = _make_payload(repo.git_dir)
     payload["repos"]["master"]["remote_sha"] = _HEX_B
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -423,8 +437,10 @@ def test_pushed_state_requires_committed_matching_target(
         target_commit_sha=target_commit_sha,
         remote_sha=remote_sha,
     )
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -432,8 +448,9 @@ def test_pushed_state_requires_committed_matching_target(
 def test_transaction_id_must_be_uuid(tmp_path):
     repo = _init_repo(tmp_path)
     bad = _make_payload(repo.git_dir, transaction_id="not-a-uuid")
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(bad))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"), json.dumps(bad)
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -444,8 +461,10 @@ def test_unknown_repo_key_fails_closed(tmp_path):
     payload["repos"]["ghost"] = payload["repos"]["master"]
     payload["enabled_repos"].append("ghost")
     payload["publish_order"].append("ghost")
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -455,8 +474,10 @@ def test_duplicate_enabled_repo_fails_closed(tmp_path):
     payload = _make_payload(repo.git_dir)
     payload["enabled_repos"] = ["master", "master"]
     payload["publish_order"] = ["master", "master"]
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -465,8 +486,10 @@ def test_publish_order_must_equal_enabled_set(tmp_path):
     repo = _init_repo(tmp_path)
     payload = _make_payload(repo.git_dir)
     payload["publish_order"] = ["master"]  # missing i18n
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -475,8 +498,10 @@ def test_repos_keys_must_equal_enabled_set(tmp_path):
     repo = _init_repo(tmp_path)
     payload = _make_payload(repo.git_dir)
     del payload["repos"]["i18n"]  # enabled still lists i18n
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -489,8 +514,10 @@ def test_manifest_files_must_match_exactly(tmp_path):
         "source_sha256": _HEX_X,
         "dest_sha256": None,
     }
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -503,8 +530,10 @@ def test_manifest_rel_path_must_be_canonical(tmp_path):
         "source_sha256": _HEX_X,
         "dest_sha256": None,
     }
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -512,11 +541,11 @@ def test_manifest_rel_path_must_be_canonical(tmp_path):
 def test_sha256_must_be_hex_digest(tmp_path):
     repo = _init_repo(tmp_path)
     payload = _make_payload(repo.git_dir)
-    payload["repos"]["master"]["files"]["versions.json"]["source_sha256"] = (
-        "z" * 64
+    payload["repos"]["master"]["files"]["versions.json"]["source_sha256"] = "z" * 64
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
     )
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -528,8 +557,10 @@ def test_staging_dir_must_be_bound_to_transaction(tmp_path):
     payload["repos"]["master"]["staging_dir"] = os.path.join(
         "/data/master.staging", "other-txn-id"
     )
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -543,8 +574,10 @@ def test_staging_dir_canonical_when_repo_root_recorded(tmp_path):
     payload["repos"]["master"]["staging_dir"] = os.path.join(
         "/elsewhere/master.staging", txn
     )
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -555,8 +588,10 @@ def test_malformed_types_fail_closed_not_raw_error(tmp_path):
     # commit_state is the wrong type (a list) -> must raise JournalError, not
     # a raw TypeError/ValueError from enum construction.
     payload["repos"]["master"]["commit_state"] = ["bad"]
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -620,8 +655,10 @@ def test_git_sha_fields_must_be_40_hex(tmp_path):
     payload = _make_payload(repo.git_dir)
     # base_sha fixture is 40 hex (valid); break target_commit_sha.
     payload["repos"]["master"]["target_commit_sha"] = "z" * 40
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -639,8 +676,10 @@ def test_git_sha_fields_accept_valid_40_hex(tmp_path):
         target_commit_sha="c" * 40,
         remote_sha="c" * 40,
     )
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     loaded = TransactionJournal.load(repo.git_dir)
     assert loaded is not None
     assert loaded.repos["master"].target_commit_sha == "a" * 40
@@ -654,8 +693,10 @@ def test_git_sha_fields_accept_none(tmp_path):
     payload["repos"]["master"]["base_sha"] = None
     payload["repos"]["master"]["target_commit_sha"] = None
     payload["repos"]["master"]["remote_sha"] = None
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -665,8 +706,10 @@ def test_file_entry_requires_source_sha(tmp_path):
     payload = _make_payload(repo.git_dir)
     # Drop the source SHA entirely -> must fail closed.
     payload["repos"]["master"]["files"]["versions.json"]["source_sha256"] = None
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -674,11 +717,11 @@ def test_file_entry_requires_source_sha(tmp_path):
 def test_file_entry_source_sha_must_be_valid_hex(tmp_path):
     repo = _init_repo(tmp_path)
     payload = _make_payload(repo.git_dir)
-    payload["repos"]["master"]["files"]["versions.json"]["source_sha256"] = (
-        "not-hex"
+    payload["repos"]["master"]["files"]["versions.json"]["source_sha256"] = "not-hex"
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
     )
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -693,8 +736,10 @@ def test_duplicate_manifest_entry_fails_closed(tmp_path):
         "cards.json",
         "versions.json",
     ]
-    _write(os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
-           json.dumps(payload))
+    _write(
+        os.path.join(repo.git_dir, "sekai-update", "transaction.json"),
+        json.dumps(payload),
+    )
     with pytest.raises(JournalError):
         TransactionJournal.load(repo.git_dir)
 
@@ -775,8 +820,7 @@ def test_validate_journal_roots_rejects_mismatched_root(tmp_path):
     # Configured master root differs from the journal's recorded root.
     with pytest.raises(JournalError):
         validate_journal_roots(
-            loaded, actual_roots={"master": "/elsewhere/master",
-                                  "i18n": "/data/i18n"}
+            loaded, actual_roots={"master": "/elsewhere/master", "i18n": "/data/i18n"}
         )
 
 
@@ -790,13 +834,10 @@ def test_validate_journal_roots_rejects_mismatched_staging(tmp_path):
     loaded = TransactionJournal.load(repo.git_dir)
     # Tamper the staging_dir to point at an unexpected location under the
     # configured root's sibling; recovery must not trust it.
-    loaded.repos["master"].staging_dir = os.path.join(
-        "/data/master.evil", txn
-    )
+    loaded.repos["master"].staging_dir = os.path.join("/data/master.evil", txn)
     with pytest.raises(JournalError):
         validate_journal_roots(
-            loaded, actual_roots={"master": "/data/master",
-                                  "i18n": "/data/i18n"}
+            loaded, actual_roots={"master": "/data/master", "i18n": "/data/i18n"}
         )
 
 
