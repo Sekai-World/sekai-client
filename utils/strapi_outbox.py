@@ -16,7 +16,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 
 import requests
 import ujson as json
@@ -241,7 +241,10 @@ class StrapiOutbox:
         except (OSError, ValueError, json.JSONDecodeError) as err:
             raise StrapiOutboxError(f"Strapi outbox is not valid JSON: {err}") from err
         self._validate(data)
-        return data
+        # _validate raises for every shape that is not the outbox schema.  Keep
+        # the cast at this boundary so callers receive a typed payload without
+        # weakening the fail-closed validation above.
+        return cast(dict[str, Any], data)
 
     def _save_unlocked(self, data: dict[str, Any]) -> None:
         self._validate(data)

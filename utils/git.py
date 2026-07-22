@@ -1,8 +1,10 @@
 from dataclasses import dataclass
 from enum import Enum
 from os import path
+from typing import Any
 
 from git.exc import NoSuchPathError
+from git.remote import PushInfoList
 from git.repo import Repo
 
 from utils.git_lock import repo_file_locks
@@ -238,7 +240,11 @@ def _perform_push(
     remote_url: str | None,
 ) -> GitResult | None:
     """Execute one push and return a rejection, or ``None`` when it ran."""
-    push_kwargs = {"refspec": refspec}
+    # GitPython's stubs do not model arbitrary push options in the kwargs
+    # mapping, although ``Remote.push`` passes them through to git unchanged.
+    # Keep this boundary typed locally so the transport and its options remain
+    # exactly as before.
+    push_kwargs: dict[str, Any] = {"refspec": refspec}
     if old_remote_sha is not None:
         # GitPython's positional arguments map to ``refspec``; passing the lease
         # positionally would create two refspec values.
@@ -272,7 +278,12 @@ def _perform_push(
     return None
 
 
-def _scan_push_results(push_results, remote_ref, operation, local_sha):
+def _scan_push_results(
+    push_results: PushInfoList,
+    remote_ref: str,
+    operation: str,
+    local_sha: str | None,
+) -> GitResult | None:
     """Return a stable rejection for any unexpected GitPython push result."""
     for info in push_results:
         if info.remote_ref_string != remote_ref:
