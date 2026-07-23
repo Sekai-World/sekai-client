@@ -69,6 +69,26 @@ def test_jp_session_error_reauthenticates_instead_of_refreshing_cookie():
     client.init_cookie.assert_not_called()
 
 
+def test_hidden_auth_outcomes_are_paired_and_not_emitted_without_account():
+    client = APIClient(region="jp")
+    callback = Mock()
+    client.lifecycle_callback = callback
+    response = Mock(status_code=403)
+
+    assert client._handle_http_error_retry(response, {"errorCode": "session_error"})
+    callback.assert_not_called()
+
+    client.account_info = {"userId": "user"}
+    client.login = Mock()
+    assert client._handle_http_error_retry(response, {"errorCode": "session_error"})
+    events = [call.args[0] for call in callback.call_args_list]
+    assert [event.kind for event in events] == [
+        api_client.AuthTransitionKind.ATTEMPT,
+        api_client.AuthTransitionKind.SUCCESS,
+    ]
+    assert events[0].transaction_id == events[1].transaction_id
+
+
 def test_request_and_decrypt_allows_allowlisted_master_data_url(monkeypatch):
     client = APIClient(region="tw")
     resp = Mock(status_code=200, content=b"data")
