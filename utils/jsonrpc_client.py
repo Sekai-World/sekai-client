@@ -80,17 +80,22 @@ class JSONRPCClient:
         self,
         func_name: str,
         params: list[Any] | tuple[Any, ...] | dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
     ) -> Any:
         """
         Make a JSON-RPC method call.
 
         Automatically attaches the internal RPC auth token and fails closed when
         no token is configured (unless loopback dev bypass is enabled). The
-        token is only attached for loopback targets.
+        token is only attached for loopback targets.  Callers may provide a
+        narrow per-request timeout; the configured default remains unchanged.
 
         Args:
             func_name: Name of the remote method to call
             params: Parameters to pass (can be tuple, dict, or None)
+            timeout: Optional timeout for this request only.  If omitted,
+                ``Config.REQUEST_TIMEOUT`` is used.
 
         Returns:
             The result from the JSON-RPC response
@@ -107,7 +112,7 @@ class JSONRPCClient:
             self.url,
             json=request_uuid(func_name, request_params),
             headers=headers,
-            timeout=Config.REQUEST_TIMEOUT,
+            timeout=Config.REQUEST_TIMEOUT if timeout is None else timeout,
         )
         # Surface HTTP errors (auth rejection, 5xx) before attempting to parse.
         r.raise_for_status()
