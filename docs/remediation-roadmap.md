@@ -21,7 +21,7 @@
 | 1 | 测试基线与 CI | `[x]` 实施完成（分支保护 required check 待仓库设置确认） | 1 天 | 阶段 0 | PR 2 (#6 merged) |
 | 2 | 凭据、日志和内部 RPC 安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | PR 3 (#7 merged) |
 | 3 | Dashboard 安全与交互 | `[-]` 进行中（待桌面/移动端手工验收） | 0.5-1 天 | 阶段 1 | PR 4 |
-| 4 | 定时任务互斥与 Git 数据安全 | `[ ]` | 1-2 天 | 阶段 1 | PR 5 |
+| 4 | 定时任务互斥与 Git 数据安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
 | 5 | 区域 bootstrap 与客户端状态机 | `[ ]` | 2-3 天 | 阶段 1 | PR 6 |
 | 6 | Deadline、重试与队列生命周期 | `[ ]` | 2-3 天 | 阶段 5 | PR 7 |
 | 7 | Event tracker outbox 与 API 响应校验 | `[ ]` | 2-4 天 | 阶段 1；建议在阶段 6 后 | PR 8-9 |
@@ -236,6 +236,8 @@ uv run --extra dev pytest tests/
 
 防止 04:00 定时任务重叠、部分数据发布和 push 失败导致的数据丢失。
 
+阶段 4 已完成 Strapi ID 持久化 outbox。`event_tracker` 的排名 outbox 不属于本阶段，仍是阶段 7 的未实现工作。
+
 ### 任务
 
 - [x] 合并 update cycle，并为完整流程增加进程级与仓库级互斥锁。
@@ -250,10 +252,10 @@ uv run --extra dev pytest tests/
 
 ### 验收条件
 
-- 每天 04:00 只执行一个更新周期。
-- 两次并发触发时，第二次被排队或明确跳过。
-- push 失败不会删除仓库、working tree 或本地 commit。
-- 生成中途失败不会暴露新旧版本混合的数据集。
+- [x] 每天 04:00 只执行一个更新周期。
+- [x] 两次并发触发时，第二次被排队或明确跳过。
+- [x] push 失败不会删除仓库、working tree 或本地 commit。
+- [x] 生成中途失败不会暴露新旧版本混合的数据集。
 
 ### 验收证据
 
@@ -271,6 +273,7 @@ uv run --extra dev pytest tests/
 - 2026-07-18：commit 仅使用 cycle manifest；所有仓库先 commit 再按固定顺序 push，首个 push 失败停止后续 push，保留所有 pending local SHA。通过本地 bare remote、spawn 锁和真实 staging 路径完成验收；未访问生产仓库或外部网络。
 - 2026-07-18：为后续“一小时硬期限与 04:00 daily 抢占”增加严格 owner metadata 基础（尚未接入生产）：包含 canonical schema、Linux `/proc` 身份字段、0600 原子 owner 文件、完整 metadata matched-delete、多锁写失败回滚和持有 `flock` 期间的 cleanup 协议。该提交不创建或终止 worker，不改变 scheduler 行为；owner/watchdog、进程树终止和 daily 抢占必须在 Linux CI/隔离环境完成真实信号验证后另行接入。
 - 2026-07-22：完成 Gate 5 Phase 4 执行记录并获 Oracle **APPROVE**。新增显式 `Asia/Tokyo` scheduler trigger、可持久化且按日期绑定的 Tokyo daily due marker（覆盖 late/coalesced/restart/overlap，成功后才完成），clone/open `flock`，以及仅限 Strapi ID 的持久化 outbox：Git 事务完成或可恢复 readiness checkpoint 后 ready，Git 后 HTTP、header auth、dedupe/retry。`event_tracker` outbox 仍属于阶段 7，未宣称完成。全套 `uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。
+- 2026-07-23：阶段 4 通过 [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) 合并到 `transform-python`，合并提交为 `02769973a55d9c2e96a49d22897cbedb02e50025`。PR #9 包含更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；`event_tracker` 排名 outbox 仍未实现，保留在阶段 7。
 
 ## 阶段 5：区域 Bootstrap 与客户端状态机
 
@@ -433,7 +436,7 @@ UNINITIALIZED
 | 2 | `ci: establish phase 1 verification baseline` | Ruff、mypy、pytest CI | `[x]` | [#6](https://github.com/Sekai-World/sekai-client/pull/6) merged（`7a5a6c3`） |
 | 3 | `security: harden internal rpc and credential handling` | 日志、token、文件权限、RPC | `[x]` | [#7](https://github.com/Sekai-World/sekai-client/pull/7) merged（`16b609a`） |
 | 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[-]` | 分支 `security/phase-3-dashboard-safety`，待浏览器验收与 PR |
-| 5 | `fix: serialize update jobs and preserve git state` | 调度互斥、原子发布、Git 恢复 | `[ ]` | 待填写 |
+| 5 | `fix: harden update cycle and git publishing` | 定时任务互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox（不含 `event_tracker` 排名 outbox） | `[x]` | [#9](https://github.com/Sekai-World/sekai-client/pull/9) merged（`02769973a55d9c2e96a49d22897cbedb02e50025`，2026-07-23） |
 | 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[ ]` | 待填写 |
 | 7 | `refactor: enforce request deadlines and retry policy` | Deadline、重试、取消、队列 | `[ ]` | 待填写 |
 | 8 | `feat: persist event tracker delivery outbox` | SQLite outbox 与 scheduler | `[ ]` | 待填写 |
@@ -461,3 +464,4 @@ UNINITIALIZED
 | 2026-07-16 | 2 | 实现最小安全设计：日志脱敏、Strapi header 化、凭据 YAML 原子写入 0600、内部 RPC 鉴权、请求白名单、受限 master split RPC、account_info 缩权、PM2 env 传递及安全 PM2 示例。最终 pytest 119，format/check/mypy/node/git diff --check 全绿。PR #7 已合并为 `16b609a`。**延期（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model；Dashboard token 存储转入阶段 3。 | 阶段 3 Dashboard 安全与交互 |
 | 2026-07-17 | 3 | 已实现统一状态模型、安全 DOM 渲染、重启确认与防重复、结构化 restartStatus、session-only/记住设备/清除 token。聚焦测试 24 passed，实施时全套测试 139 passed，JavaScript syntax 与 diff check 通过。真实桌面/移动端流程和 PM2 重启尚未手工验证。 | 完成浏览器验收，更新证据后提交阶段 3 PR |
 | 2026-07-22 | 4 | Gate 5 Oracle **APPROVE**：显式 `Asia/Tokyo` scheduler trigger；持久化 Tokyo daily due marker 覆盖 late/coalesced/restart/overlap，且仅成功并完成日期绑定时清除/完成；clone/open `flock`；仅 Strapi ID outbox（不含 `event_tracker`），先持久化，Git 事务完成或可恢复 readiness checkpoint 后 ready，再 Git 后 HTTP，header auth、dedupe/retry。验证：`uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。 | 阶段 5；阶段 7 event_tracker outbox 仍未完成 |
+| 2026-07-23 | 4 | PR [#9](https://github.com/Sekai-World/sekai-client/pull/9) 已合并到 `transform-python`，合并提交 `02769973a55d9c2e96a49d22897cbedb02e50025`。合并范围为更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；不包含 `event_tracker` 排名 outbox。 | 阶段 5；阶段 7 event_tracker outbox 与 API 响应校验仍未完成 |

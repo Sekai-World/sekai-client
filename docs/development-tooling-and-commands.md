@@ -57,6 +57,6 @@ uv run --extra dev pytest tests/
 
 ## Next Technical Steps
 
-1. Add CI workflow to enforce Ruff, mypy, and pytest checks.
-2. Expand integration tests for JSON-RPC endpoints.
-3. Add deployment and troubleshooting docs under [docs](.).
+1. Confirm `transform-python` branch protection requires the existing CI workflow's Ruff, mypy, and pytest checks, and keep the workflow maintained as project checks evolve.
+2. Expand integration tests for JSON-RPC endpoints and upstream API response validation.
+3. Add and maintain deployment and troubleshooting docs under [docs](.).
