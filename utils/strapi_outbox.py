@@ -24,6 +24,7 @@ import ujson as json
 from utils.redaction import redact_text
 
 SCHEMA_VERSION = 1
+LEASE_SECONDS = 300.0
 
 
 class StrapiOutboxError(RuntimeError):
@@ -148,6 +149,11 @@ class StrapiOutbox:
                 ),
                 "updated_at": now,
                 "last_error": old.get("last_error") if isinstance(old, dict) else None,
+                "revision": (
+                    int(old.get("revision", -1)) + 1 if isinstance(old, dict) else 0
+                ),
+                "claim_id": None,
+                "lease_until": None,
             }
             self._save_unlocked(data)
         return key
@@ -165,19 +171,21 @@ class StrapiOutbox:
                     "ready"
                 ):
                     record["ready"] = True
+                    record["revision"] = int(record.get("revision", 0)) + 1
                     record["updated_at"] = now
                     marked += 1
             if marked:
                 self._save_unlocked(data)
         return marked
 
-    def drain(
+    def drain(  # noqa: C901
         self,
         *,
         base_url: str | None,
         token: str | None,
         post: Callable[..., requests.Response] | None = None,
         timeout: int = 60,
+        lease_seconds: float = LEASE_SECONDS,
     ) -> dict[str, int]:
         """Send ready records and delete each only after HTTP success.
 
@@ -188,40 +196,76 @@ class StrapiOutbox:
         if not base_url or not token:
             return {"sent": 0, "failed": 0, "retained": 0}
         post_func = post or requests.post
+        if lease_seconds <= 0:
+            raise ValueError("Strapi outbox lease_seconds must be positive")
         sent = 0
         failed = 0
+        now = time.time()
+        snapshots: list[tuple[str, dict[str, Any]]] = []
         with self._locked():
             data = self._load_unlocked()
             for key in sorted(data["records"].keys()):
                 record = data["records"].get(key)
                 if not record or not record.get("ready"):
                     continue
-                url = f"{base_url.rstrip('/')}/{record['endpoint']}"
-                try:
-                    response = post_func(
-                        url,
-                        json=list(record["ids"]),
-                        headers={
-                            "Authorization": f"Bearer {token}",
-                            "X-Strapi-Token": token,
-                        },
-                        timeout=timeout,
-                    )
-                    response.raise_for_status()
-                except requests.RequestException as err:
-                    failed += 1
-                    record["attempts"] = int(record.get("attempts", 0)) + 1
-                    record["updated_at"] = time.time()
-                    record["last_error"] = redact_text(str(err))[:500]
-                    self._save_unlocked(data)
+                if (
+                    record.get("lease_until") is not None
+                    and record["lease_until"] > now
+                ):
                     continue
-                del data["records"][key]
-                sent += 1
+                record["claim_id"] = uuid.uuid4().hex
+                record["lease_until"] = now + lease_seconds
+                record["updated_at"] = now
+                snapshots.append((key, {**record, "ids": list(record["ids"])}))
+            if snapshots:
                 self._save_unlocked(data)
-            # Count while still holding the outbox lock. Never call
-            # pending_count() here: it re-enters _locked() and deadlocks.
-            retained = len(data["records"])
+
+        for key, expected in snapshots:
+            record = expected
+            url = f"{base_url.rstrip('/')}/{record['endpoint']}"
+            try:
+                response = post_func(
+                    url,
+                    json=list(record["ids"]),
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "X-Strapi-Token": token,
+                    },
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+            except requests.RequestException as err:
+                failed += 1
+                with self._locked():
+                    data = self._load_unlocked()
+                    current = data["records"].get(key)
+                    if self._claim_matches(current, expected):
+                        current["attempts"] = int(current.get("attempts", 0)) + 1
+                        current["claim_id"] = None
+                        current["lease_until"] = None
+                        current["updated_at"] = time.time()
+                        current["last_error"] = redact_text(str(err))[:500]
+                        self._save_unlocked(data)
+                continue
+            sent += 1
+            with self._locked():
+                data = self._load_unlocked()
+                current = data["records"].get(key)
+                if self._claim_matches(current, expected):
+                    del data["records"][key]
+                    self._save_unlocked(data)
+        with self._locked():
+            retained = len(self._load_unlocked()["records"])
         return {"sent": sent, "failed": failed, "retained": retained}
+
+    @staticmethod
+    def _claim_matches(record: Any, expected: dict[str, Any]) -> bool:
+        return bool(
+            isinstance(record, dict)
+            and record.get("ready")
+            and record.get("claim_id") == expected.get("claim_id")
+            and record.get("revision") == expected.get("revision")
+        )
 
     def pending_count(self) -> int:
         with self._locked():
@@ -240,6 +284,7 @@ class StrapiOutbox:
                 data = json.load(stream)
         except (OSError, ValueError, json.JSONDecodeError) as err:
             raise StrapiOutboxError(f"Strapi outbox is not valid JSON: {err}") from err
+        self._upgrade_legacy_records(data)
         self._validate(data)
         # _validate raises for every shape that is not the outbox schema.  Keep
         # the cast at this boundary so callers receive a typed payload without
@@ -249,6 +294,28 @@ class StrapiOutbox:
     def _save_unlocked(self, data: dict[str, Any]) -> None:
         self._validate(data)
         _atomic_write_json(self.file_path, data)
+
+    @staticmethod
+    def _upgrade_legacy_records(data: Any) -> None:
+        if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
+            return
+        records = data.get("records")
+        if not isinstance(records, dict):
+            return
+        legacy = {
+            "key",
+            "endpoint",
+            "ids",
+            "transaction_id",
+            "ready",
+            "attempts",
+            "created_at",
+            "updated_at",
+            "last_error",
+        }
+        for record in records.values():
+            if isinstance(record, dict) and set(record) == legacy:
+                record.update({"revision": 0, "claim_id": None, "lease_until": None})
 
     def _validate(self, data: Any) -> None:
         if not isinstance(data, dict):
@@ -278,6 +345,9 @@ class StrapiOutbox:
             "created_at",
             "updated_at",
             "last_error",
+            "revision",
+            "claim_id",
+            "lease_until",
         }
         if set(record) != required or record.get("key") != key:
             raise StrapiOutboxError(f"Strapi outbox record shape is invalid: {key!r}")
@@ -311,3 +381,11 @@ class StrapiOutbox:
             record["last_error"], str
         ):
             raise StrapiOutboxError(f"Strapi outbox last_error invalid: {key!r}")
+        if not isinstance(record["revision"], int) or record["revision"] < 0:
+            raise StrapiOutboxError(f"Strapi outbox revision invalid: {key!r}")
+        if record["claim_id"] is not None and not isinstance(record["claim_id"], str):
+            raise StrapiOutboxError(f"Strapi outbox claim id invalid: {key!r}")
+        if record["lease_until"] is not None and not isinstance(
+            record["lease_until"], (int, float)
+        ):
+            raise StrapiOutboxError(f"Strapi outbox lease invalid: {key!r}")

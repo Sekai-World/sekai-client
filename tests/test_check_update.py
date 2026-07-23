@@ -67,6 +67,52 @@ def test_merge_existing_file_data_replaces_matching_ids(tmp_path):
     ]
 
 
+def test_save_info_from_suite_user_refreshes_en_information_once(monkeypatch):
+    client = Mock()
+    client.request.side_effect = [
+        {"userHomeBanners": [], "userInformations": []},
+        {"informations": [{"id": 1}]},
+    ]
+    writes = []
+    monkeypatch.setattr(check_update, "jsonrpc_client", client)
+    monkeypatch.setattr(check_update, "pjsk_region", "en")
+    monkeypatch.setattr(
+        check_update, "_write_master_file", lambda *args: writes.append(args)
+    )
+
+    check_update.save_info_from_suite_user()
+
+    assert client.request.call_args_list == [
+        call("login_user_info"),
+        call("fetch_information"),
+    ]
+    assert writes == [
+        ("userHomeBanners.json", []),
+        ("userInformations.json", [{"id": 1}]),
+    ]
+
+
+def test_save_info_from_suite_user_keeps_non_en_user_information_write(monkeypatch):
+    client = Mock()
+    client.request.return_value = {
+        "userHomeBanners": [],
+        "userInformations": [{"id": 1}],
+    }
+    writes = []
+    monkeypatch.setattr(check_update, "jsonrpc_client", client)
+    monkeypatch.setattr(check_update, "pjsk_region", "jp")
+    monkeypatch.setattr(
+        check_update, "_write_master_file", lambda *args: writes.append(args)
+    )
+
+    check_update.save_info_from_suite_user()
+
+    assert writes == [
+        ("userHomeBanners.json", []),
+        ("userInformations.json", [{"id": 1}]),
+    ]
+
+
 def test_commit_master_diff_returns_pending_on_push_failure(monkeypatch):
     """A push failure must be reported as PENDING_PUSH while keeping the commit.
 

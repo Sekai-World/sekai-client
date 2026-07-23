@@ -1684,7 +1684,7 @@ def _generate_and_publish(  # noqa: C901
         candidate = refresh_version()
         if not check_update_simple_mode and update_options["userInfo"]:
             save_info_from_suite_user()
-        if update_options["userInfo"]:
+        if update_options["userInfo"] and pjsk_region != "en":
             refresh_information()
     except Exception:
         logger.exception("[cycle] generation/validation failed; discarding staging")
@@ -1726,27 +1726,6 @@ def _generate_and_publish(  # noqa: C901
     if update_options["i18n"]:
         enabled.append("i18n")
     publish_order = [k for k in _REPO_ORDER if k in enabled]
-
-    def _build_repo_state(
-        key: str, staging_root: str, working_root: str, man: list[str]
-    ) -> RepoState:
-        files = {}
-        for rel in man:
-            src = path.join(staging_root, rel)
-            files[rel] = FileEntry(source_sha256=compute_sha256(src))
-        return RepoState(
-            manifest=list(man),
-            staging_dir=staging_root,
-            repo_root=path.realpath(working_root),
-            target_commit_sha=None,
-            base_sha=_safe_head_sha(
-                masterdb_diff_repo if key == "master" else i18n_diff_repo
-            ),
-            remote_sha=None,
-            files=files,
-            commit_state=RepoCommitState.PENDING,
-            push_state=RepoPushState.PENDING,
-        )
 
     # versions.json is published last and alone from the master staging root.
     master_manifest = [p for p in manifest["master"] if p != "versions.json"]
@@ -1956,26 +1935,6 @@ def _recover_commit_repo(
     target = st.target_commit_sha
     if target is not None:
         _recover_recorded_target(key, repo, st, target, head_sha, journal)
-        return
-    # Fail-closed: if a target SHA was recorded but the working tree HEAD is
-    # neither that target nor the recorded base, the repo was modified out of
-    # band — do NOT create a replacement commit (that would rewrite history).
-    if target is not None and head_sha != st.base_sha:
-        raise JournalError(
-            f"recovery commit blocked for {key!r}: HEAD {head_sha} is neither "
-            f"target {st.target_commit_sha} nor base {st.base_sha}"
-        )
-    # A prepared target is immutable: retry only the recorded CAS movement.
-    if target is not None:
-        _update_branch_cas(repo, target, st.base_sha, key)
-        if _safe_head_sha(repo) != target:
-            raise JournalError(
-                f"recovery commit blocked for {key!r}: HEAD did not reach target"
-            )
-        _install_target_index(repo, target, key)
-        if target != st.base_sha:
-            _validate_target_worktree_and_index(repo, target, key)
-        st.commit_state = RepoCommitState.COMMITTED
         return
     # No target yet: the base HEAD must match what the journal recorded at
     # creation time, otherwise the repo diverged unexpectedly.
