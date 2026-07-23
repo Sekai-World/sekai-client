@@ -238,15 +238,15 @@ uv run --extra dev pytest tests/
 
 ### 任务
 
-- [ ] 合并 update cycle，或为完整流程增加进程级互斥锁。
-- [ ] 锁覆盖 pull、获取版本、生成、校验、commit 和 push。
-- [ ] Scheduler 设置 `max_instances=1`、`coalesce=True` 和合理的 `misfire_grace_time`。
-- [ ] 移除 commit/push 失败后的 `shutil.rmtree`。
-- [ ] 区分 clone、pull、commit、push 和认证错误。
-- [ ] push 失败时保留本地 commit 并进入待重试状态。
-- [ ] 文件先写临时路径，校验成功后原子替换。
-- [ ] 将 `versions.json` 放到发布流程末尾更新。
-- [ ] 评估使用临时 Git worktree 生成完整数据集。
+- [x] 合并 update cycle，并为完整流程增加进程级与仓库级互斥锁。
+- [x] 锁覆盖 fetch、获取版本、生成、校验、commit 和 push。
+- [x] Scheduler 设置 `max_instances=1`、`coalesce=True` 和 `misfire_grace_time=300`。
+- [x] 移除 commit/push 失败后的 `shutil.rmtree`。
+- [x] 区分 fetch、fast-forward、commit、push、阻塞和待重试状态。
+- [x] push 失败时保留本地 commit，并在后续周期优先恢复 pending push。
+- [x] 文件先写入同文件系统 staging 路径，校验成功后使用 `os.replace` 原子替换。
+- [x] 将 `versions.json` 放到跨 master/i18n 发布流程的最后一步。
+- [x] 评估临时 Git worktree；当前不采用，使用 staging + 文件级原子替换满足现有消费者边界。
 
 ### 验收条件
 
@@ -257,13 +257,20 @@ uv run --extra dev pytest tests/
 
 ### 验收证据
 
-- 待填写：并发调度测试
-- 待填写：Git push 失败恢复测试
-- 待填写：原子发布测试
+- `tests/test_update_cycle_safety.py`：调度唯一性、04:00 daily/ordinary 语义、staging/校验失败、全局 `versions.json` 最后发布、空 manifest、candidate/global 状态与入口边界。
+- `tests/test_git_lock_integration.py`、`tests/test_update_cycle_lock_integration.py`：真实 `multiprocessing/spawn` 锁竞争、不同仓库并行、部分获取回收、外层 cycle 持锁与异常释放。
+- `tests/test_git_safety.py`、`tests/test_two_repo_publish_integration.py`：临时 bare remote 上的 fast-forward/ahead/diverged 状态、push 失败保留本地 SHA、双仓库 commit-all、部分 push 停止和同 SHA 恢复。
+- `tests/test_update_staging_integration.py`：真实 suite-user/information、compact alias、i18n handler、JSON 校验和 `read_bytes()` 正式树快照。
+- 阶段验证（2026-07-18）：Phase 4 聚焦/集成测试 112 passed；全套 `uv run pytest -q`：244 passed；`uv run ruff check`：pass；`git diff --check`：clean。
+- Gate 5 验收证据（2026-07-22）：Oracle **APPROVE**。调度器显式使用 `Asia/Tokyo` 触发；持久化 Tokyo daily due marker 覆盖迟到、合并、重启和重叠触发，并仅在成功且日期匹配时完成标记。仓库采用 clone/open `flock`；仅实现 Strapi ID outbox（**不包含 `event_tracker`**），投递前持久化，只有 Git 事务完成或可恢复 readiness checkpoint 后才进入 ready，随后执行 Git 后 HTTP 投递；使用 header auth，并支持去重与重试。验证：`uv run pytest -q` **377 passed**；聚焦测试 **120 passed**；Ruff 与 `git diff --check` 均 clean。
 
 ### 执行记录
 
-- 待填写
+- 2026-07-18：在分支 `fix/phase-4-update-git-safety` 完成阶段 4。统一 scheduler cycle 在 04:00 保留 daily/full-refresh 语义、普通周期执行版本 gate；增加进程内非阻塞锁和按规范化路径排序的跨进程 `flock`。Git 更新改为显式 fetch/fast-forward/pending-push 状态机，push 失败保留本地提交并由后续周期恢复，禁止删除或重克隆已有仓库。
+- 2026-07-18：生成流程改为 repository-adjacent staging、JSON 重新解析校验、文件级 `os.replace` 发布；所有 master 非版本文件和 i18n 文件完成后，最后发布 master `versions.json`，仅成功后推进 published `version_info`。publication 失败清理两个 staging root，但保留已替换的 dirty 工作树供诊断；明确接受这不是多文件事务或跨仓库 2PC。
+- 2026-07-18：commit 仅使用 cycle manifest；所有仓库先 commit 再按固定顺序 push，首个 push 失败停止后续 push，保留所有 pending local SHA。通过本地 bare remote、spawn 锁和真实 staging 路径完成验收；未访问生产仓库或外部网络。
+- 2026-07-18：为后续“一小时硬期限与 04:00 daily 抢占”增加严格 owner metadata 基础（尚未接入生产）：包含 canonical schema、Linux `/proc` 身份字段、0600 原子 owner 文件、完整 metadata matched-delete、多锁写失败回滚和持有 `flock` 期间的 cleanup 协议。该提交不创建或终止 worker，不改变 scheduler 行为；owner/watchdog、进程树终止和 daily 抢占必须在 Linux CI/隔离环境完成真实信号验证后另行接入。
+- 2026-07-22：完成 Gate 5 Phase 4 执行记录并获 Oracle **APPROVE**。新增显式 `Asia/Tokyo` scheduler trigger、可持久化且按日期绑定的 Tokyo daily due marker（覆盖 late/coalesced/restart/overlap，成功后才完成），clone/open `flock`，以及仅限 Strapi ID 的持久化 outbox：Git 事务完成或可恢复 readiness checkpoint 后 ready，Git 后 HTTP、header auth、dedupe/retry。`event_tracker` outbox 仍属于阶段 7，未宣称完成。全套 `uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。
 
 ## 阶段 5：区域 Bootstrap 与客户端状态机
 
@@ -351,6 +358,36 @@ UNINITIALIZED
 
 - 待填写
 
+### 子项 A：协作式更新周期 Deadline（已落地，独立于 RPC/队列 deadline）
+
+本子项实现阶段 6 中“更新周期时间预算”的最小、协作式（非强制）版本，仅作用于 `check_update._run_update_cycle` 的单一更新周期，不接入 PM2 进程树、不发送信号、不终止 worker、不做 daily 抢占。
+
+#### 已接受的边界（Accepted Boundary）
+
+- **普通周期默认预算**：`DEFAULT_ORDINARY_DEADLINE_SECONDS = 3600` 秒（1 小时）。可通过 `_run_update_cycle(daily=False, deadline_seconds=...)` 或显式 `Deadline` 由测试/调用方控制；不新增环境变量配置（沿用既有函数参数/默认值机制）。
+- **协作式检查点（cooperative checkpoints only）**：deadline 仅在安全接缝处检查，绝不中断正在进行的原子操作。检查点顺序为：
+  1. 现有 maintenance / candidate 门控（`_cycle_should_proceed`）**之后**；
+  2. 任意仓库/网络准备**之前**（首个准备前接缝）；
+  3. 每个 `prepare_repo_for_update` **之前**；
+  4. prepare 与 generation **之间**（昂贵网络 fetch + staging 生成之前）；
+  5. commit **之前**；
+  6. push **之前**。
+- **不强制终止（no forced termination）**：deadline 过期只让周期在下一个安全接缝返回稳定状态 `deadline_exceeded`；不杀进程、不抛信号、不调用 `os.kill`、不触发任何跨 PM2 抢占（no cross-PM2 preemption）。`_publish_staging` 与单个 `os.replace` 原子替换内部**不检查** deadline，保证发布原子性不被打断。
+- **被阻塞调用可能超过预算（blocked calls may exceed budget until next seam）**：若某个 prepare / 网络 fetch / commit 在检查点之间被阻塞（例如慢网络、被 `flock` 等待），该调用允许运行到完成，周期仅在**下一个**检查点发现过期；预算是协作上界而非硬实时上界。
+- **daily 禁用 deadline（daily disables the deadline）**：`daily=True` 时 deadline 强制为 `None`，daily/full-refresh 周期永不被协作式取消；即使调用方显式传入 `Deadline` 也会被忽略。
+- **锁释放语义不变**：`deadline_exceeded` 经由现有 `finally` 释放进程内锁与仓库 `flock`，不回滚本地 commit，不改变发布/push 安全行为；后续周期可正常获取锁。
+
+#### 验收证据（协作式 deadline）
+
+- `tests/test_check_update.py`：`Deadline` 单元测试——`None` 禁用永不过期、有限非负秒构建、零秒立即过期、拒绝负数/无穷/非数字；通过 monkeypatch `check_update._monotonic` 验证间隔后过期（无 sleep）。
+- `tests/test_update_cycle_safety.py`：
+  - `test_ordinary_expired_deadline_returns_deadline_exceeded`：普通周期过期 deadline 返回 `deadline_exceeded` 且不进入昂贵生成阶段。
+  - `test_daily_ignores_expired_deadline_and_proceeds`：daily 忽略过期 deadline 并继续完成。
+  - `test_deadline_exceeded_releases_outer_process_lock_and_repo_flock`：deadline 路径释放进程锁 + 仓库 flock，后续周期可获取并完成。
+  - `test_deadline_exceeded_before_commit_skips_push`：确定性 deadline 替身（无 sleep）放行门控/prepare/generation 接缝、仅在 pre-commit 接缝抛出；证明 generation 已发生而 commit/push 未发生。
+  - `test_deadline_disabled_for_daily_even_if_passed`：显式传入过期 deadline 时 daily 仍禁用并继续。
+- 验证（2026-07-19）：`ruff check` 通过；`pytest tests/test_check_update.py tests/test_update_cycle_safety.py tests/test_update_cycle_lock_integration.py`：84 passed。
+
 ## 阶段 7：Event Tracker Outbox 与 API 响应校验
 
 ### 目标
@@ -423,3 +460,4 @@ UNINITIALIZED
 | 2026-07-16 | 1 | 新增 CI（`.github/workflows/ci.yml`，针对 transform-python，read-only，Python 3.12 + uv）。机械 lint 修复 tests/ 与 service_dashboard.py（零逻辑变化）。新增 5 个回归测试：登录缓存、bootstrap fail-fast 安全边界、队列满拒绝、push 失败返回契约。4 项原任务因依赖阶段 4/5/6 标记为 deferred（bootstrap 部分失败恢复、POST 非幂等重试、update job 互斥、push 失败保留本地数据）。验证：format/check/mypy/pytest(76) 全绿，`git diff --check` clean。PR #6 已合并为 `7a5a6c3`；required status check 的仓库设置仍待确认。 | 阶段 2；运维核对阶段 0 生产事实和分支保护 |
 | 2026-07-16 | 2 | 实现最小安全设计：日志脱敏、Strapi header 化、凭据 YAML 原子写入 0600、内部 RPC 鉴权、请求白名单、受限 master split RPC、account_info 缩权、PM2 env 传递及安全 PM2 示例。最终 pytest 119，format/check/mypy/node/git diff --check 全绿。PR #7 已合并为 `16b609a`。**延期（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model；Dashboard token 存储转入阶段 3。 | 阶段 3 Dashboard 安全与交互 |
 | 2026-07-17 | 3 | 已实现统一状态模型、安全 DOM 渲染、重启确认与防重复、结构化 restartStatus、session-only/记住设备/清除 token。聚焦测试 24 passed，实施时全套测试 139 passed，JavaScript syntax 与 diff check 通过。真实桌面/移动端流程和 PM2 重启尚未手工验证。 | 完成浏览器验收，更新证据后提交阶段 3 PR |
+| 2026-07-22 | 4 | Gate 5 Oracle **APPROVE**：显式 `Asia/Tokyo` scheduler trigger；持久化 Tokyo daily due marker 覆盖 late/coalesced/restart/overlap，且仅成功并完成日期绑定时清除/完成；clone/open `flock`；仅 Strapi ID outbox（不含 `event_tracker`），先持久化，Git 事务完成或可恢复 readiness checkpoint 后 ready，再 Git 后 HTTP，header auth、dedupe/retry。验证：`uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。 | 阶段 5；阶段 7 event_tracker outbox 仍未完成 |

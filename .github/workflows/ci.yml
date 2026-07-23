@@ -13,12 +13,46 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  verify-pr:
+    if: github.event_name == 'pull_request'
     name: Lint, type-check and test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies (including dev extras)
+        run: uv sync --extra dev
+
+      - name: Ruff format check
+        run: uv run --extra dev ruff format --check .
+
+      - name: Ruff lint check
+        run: uv run --extra dev ruff check .
+
+      - name: Mypy (scoped to core request/client modules)
+        run: uv run --extra dev mypy api_client.py shared_client.py utils/ config.py
+
+      - name: Pytest
+        run: uv run --extra dev pytest tests/ -q
+
+  verify-push:
+    if: github.event_name == 'push'
+    name: Lint, type-check and test
+    runs-on: [self-hosted, linux, x64, rarecloud, sekai-ci]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5

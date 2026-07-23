@@ -192,3 +192,11 @@ cython_debug/
 event-*.json
 profile-*.json
 strapi-api-token
+
+# Local deepwork session state
+.slim/deepwork/
+
+# Local check-update durable runtime state
+.check_update_daily_due.json
+.check_update_strapi_outbox.json
+.check_update_strapi_outbox.json.lock
