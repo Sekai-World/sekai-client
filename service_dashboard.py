@@ -8,7 +8,7 @@ from typing import Any
 
 from config import Config
 from utils.jsonrpc_client import JSONRPCClient
-from utils.redaction import redact_structure, redact_text
+from utils.redaction import redact_text
 
 SERVICE_TYPES = ("shared_client", "check_update", "event_tracker")
 SERVICE_NAME_CANDIDATES: dict[str, tuple[str, ...]] = {
@@ -161,53 +161,11 @@ def _scan_logs(proc: dict[str, Any]) -> dict[str, Any]:
 def _shared_client_probe(region: str) -> dict[str, Any]:
     client = JSONRPCClient(f"http://localhost:{Config.get_region_port(region)}/")
     try:
-        # ``readiness`` is a read-only lifecycle snapshot.  In particular, do
-        # not use is_init/is_login here: an initialized client is deliberately
-        # not considered healthy until authentication has completed.
-        lifecycle = client.request("readiness", [])
-        if not isinstance(lifecycle, dict):
-            raise RuntimeError("invalid readiness response")
-        lifecycle = _redact_lifecycle(lifecycle)
-        ready = bool(lifecycle.get("ready"))
-        return {
-            "ok": ready,
-            "available": True,
-            "ready": ready,
-            "reason": None if ready else "not_ready",
-            "lifecycle": lifecycle,
-            # Keep the most useful lifecycle fields at the probe level too,
-            # while retaining the complete contract response above.
-            "state": lifecycle.get("state"),
-            "initialized": bool(lifecycle.get("initialized")),
-            "authenticated": bool(lifecycle.get("authenticated")),
-            "loggedIn": bool(lifecycle.get("authenticated")),
-            "retryAfter": lifecycle.get("retry_after"),
-            "nextRetryAt": lifecycle.get("next_retry_at"),
-            "error": lifecycle.get("error"),
-        }
+        initialized = bool(client.request("is_init", []))
+        logged_in = bool(client.request("is_login", [])) if initialized else False
+        return {"ok": initialized, "initialized": initialized, "loggedIn": logged_in}
     except Exception as err:
-        return {
-            "ok": False,
-            "available": False,
-            "ready": False,
-            "reason": "rpc_unavailable",
-            "state": "UNAVAILABLE",
-            "error": redact_text(str(err)),
-        }
-
-
-def _redact_lifecycle(value: Any) -> Any:
-    """Redact lifecycle text without changing the RPC response structure."""
-    if isinstance(value, str):
-        return redact_text(value)
-    if isinstance(value, dict):
-        # Handle sensitive keys first, then redact free text in ordinary fields
-        # such as lifecycle error messages.
-        redacted = redact_structure(value)
-        return {key: _redact_lifecycle(item) for key, item in redacted.items()}
-    if isinstance(value, list):
-        return [_redact_lifecycle(item) for item in value]
-    return value
+        return {"ok": False, "error": str(err)}
 
 
 def _derive_state(
@@ -270,10 +228,8 @@ def _process_summary(
     if ref.service_type == "shared_client":
         probe = _shared_client_probe(ref.region)
         summary["probe"] = probe
-        # Readiness snapshots always include ``error``; ``None`` means there
-        # was no lifecycle error.  Only a meaningful error should invalidate a
-        # probe that otherwise reports itself as ready.
-        probe_ok = bool(probe.get("ok")) and not probe.get("error")
+        # A probe that returned an ``error`` key counts as a failed probe.
+        probe_ok = bool(probe.get("ok")) and "error" not in probe
 
     state = _derive_state(status, logs, probe_ok)
     summary["state"] = state
