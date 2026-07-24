@@ -11,10 +11,7 @@ Supported full API regions: 'jp' (Japan), 'en' (English), 'tw' (Taiwan),
 """
 
 import logging
-from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass
-from enum import StrEnum
 from time import sleep
 from typing import Any
 from urllib.parse import urlparse
@@ -41,23 +38,6 @@ from utils.get_app_ver import (
 logger = logging.getLogger(__name__)
 
 type APIResponse = bytes | dict[str, Any] | None
-
-
-class AuthTransitionKind(StrEnum):
-    """Phases of one hidden authentication transaction."""
-
-    ATTEMPT = "attempt"
-    SUCCESS = "success"
-    FAILURE = "failure"
-
-
-@dataclass(frozen=True)
-class AuthTransition:
-    """Typed, paired lifecycle notification for hidden authentication."""
-
-    transaction_id: int
-    kind: AuthTransitionKind
-    error: BaseException | None = None
 
 
 class APIClient:
@@ -93,8 +73,6 @@ class APIClient:
         self._master_split_paths: list[str] = []
 
         self.logger = logger
-        self.lifecycle_callback: Callable[[AuthTransition], None] | None = None
-        self._auth_transaction_id = 0
         self.region = region
         self.headers = deepcopy(initial_api_headers[region])
         self.rate_limited = False
@@ -246,11 +224,11 @@ class APIClient:
         if self.account_info:
             self.login()
 
-    def _handle_http_error_retry(  # noqa: C901 - established retry decision table
+    def _handle_http_error_retry(
         self,
         response: requests.Response | None,
         res_data: Any,
-    ) -> bool:  # noqa: C901 - preserves the established HTTP retry decision table
+    ) -> bool:
         error_code = res_data.get("errorCode") if isinstance(res_data, dict) else None
 
         if (
@@ -272,17 +250,7 @@ class APIClient:
 
         if response is not None and response.status_code == 426:
             self.logger.warning("%s server should update version info", self.region)
-            transaction_id: int | None = None
-            if self.account_info:
-                transaction_id = self._begin_auth_transition()
-            try:
-                self._update_version_after_426()
-            except Exception as error:
-                if transaction_id is not None:
-                    self._finish_auth_transition(transaction_id, error)
-                raise
-            if transaction_id is not None:
-                self._finish_auth_transition(transaction_id)
+            self._update_version_after_426()
             return True
 
         if (
@@ -291,19 +259,9 @@ class APIClient:
             and error_code == "rule_not_agreement"
         ):
             self.logger.warning("%s server should accept new agreement", self.region)
-            transaction_id = None
+            self.accept_agreement()
             if self.account_info:
-                transaction_id = self._begin_auth_transition()
-            try:
-                self.accept_agreement()
-                if self.account_info:
-                    self.login()
-            except Exception as error:
-                if transaction_id is not None:
-                    self._finish_auth_transition(transaction_id, error)
-                raise
-            if transaction_id is not None:
-                self._finish_auth_transition(transaction_id)
+                self.login()
             return True
 
         if (
@@ -311,44 +269,11 @@ class APIClient:
             and response.status_code == 403
             and error_code == "session_error"
         ):
-            transaction_id = None
             if self.account_info:
-                transaction_id = self._begin_auth_transition()
-            try:
-                if self.account_info:
-                    self.login()
-            except Exception as error:
-                if transaction_id is not None:
-                    self._finish_auth_transition(transaction_id, error)
-                raise
-            if transaction_id is not None:
-                self._finish_auth_transition(transaction_id)
+                self.login()
             return True
 
         return False
-
-    def _begin_auth_transition(self) -> int:
-        self._auth_transaction_id += 1
-        transaction_id = self._auth_transaction_id
-        self._notify_lifecycle(
-            AuthTransition(transaction_id, AuthTransitionKind.ATTEMPT)
-        )
-        return transaction_id
-
-    def _finish_auth_transition(
-        self, transaction_id: int, error: BaseException | None = None
-    ) -> None:
-        kind = (
-            AuthTransitionKind.FAILURE
-            if error is not None
-            else AuthTransitionKind.SUCCESS
-        )
-        self._notify_lifecycle(AuthTransition(transaction_id, kind, error))
-
-    def _notify_lifecycle(self, event: AuthTransition) -> None:
-        """Notify an owning process about one paired auth transaction."""
-        if self.lifecycle_callback is not None:
-            self.lifecycle_callback(event)
 
     def _find_current_version_info(
         self, all_ver_infos: list[dict], curr_app_ver: str

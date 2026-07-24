@@ -108,16 +108,6 @@ class Config:
     BOOTSTRAP_MAX_RETRIES: int = _parse_int_env("BOOTSTRAP_MAX_RETRIES", 3)
     """Maximum number of bootstrap retries"""
 
-    LIFECYCLE_RETRY_BASE_SECONDS: float = _parse_float_env(
-        "LIFECYCLE_RETRY_BASE_SECONDS", 1.0
-    )
-    """Initial delay between failed shared-client lifecycle attempts."""
-
-    LIFECYCLE_RETRY_MAX_SECONDS: float = _parse_float_env(
-        "LIFECYCLE_RETRY_MAX_SECONDS", 60.0
-    )
-    """Maximum delay between failed shared-client lifecycle attempts."""
-
     # ============ Region Port Configuration ============
     # Formal service regions. CN is NOT a formally deployed region; only a
     # standalone simplified checkUpdate-cn process is kept (see D-001 in
