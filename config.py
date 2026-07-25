@@ -205,9 +205,9 @@ class Config:
         the API URL map, and the RPC port map. Missing mappings are returned
         as error strings so callers can fail fast at startup.
 
-        CN is intentionally excluded from ``REGIONS`` and is not checked here;
-        the simplified checkUpdate-cn process relies on its own config and is
-        not a formal service region (see D-001).
+        CN is intentionally excluded from ``REGIONS`` and is not a formal
+        service region (see D-001). Its standalone ``CN_PORT`` is still
+        range-validated with every configured RPC port.
 
         Returns:
             List of region-mapping errors (empty if all regions are complete)
