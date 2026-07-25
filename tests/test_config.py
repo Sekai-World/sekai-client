@@ -8,7 +8,13 @@ from unittest.mock import patch
 
 import pytest
 
-from config import Config, _parse_float_env, _parse_int_env, _parse_str_env
+from config import (
+    Config,
+    _parse_float_env,
+    _parse_int_env,
+    _parse_port_env,
+    _parse_str_env,
+)
 
 
 class TestConfigParsing:
@@ -54,6 +60,17 @@ class TestConfigParsing:
         with patch.dict("os.environ", {"TEST_RETRIES": "-1"}):
             result = _parse_int_env("TEST_RETRIES", 3)
             assert result == 3
+
+    @pytest.mark.parametrize("raw", ["0", "-1", "65536"])
+    def test_parse_port_env_retains_out_of_range_value_for_validation(self, raw):
+        """Port bounds are reported by configuration validation, not int parsing."""
+        with patch.dict("os.environ", {"TEST_PORT": raw}):
+            assert _parse_port_env("TEST_PORT", 39390) == int(raw)
+
+    def test_parse_port_env_accepts_port_bounds(self):
+        with patch.dict("os.environ", {"LOW_PORT": "1", "HIGH_PORT": "65535"}):
+            assert _parse_port_env("LOW_PORT", 39390) == 1
+            assert _parse_port_env("HIGH_PORT", 39390) == 65535
 
     def test_parse_str_env_valid(self):
         """Test parsing string environment variable."""
@@ -157,6 +174,23 @@ class TestRegionConfigValidation:
         )
         errors = Config.validate_region_config()
         assert any("zz" in e and "port" in e.lower() for e in errors)
+
+    @pytest.mark.parametrize(
+        "attribute", ["JP_PORT", "EN_PORT", "CN_PORT", "TW_PORT", "KR_PORT"]
+    )
+    @pytest.mark.parametrize("port", [0, 65536])
+    def test_validate_region_config_rejects_invalid_configured_ports(
+        self, monkeypatch, attribute, port
+    ):
+        """Every configured port, including the standalone CN port, is bounded."""
+        monkeypatch.setattr(Config, attribute, port)
+
+        errors = Config.validate_region_config()
+
+        assert any(
+            attribute.removesuffix("_PORT").lower() in error.lower() for error in errors
+        )
+        assert any("between 1 and 65535" in error for error in errors)
 
     def test_validate_region_config_is_idempotent(self):
         """Repeated calls must return the same result set (pure, no side effects)."""

@@ -66,6 +66,36 @@ def _parse_int_env(name: str, default: int) -> int:
         return default
 
 
+def _parse_port_env(name: str, default: int) -> int:
+    """Parse a configured TCP port using the explicit valid port range.
+
+    Invalid numeric ports are retained so ``validate_region_config`` can reject
+    them at startup.  Non-numeric values retain the ordinary integer parser's
+    fallback behavior.
+    """
+    raw = getenv(name, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s value=%r, falling back to %d", name, raw, default)
+        return default
+
+    if not 1 <= value <= 65535:
+        logger.warning(
+            "Invalid %s value=%r; ports must be between 1 and 65535",
+            name,
+            raw,
+        )
+    return value
+
+
+def _is_valid_port(value: object) -> bool:
+    """Return whether a configured value is a valid TCP port."""
+    return (
+        isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535
+    )
+
+
 def _parse_str_env(name: str, default: str = "") -> str:
     """
     Parse a string environment variable.
@@ -125,19 +155,19 @@ class Config:
     REGIONS: list[str] = ["jp", "en", "tw", "kr"]
     """List of formally supported game regions (CN is excluded, see D-001)"""
 
-    JP_PORT: int = _parse_int_env("JP_PORT", 39390)
+    JP_PORT: int = _parse_port_env("JP_PORT", 39390)
     """Port for Japan region JSON-RPC server"""
 
-    EN_PORT: int = _parse_int_env("EN_PORT", 39392)
+    EN_PORT: int = _parse_port_env("EN_PORT", 39392)
     """Port for English region JSON-RPC server"""
 
-    CN_PORT: int = _parse_int_env("CN_PORT", 39394)
+    CN_PORT: int = _parse_port_env("CN_PORT", 39394)
     """Port for China region JSON-RPC server"""
 
-    TW_PORT: int = _parse_int_env("TW_PORT", 39391)
+    TW_PORT: int = _parse_port_env("TW_PORT", 39391)
     """Port for Taiwan region JSON-RPC server"""
 
-    KR_PORT: int = _parse_int_env("KR_PORT", 39393)
+    KR_PORT: int = _parse_port_env("KR_PORT", 39393)
     """Port for Korea region JSON-RPC server"""
 
     @classmethod
@@ -200,6 +230,13 @@ class Config:
                 errors.append(f"Region {region!r} missing API URL mapping")
             if region not in port_map:
                 errors.append(f"Region {region!r} missing RPC port mapping")
+
+        for region, port in port_map.items():
+            if not _is_valid_port(port):
+                errors.append(
+                    f"Region {region!r} RPC port must be between 1 and 65535; "
+                    f"got {port!r}"
+                )
         return errors
 
     # ============ API & Security Configuration ============

@@ -11,6 +11,7 @@ from utils.jsonrpc_client import JSONRPCClient
 from utils.redaction import redact_structure, redact_text
 
 SERVICE_TYPES = ("shared_client", "check_update", "event_tracker")
+READINESS_PROBE_TIMEOUT = 5.0
 SERVICE_NAME_CANDIDATES: dict[str, tuple[str, ...]] = {
     "shared_client": ("sharedApiClient-{region}", "sekai-shared-client-{region}"),
     "check_update": ("checkUpdate-{region}", "sekai-check-update-{region}"),
@@ -75,11 +76,20 @@ def service_name(region: str, service_type: str) -> str:
     return templates[service_type][0].format(region=region)
 
 
+def _validate_service_target(region: str, service_type: str) -> None:
+    """Validate dashboard targets before consulting PM2."""
+    if region not in Config.REGIONS:
+        raise ValueError(f"Unsupported region: {region}")
+    if service_type not in SERVICE_TYPES:
+        raise ValueError(f"Unsupported service type: {service_type}")
+
+
 def service_ref(
     region: str,
     service_type: str,
     processes: dict[str, dict[str, Any]] | None = None,
 ) -> ServiceRef:
+    _validate_service_target(region, service_type)
     candidates = [
         Config.SERVICE_SHARED_CLIENT_TEMPLATE
         if service_type == "shared_client"
@@ -113,7 +123,7 @@ def _pm2_processes() -> dict[str, dict[str, Any]]:
     try:
         result = _run_pm2(["jlist"])
         processes = json.loads(result.stdout)
-    except (subprocess.SubprocessError, json.JSONDecodeError) as err:
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as err:
         raise RuntimeError(f"Failed to read pm2 process list: {err}") from err
 
     return {
@@ -124,7 +134,7 @@ def _pm2_processes() -> dict[str, dict[str, Any]]:
 
 
 def _tail_lines(file_path: str | None, limit: int) -> list[str]:
-    if not file_path:
+    if not file_path or limit <= 0:
         return []
     path = Path(file_path)
     if not path.exists() or not path.is_file():
@@ -164,7 +174,7 @@ def _shared_client_probe(region: str) -> dict[str, Any]:
         # ``readiness`` is a read-only lifecycle snapshot.  In particular, do
         # not use is_init/is_login here: an initialized client is deliberately
         # not considered healthy until authentication has completed.
-        lifecycle = client.request("readiness", [])
+        lifecycle = client.request("readiness", [], timeout=READINESS_PROBE_TIMEOUT)
         if not isinstance(lifecycle, dict):
             raise RuntimeError("invalid readiness response")
         lifecycle = _redact_lifecycle(lifecycle)
@@ -301,11 +311,12 @@ def dashboard_status() -> dict[str, Any]:
 
 
 def restart_service(region: str, service_type: str) -> dict[str, Any]:
+    _validate_service_target(region, service_type)
     processes = _pm2_processes()
     ref = service_ref(region, service_type, processes)
     try:
         _run_pm2(["restart", ref.name])
-    except subprocess.SubprocessError as err:
+    except (OSError, subprocess.SubprocessError) as err:
         # The pm2 restart command itself failed: surface the real error and do
         # not fabricate a transient state.
         prior = {ref.name: proc} if (proc := processes.get(ref.name)) else {}

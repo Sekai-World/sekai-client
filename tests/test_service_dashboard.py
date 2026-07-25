@@ -1,5 +1,8 @@
 import subprocess
+from pathlib import Path
 from unittest.mock import Mock
+
+import pytest
 
 import service_dashboard
 
@@ -23,6 +26,45 @@ def test_service_name_uses_default_templates():
     )
     assert service_dashboard.service_name("en", "check_update") == ("checkUpdate-en")
     assert service_dashboard.service_name("tw", "event_tracker") == ("eventTracker-tw")
+
+
+def test_restart_service_validates_target_before_pm2(monkeypatch):
+    run_pm2 = Mock(side_effect=AssertionError("PM2 must not be called"))
+    monkeypatch.setattr(service_dashboard, "_run_pm2", run_pm2)
+
+    with pytest.raises(ValueError, match="Unsupported region"):
+        service_dashboard.restart_service("cn", "check_update")
+
+    run_pm2.assert_not_called()
+
+
+def test_restart_service_rejects_unknown_service_type_before_pm2(monkeypatch):
+    run_pm2 = Mock(side_effect=AssertionError("PM2 must not be called"))
+    monkeypatch.setattr(service_dashboard, "_run_pm2", run_pm2)
+
+    with pytest.raises(ValueError, match="Unsupported service type"):
+        service_dashboard.restart_service("jp", "unknown")
+
+    run_pm2.assert_not_called()
+
+
+def test_tail_lines_limit_zero_does_not_open_log(monkeypatch):
+    open_file = Mock(side_effect=AssertionError("log must not be read"))
+    monkeypatch.setattr(Path, "open", open_file)
+
+    assert service_dashboard._tail_lines("/tmp/large.log", 0) == []
+    open_file.assert_not_called()
+
+
+def test_pm2_processes_returns_structured_failure_for_os_error(monkeypatch):
+    monkeypatch.setattr(
+        service_dashboard,
+        "_run_pm2",
+        Mock(side_effect=OSError("pm2 executable not found")),
+    )
+
+    with pytest.raises(RuntimeError, match="pm2 executable not found"):
+        service_dashboard._pm2_processes()
 
 
 def test_dashboard_status_marks_missing_services_unhealthy(monkeypatch):
@@ -213,8 +255,9 @@ def test_shared_client_probe_initialized_but_not_authenticated(monkeypatch):
         def __init__(self, url):
             self.url = url
 
-        def request(self, method, params):
+        def request(self, method, params, *, timeout=None):
             calls.append(method)
+            assert timeout == service_dashboard.READINESS_PROBE_TIMEOUT
             return {
                 "region": "jp",
                 "state": "DEGRADED",
@@ -243,8 +286,9 @@ def test_shared_client_probe_ready(monkeypatch):
         def __init__(self, url):
             pass
 
-        def request(self, method, params):
+        def request(self, method, params, *, timeout=None):
             assert method == "readiness"
+            assert timeout == service_dashboard.READINESS_PROBE_TIMEOUT
             return {
                 "state": "READY",
                 "initialized": True,
@@ -296,7 +340,7 @@ def test_shared_client_probe_degraded_redacts_error_and_surfaces_retry(monkeypat
         def __init__(self, url):
             pass
 
-        def request(self, method, params):
+        def request(self, method, params, *, timeout=None):
             return {
                 "state": "DEGRADED",
                 "initialized": True,
@@ -327,8 +371,9 @@ def test_shared_client_probe_distinguishes_rpc_unavailable_and_redacts_error(
         def __init__(self, url):
             pass
 
-        def request(self, method, params):
+        def request(self, method, params, *, timeout=None):
             calls.append(method)
+            assert timeout == service_dashboard.READINESS_PROBE_TIMEOUT
             raise RuntimeError("connection failed with Bearer rpc-secret")
 
     monkeypatch.setattr(service_dashboard, "JSONRPCClient", Client)
@@ -349,8 +394,9 @@ def test_shared_client_probe_makes_no_mutating_rpc_calls(monkeypatch):
         def __init__(self, url):
             pass
 
-        def request(self, method, params):
+        def request(self, method, params, *, timeout=None):
             calls.append(method)
+            assert timeout == service_dashboard.READINESS_PROBE_TIMEOUT
             return {"state": "READY", "ready": True}
 
     monkeypatch.setattr(service_dashboard, "JSONRPCClient", Client)
@@ -408,6 +454,24 @@ def test_restart_service_restart_failed_on_pm2_error(monkeypatch):
     assert "pm2" in result["message"].lower()
     # The underlying error is preserved, not swallowed.
     assert "pm2" in result["message"].lower()
+
+
+def test_restart_service_restart_failed_on_pm2_os_error(monkeypatch):
+    monkeypatch.setattr(
+        service_dashboard,
+        "_run_pm2",
+        Mock(side_effect=OSError("pm2 executable not found")),
+    )
+    monkeypatch.setattr(
+        service_dashboard,
+        "_pm2_processes",
+        lambda: {"checkUpdate-jp": _proc("checkUpdate-jp")},
+    )
+
+    result = service_dashboard.restart_service("jp", "check_update")
+
+    assert result["restartStatus"] == "restart_failed"
+    assert "pm2 executable not found" in result["message"]
 
 
 def test_restart_service_refresh_failed_when_service_offline(monkeypatch):
