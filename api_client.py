@@ -233,7 +233,10 @@ class APIClient:
             response.headers.items(),
             response.status_code,
         )
-        if response.headers.get("x-session-token", None):
+        # Never accept a session token from a refused redirect response.
+        if not 300 <= response.status_code < 400 and response.headers.get(
+            "x-session-token", None
+        ):
             self.headers["x-session-token"] = response.headers["x-session-token"]
         return response
 

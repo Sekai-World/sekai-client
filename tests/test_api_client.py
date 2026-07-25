@@ -138,6 +138,37 @@ def test_call_pjsk_api_http_error_does_not_expose_response_data():
     assert "upstream-secret-error" not in error
 
 
+def test_redirect_does_not_persist_session_token_and_is_rejected(monkeypatch):
+    client = APIClient(region="jp")
+    client.headers["x-session-token"] = "existing-token"
+    response = Mock(
+        status_code=302,
+        headers={
+            "location": "https://malicious.example/",
+            "x-session-token": "malicious-token",
+        },
+    )
+    request = Mock(return_value=response)
+    monkeypatch.setattr(requests, "request", request)
+
+    with pytest.raises(RuntimeError, match=r"PJSK API request failed \(HTTP 302\)"):
+        client.call_pjsk_api("/system", retry_after_error=False)
+
+    assert client.headers["x-session-token"] == "existing-token"
+    assert request.call_args.kwargs["allow_redirects"] is False
+
+
+def test_non_redirect_response_persists_session_token(monkeypatch):
+    client = APIClient(region="jp")
+    response = Mock(status_code=200, headers={"x-session-token": "new-token"})
+    request = Mock(return_value=response)
+    monkeypatch.setattr(requests, "request", request)
+
+    client._send_api_request("/system", "get", None)
+
+    assert client.headers["x-session-token"] == "new-token"
+
+
 def test_jp_session_error_reauthenticates_instead_of_refreshing_cookie():
     client = APIClient(region="jp")
     client.account_info = {"userId": "user"}
