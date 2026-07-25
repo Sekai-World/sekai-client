@@ -215,33 +215,68 @@ def convert_array_to_dict(
     return result
 
 
-def restore_compact_data(data: dict) -> list:
+def restore_compact_data(data: dict) -> list[dict]:
     """
     Original Author: TWY
     convert compact data to original data structure
     :param data: dict
     :return: result: list
     """
+    if not isinstance(data, dict):
+        raise TypeError("compact data must be a dictionary")
+
     enum = data.get("__ENUM__", {})
-    column_labels = []
-    columns = []
-    for column in data:
-        if column == "__ENUM__":
-            continue
-        column_labels.append(column)
-        if column in enum:
-            columns.append(
-                [(None if i is None else enum[column][i]) for i in data[column]]
+    if not isinstance(enum, dict):
+        raise TypeError("compact data __ENUM__ must be a dictionary")
+
+    for column, values in enum.items():
+        if not isinstance(values, list):
+            raise TypeError(f"enum values for column {column!r} must be a list")
+
+    column_labels = [column for column in data if column != "__ENUM__"]
+    if not column_labels:
+        return []
+
+    columns = {
+        column: _restore_compact_column(column, data[column], enum)
+        for column in column_labels
+    }
+    expected_length = len(columns[column_labels[0]])
+    for column in column_labels[1:]:
+        if len(columns[column]) != expected_length:
+            raise ValueError(
+                "compact columns must have equal lengths "
+                f"(column {column!r} has {len(columns[column])}, "
+                f"expected {expected_length})"
             )
-        else:
-            columns.append(data[column])
-    num_entries = min(len(column) for column in columns)
-    result = []
-    for i in range(num_entries):
-        result.append(
-            {
-                key: column[i]
-                for key, column in zip(column_labels, columns, strict=False)
-            }
-        )
-    return result
+
+    return [
+        {column: columns[column][row_index] for column in column_labels}
+        for row_index in range(expected_length or 0)
+    ]
+
+
+def _restore_compact_column(column: str, values, enum: dict) -> list:
+    if not isinstance(values, list):
+        raise TypeError(f"compact column {column!r} must be a list")
+    if column not in enum:
+        return values
+
+    enum_values = enum[column]
+    restored_values: list = []
+    for row_index, enum_index in enumerate(values):
+        if enum_index is None:
+            restored_values.append(None)
+            continue
+        if isinstance(enum_index, bool) or not isinstance(enum_index, int):
+            raise ValueError(
+                f"invalid enum index for column {column!r} at row "
+                f"{row_index}: {enum_index!r}"
+            )
+        if enum_index < 0 or enum_index >= len(enum_values):
+            raise ValueError(
+                f"enum index out of range for column {column!r} at row "
+                f"{row_index}: {enum_index}"
+            )
+        restored_values.append(enum_values[enum_index])
+    return restored_values

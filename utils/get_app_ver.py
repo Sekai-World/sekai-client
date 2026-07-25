@@ -20,7 +20,9 @@ def get_app_ver_qooapp(appid: str) -> str:
                 "Gecko/20100101 Firefox/108.0"
             )
         },
+        timeout=10,
     )
+    r.raise_for_status()
 
     soup = BeautifulSoup(r.text, "lxml")
     app_info_tree = soup.find(class_="app-info android")
