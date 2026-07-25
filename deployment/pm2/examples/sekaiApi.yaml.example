@@ -1,0 +1,19 @@
+# One-process-per-file PM2 YAML template for sekai-api (api_public_server).
+#
+# Generate a real deployment file with envsubst, e.g.:
+#   export INTERNAL_RPC_TOKEN='...'  API_TOKEN='...'
+#   envsubst < sekaiApi.yaml.example > /root/pm2/sekaiApi.yaml
+#
+# Sensitive values are ${VARIABLE_NAME} placeholders. Production does not set
+# ALLOW_INSECURE_INTERNAL_RPC / ENABLE_UNSAFE_PJSK_RPC.
+apps:
+  - name: sekai-api
+    script: uv run gunicorn --worker-class gevent --bind 0.0.0.0:9393 api_public_server:app
+    cwd: /root/sekai-client
+    env:
+      EN_PORT: "39392"
+      JP_PORT: "39390"
+      KR_PORT: "39393"
+      TW_PORT: "39391"
+      API_TOKEN: ${API_TOKEN}
+      INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}

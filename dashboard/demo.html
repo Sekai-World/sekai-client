@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sekai Service Dashboard Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --line: #d8dee8;
+      --text: #1f2733;
+      --muted: #5e6979;
+      --good: #daf4e6;
+      --good-text: #116a3c;
+      --warn: #fff0c7;
+      --warn-text: #8b5b00;
+      --bad: #ffe0da;
+      --bad-text: #a11f12;
+      --accent: #216b62;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header, main {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.1;
+    }
+    .sub {
+      color: var(--muted);
+      margin-top: 6px;
+      font-size: 14px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button, .chip {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }
+    button {
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    button.danger {
+      background: #ba2f1f;
+      border-color: #ba2f1f;
+      color: #fff;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .metric .label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .metric .value {
+      font-size: 28px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .regions {
+      display: grid;
+      gap: 14px;
+    }
+    .region {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .region-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .region-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .pill {
+      border-radius: 999px;
+      padding: 3px 9px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .ok { background: var(--good); color: var(--good-text); }
+    .warn { background: var(--warn); color: var(--warn-text); }
+    .bad { background: var(--bad); color: var(--bad-text); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .service {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfcfe;
+      min-width: 0;
+    }
+    .service-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: start;
+      margin-bottom: 8px;
+    }
+    .service-name {
+      font-weight: 700;
+      overflow-wrap: anywhere;
+      line-height: 1.25;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .logs {
+      margin-top: 10px;
+      background: #f7f9fc;
+      border: 1px solid #e2e7ef;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 12px;
+      white-space: pre-wrap;
+      max-height: 110px;
+      overflow: auto;
+    }
+    .feed {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 16px;
+    }
+    .event {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-top: 1px solid #eef2f7;
+      font-size: 13px;
+    }
+    .event:first-of-type { border-top: 0; padding-top: 0; }
+    .event .time { color: var(--muted); white-space: nowrap; }
+    .statusline {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    @media (max-width: 980px) {
+      .summary, .grid, .feed { grid-template-columns: 1fr; }
+      header { align-items: start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Sekai Service Dashboard</h1>
+      <div class="sub">Local mock data for layout review.</div>
+    </div>
+    <div class="toolbar">
+      <button class="primary">Refresh</button>
+      <button>Auto refresh</button>
+      <button class="danger">Restart region</button>
+    </div>
+  </header>
+  <main>
+    <section class="summary">
+      <div class="metric">
+        <div class="label">Healthy services</div>
+        <div class="value">10 / 15</div>
+      </div>
+      <div class="metric">
+        <div class="label">Regions degraded</div>
+        <div class="value">2</div>
+      </div>
+      <div class="metric">
+        <div class="label">Recent 5xx</div>
+        <div class="value">18</div>
+      </div>
+      <div class="metric">
+        <div class="label">Last update</div>
+        <div class="value" style="font-size:18px;font-weight:600;margin-top:12px;">12:48:09</div>
+      </div>
+    </section>
+
+    <section class="regions">
+      <div class="region">
+        <div class="region-head">
+          <div class="region-name"><span class="pill ok">OK</span>jp</div>
+          <button class="danger">Restart region</button>
+        </div>
+        <div class="grid">
+          <div class="service">
+            <div class="service-head">
+              <div class="service-name">sharedApiClient-jp</div>
+              <span class="pill ok">online</span>
+            </div>
+            <div class="meta">PID 8421 · 0% CPU · 84 MB<br>Requests are flowing normally.</div>
+          </div>
+          <div class="service">
+            <div class="service-head">
+              <div class="service-name">checkUpdate-jp</div>
+              <span class="pill ok">online</span>
+            </div>
+            <div class="meta">PID 8540 · 1% CPU · 112 MB<br>No recent 5xx detected.</div>
+          </div>
+          <div class="service">
+            <div class="service-head">
+              <div class="service-name">eventTracker-jp</div>
+              <span class="pill warn">degraded</span>
+            </div>
+            <div class="meta">PID 8632 · 7% CPU · 179 MB<br>Last 5xx 2 min ago.</div>
+            <div class="logs">[error] upstream returned 502 for /event/rankings
+[warn] retrying event tracker post
+[info] recovered after 2 attempts</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="region">
+        <div class="region-head">
+          <div class="region-name"><span class="pill warn">WARN</span>en</div>
+          <button class="danger">Restart region</button>
+        </div>
+        <div class="grid">
+          <div class="service">
+            <div class="service-head">
+              <div class="service-name">sharedApiClient-en</div>
+              <span class="pill ok">online</span>
+            </div>
+            <div class="meta">PID 9012 · 0% CPU · 72 MB<br>Healthy.</div>
+          </div>
+          <div class="service">
+            <div class="service-head">
+              <div class="service-name">checkUpdate-en</div>
+              <span class="pill warn">slow</span>
+            </div>
+            <div class="meta">PID 9120 · 2% CPU · 128 MB<br>Some requests timing out.</div>
+            <div class="logs">[warn] request latency above threshold
+[info] finished update sweep</div>
+          </div>
+          <div class="service">
+            <div class="service-head">
+              <div class="service-name">eventTracker-en</div>
+              <span class="pill ok">online</span>
+            </div>
+            <div class="meta">PID 9211 · 1% CPU · 61 MB<br>Stable.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="region">
+        <div class="region-head">
+          <div class="region-name"><span class="pill bad">DOWN</span>cn</div>
+          <button class="danger">Restart region</button>
+        </div>
+        <div class="grid">
+          <div class="service">
+            <div class="service-head">
+              <div class="service-name">sharedApiClient-cn</div>
+              <span class="pill bad">offline</span>
+            </div>
+            <div class="meta">PID -<br>Not responding.</div>
+          </div>
+          <div class="service">
+            <div class="service-head">
+              <div class="service-name">checkUpdate-cn</div>
+              <span class="pill bad">offline</span>
+            </div>
+            <div class="meta">PID -<br>Start failed after restart.</div>
+            <div class="logs">[error] permission denied
+[error] process exited with code 1</div>
+          </div>
+          <div class="service">
+            <div class="service-head">
+              <div class="service-name">eventTracker-cn</div>
+              <span class="pill bad">offline</span>
+            </div>
+            <div class="meta">PID -<br>Waiting for shared client.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="feed">
+      <div class="panel">
+        <h2>Recent events</h2>
+        <div class="event"><span>jp event tracker posted rank snapshot</span><span class="time">2 min ago</span></div>
+        <div class="event"><span>en check update delayed but recovered</span><span class="time">8 min ago</span></div>
+        <div class="event"><span>cn region restart sequence pending</span><span class="time">13 min ago</span></div>
+      </div>
+      <div class="panel">
+        <h2>Action order</h2>
+        <div class="statusline">
+          <span class="chip">shared client</span>
+          <span class="chip">check update</span>
+          <span class="chip">event tracker</span>
+        </div>
+        <div class="sub" style="margin-top:12px;">
+          Restart sequence keeps the shared client up first, waits for check update to settle, then brings event tracker back.
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
