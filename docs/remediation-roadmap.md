@@ -22,7 +22,7 @@
 | 2 | 凭据、日志和内部 RPC 安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | PR 3 (#7 merged) |
 | 3 | Dashboard 安全与交互 | `[-]` 进行中（待桌面/移动端手工验收） | 0.5-1 天 | 阶段 1 | PR 4 |
 | 4 | 定时任务互斥与 Git 数据安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
-| 5 | 区域 bootstrap 与客户端状态机 | `[ ]` | 2-3 天 | 阶段 1 | PR 6 |
+| 5 | 区域 bootstrap 与客户端状态机 | `[-]` 已实现生命周期/readiness 代码切片，生产验收待完成 | 2-3 天 | 阶段 1 | 未提交（`2802d7a`、`0f3329a`） |
 | 6 | Deadline、重试与队列生命周期 | `[ ]` | 2-3 天 | 阶段 5 | PR 7 |
 | 7 | Event tracker outbox 与 API 响应校验 | `[ ]` | 2-4 天 | 阶段 1；建议在阶段 6 后 | PR 8-9 |
 
@@ -281,6 +281,8 @@ uv run --extra dev pytest tests/
 
 使用每区域生命周期状态替代全局 `bootstrapped` 和不完整的 `is_init` 语义。
 
+当前状态：`[-]` 已实现区域生命周期、readiness/liveness 和目标区域请求门控；生产 PM2/Gunicorn 验证、单区域 canary、实际公共入口与部署监控尚未完成。因此本阶段不标记为生产验收完成。
+
 ### 建议状态
 
 ```text
@@ -296,33 +298,41 @@ UNINITIALIZED
 
 ### 任务
 
-- [ ] 定义每区域生命周期状态与合法状态转换。
-- [ ] 移除或废弃全局 `bootstrapped` 布尔语义。
-- [ ] 请求仅初始化目标区域，不串行等待全部区域。
-- [ ] 初始化失败按区域独立退避重试。
-- [ ] readiness 同时检查初始化和登录状态。
-- [ ] 每个区域进程在启动时固定 region。
-- [ ] 若保留重新初始化，必须通过同一 executor 原子执行。
-- [ ] 重新初始化时完整重置 `api_client`、`user_logged_in` 和 `user_info`。
-- [ ] 分离 liveness 和 readiness。
-- [ ] 记录状态转换和失败原因，便于 Dashboard 展示与排障。
+- [x] 定义每区域生命周期状态与合法状态转换。
+- [x] 移除或废弃全局 `bootstrapped` 布尔语义（保留只读兼容符号，不再作为授权或初始化依据）。
+- [x] 请求仅初始化目标区域，不串行等待全部区域（公共 API 使用目标区域 `ensure_ready`）。
+- [x] 初始化失败按区域独立退避重试。
+- [x] readiness 同时检查初始化和登录状态。
+- [x] 每个正式区域进程在启动时固定 region；PM2 模板显式声明 JP/EN/TW/KR 拓扑。
+- [x] 不提供运行时区域切换：不同 region 的 `init()` 被拒绝；同 region `init()` 是幂等 no-op，生命周期变更及兼容 RPC 通过同一锁序列化。
+- [x] 分离 liveness 和 readiness。
+- [x] 记录状态转换和失败原因，便于 Dashboard 展示与排障。
+
+以下边界仍未完成：不把兼容性的纯 `bootstrap()` 入口误记为生产 bootstrap 验收；尚未完成受控 PM2/Gunicorn 验证、单区域 canary/rollout、真实公共部署与监控检查。阶段 5 之外的 bootstrap 任务，以及阶段 6/7 项目，也不因本次代码切片而变更状态。
 
 ### 验收条件
 
-- 一个区域失败不会阻塞其他区域。
-- 初始化成功但登录失败不会被标记为 READY。
-- 重新初始化不会保留旧区域用户状态。
-- 同一区域不会同时运行两次初始化。
-- readiness 能准确返回每个区域不可用原因。
+- [x] 一个区域失败不会阻塞其他区域。
+- [x] 初始化成功但登录失败不会被标记为 READY。
+- [x] 不会跨区域复用用户状态：不同 region 初始化被拒绝，同 region 重复初始化不改变已提交状态。
+- [x] 同一区域不会同时运行两次初始化。
+- [x] readiness 能准确返回每个区域不可用原因。
+
+生产验收条件仍未完成：受控 PM2/Gunicorn 验证、单区域 canary/rollout、实际公共入口/部署监控检查。
 
 ### 验收证据
 
-- 待填写：状态转换单元测试
-- 待填写：多区域部分失败集成测试
+- `tests/test_shared_client.py`、`tests/test_api_client.py`：覆盖固定区域、生命周期状态转换、序列化初始化/恢复、退避重试、状态快照与兼容 RPC 边界。
+- `tests/test_api_public_server.py`：覆盖目标区域 `ensure_ready`、未就绪时脱敏 503 与 `Retry-After`、区域隔离，以及只读 readiness/liveness 和 legacy `/health` 兼容行为。
+- `tests/test_service_dashboard.py`、`tests/test_shared_client_deployment.py`：Dashboard 使用 readiness（不使用 init）并验证正式 JP/EN/TW/KR PM2 模板显式 `--workers 1`、loopback 绑定和区域拓扑。
+- Oracle Gate 1：**APPROVE**；Oracle Gate 2：**APPROVE**。
+- 全套验证：`pytest` **414 passed**；Ruff、Mypy 和 `git diff --check`：clean。
+- 尚未提供：受控 PM2/Gunicorn 验证、单区域 canary/rollout、真实公共入口与部署监控证据。
 
 ### 执行记录
 
-- 待填写
+- 2026-07-23：提交 `2802d7a`（`feat: add fixed-region client lifecycle`）实现每进程固定区域、区域生命周期状态、序列化生命周期变更与兼容 RPC、纯 readiness/liveness 状态接口及独立退避；提交 `0f3329a`（`feat: expose regional lifecycle readiness`）实现公共 API 目标区域 `ensure_ready`、脱敏 503/`Retry-After`、`/health/live`、`/health/ready` 和 legacy `/health` 兼容，并将 Dashboard 探针改为 readiness、PM2 正式区域模板显式 `--workers 1`。两提交目前为 `transform-python` 上未推送的阶段 5 工作；无 PR/合并状态可记录。
+- 本次代码验收：Oracle Gate 1/2 均 **APPROVE**；全套 `pytest` 414 passed，Ruff、Mypy、`git diff --check` clean。生产 PM2/Gunicorn、canary/rollout、公共部署和监控验收仍待完成。
 
 ## 阶段 6：Deadline、重试与队列生命周期
 
@@ -437,7 +447,7 @@ UNINITIALIZED
 | 3 | `security: harden internal rpc and credential handling` | 日志、token、文件权限、RPC | `[x]` | [#7](https://github.com/Sekai-World/sekai-client/pull/7) merged（`16b609a`） |
 | 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[-]` | 分支 `security/phase-3-dashboard-safety`，待浏览器验收与 PR |
 | 5 | `fix: harden update cycle and git publishing` | 定时任务互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox（不含 `event_tracker` 排名 outbox） | `[x]` | [#9](https://github.com/Sekai-World/sekai-client/pull/9) merged（`02769973a55d9c2e96a49d22897cbedb02e50025`，2026-07-23） |
-| 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[ ]` | 待填写 |
+| 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[-]` | 未提交阶段 5 工作：`2802d7a`、`0f3329a`；无 PR |
 | 7 | `refactor: enforce request deadlines and retry policy` | Deadline、重试、取消、队列 | `[ ]` | 待填写 |
 | 8 | `feat: persist event tracker delivery outbox` | SQLite outbox 与 scheduler | `[ ]` | 待填写 |
 | 9 | `refactor: validate upstream api responses` | 关键 API 响应模型 | `[ ]` | 待填写 |
@@ -465,3 +475,4 @@ UNINITIALIZED
 | 2026-07-17 | 3 | 已实现统一状态模型、安全 DOM 渲染、重启确认与防重复、结构化 restartStatus、session-only/记住设备/清除 token。聚焦测试 24 passed，实施时全套测试 139 passed，JavaScript syntax 与 diff check 通过。真实桌面/移动端流程和 PM2 重启尚未手工验证。 | 完成浏览器验收，更新证据后提交阶段 3 PR |
 | 2026-07-22 | 4 | Gate 5 Oracle **APPROVE**：显式 `Asia/Tokyo` scheduler trigger；持久化 Tokyo daily due marker 覆盖 late/coalesced/restart/overlap，且仅成功并完成日期绑定时清除/完成；clone/open `flock`；仅 Strapi ID outbox（不含 `event_tracker`），先持久化，Git 事务完成或可恢复 readiness checkpoint 后 ready，再 Git 后 HTTP，header auth、dedupe/retry。验证：`uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。 | 阶段 5；阶段 7 event_tracker outbox 仍未完成 |
 | 2026-07-23 | 4 | PR [#9](https://github.com/Sekai-World/sekai-client/pull/9) 已合并到 `transform-python`，合并提交 `02769973a55d9c2e96a49d22897cbedb02e50025`。合并范围为更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；不包含 `event_tracker` 排名 outbox。 | 阶段 5；阶段 7 event_tracker outbox 与 API 响应校验仍未完成 |
+| 2026-07-23 | 5 | 未推送的 `2802d7a`、`0f3329a` 实现固定区域生命周期、序列化状态变更、纯 readiness/liveness、目标区域 `ensure_ready` 与脱敏 503/`Retry-After`、live/ready/legacy health、Dashboard readiness 以及正式 JP/EN/TW/KR 的 PM2 `--workers 1` 拓扑。Oracle Gate 1/2 均 **APPROVE**；全套测试 414 passed，Ruff/Mypy/diff check clean。 | 受控 PM2/Gunicorn、单区域 canary/rollout、真实公共部署与监控检查；未实现的 bootstrap、阶段 6/7 保持待办 |

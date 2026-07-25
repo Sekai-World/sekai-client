@@ -5,10 +5,17 @@ Provides common fixtures for testing sekai-client components.
 """
 
 import logging
+import os
 import queue as queue_module
 from unittest.mock import Mock
 
 import pytest
+
+# ``shared_client`` intentionally fails closed when a production process does
+# not declare its region.  Pytest imports conftest before test modules, so the
+# test process gets an explicit, local default without changing production
+# startup semantics.
+os.environ.setdefault("SEKAI_REGION", "jp")
 
 
 @pytest.fixture

@@ -20,9 +20,13 @@ import queue
 import tempfile
 from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from hmac import compare_digest
 from os import getenv, path
-from threading import Lock
+from threading import Lock, RLock
+from time import monotonic
 from typing import Any
 
 import jwt
@@ -33,10 +37,9 @@ from flask import Flask, abort, request
 from jsonrpc.exceptions import JSONRPCDispatchException, JSONRPCInternalError
 from pytz import timezone
 
-from api_client import APIClient
+from api_client import APIClient, AuthTransition, AuthTransitionKind
 from config import Config
 from logging_config import enable_log_redaction
-from utils.constants import pjsk_region
 from utils.jsonrpc_client import INTERNAL_RPC_TOKEN_HEADER
 from utils.redaction import redact_structure, redact_text
 from utils.task_queue import job_queue, start_worker
@@ -50,14 +53,144 @@ dirname = path.dirname(__file__)
 # Header used to authenticate internal JSON-RPC calls between the
 # sekai-client processes. All such calls must run on loopback only.
 
-# Global state for the JSON-RPC server
+# ``shared_client`` is deliberately a single-region process.  The configured
+# region is captured once at import time; accepting a different region through
+# RPC would make credentials and cached API data ambiguous.
+_configured_region = getenv("SEKAI_REGION", "").strip().lower()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _format_utc(value: datetime) -> str:
+    return (
+        value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    )
+
+
+class LifecycleState(StrEnum):
+    """Authoritative lifecycle state of this process's shared API client."""
+
+    UNINITIALIZED = "UNINITIALIZED"
+    INITIALIZING = "INITIALIZING"
+    READY = "READY"
+    DEGRADED = "DEGRADED"
+    REAUTHENTICATING = "REAUTHENTICATING"
+    FAILED = "FAILED"
+
+
+class _ClientOperation(StrEnum):
+    """Classify queued work that is allowed to change lifecycle readiness."""
+
+    NORMAL = "NORMAL"
+    INITIALIZATION = "INITIALIZATION"
+    AUTHENTICATION = "AUTHENTICATION"
+    LIFECYCLE = "LIFECYCLE"
+
+
+@dataclass
+class _LifecycleRuntime:
+    """Single owner for client, authentication, and lifecycle observations."""
+
+    region: str
+    client: APIClient | None = None
+    authenticated: bool = False
+    user: dict[str, Any] | None = None
+    state: LifecycleState = LifecycleState.UNINITIALIZED
+    error: dict[str, str] | None = None
+    failure_count: int = 0
+    # Monotonic values are intentionally internal and are never serialized.
+    last_attempt_mono: float | None = None
+    retry_until_mono: float = 0.0
+    # RPC-facing values are UTC ISO-8601 strings with a trailing ``Z``.
+    last_attempt_at: str | None = None
+    next_retry_at: str | None = None
+    hidden_auth_failure_pending: bool = False
+    active_auth_transaction_id: int | None = None
+    auth_generation: int = 0
+    lock: RLock = field(default_factory=RLock, repr=False)
+
+    def status(self) -> dict[str, Any]:
+        """Return a prompt, secret-free lifecycle snapshot."""
+        with self.lock:
+            retry_after = max(0.0, self.retry_until_mono - monotonic())
+            return {
+                "region": self.region,
+                "state": self.state.value,
+                "initialized": self.client is not None,
+                "authenticated": self.authenticated,
+                "ready": self.state is LifecycleState.READY
+                and self.client is not None
+                and self.authenticated,
+                "retry_after": retry_after if retry_after else None,
+                "last_attempt_at": self.last_attempt_at,
+                "next_retry_at": self.next_retry_at,
+                "error": deepcopy(self.error),
+            }
+
+    def record_failure(self, error: BaseException, state: LifecycleState) -> None:
+        with self.lock:
+            self.state = state
+            self.failure_count += 1
+            delay = min(
+                Config.LIFECYCLE_RETRY_MAX_SECONDS,
+                Config.LIFECYCLE_RETRY_BASE_SECONDS * (2 ** (self.failure_count - 1)),
+            )
+            # The attempt start remains exposed as ``last_attempt_at``.  The
+            # retry deadline, however, starts at the failure instant so a
+            # slow authentication attempt cannot consume its own backoff.
+            failure_mono = monotonic()
+            failure_utc = _utc_now()
+            if self.last_attempt_mono is None:
+                self.mark_attempt()
+            self.retry_until_mono = failure_mono + delay
+            next_retry = failure_utc + timedelta(seconds=delay)
+            self.next_retry_at = _format_utc(next_retry)
+            self.error = {
+                "type": type(error).__name__,
+                # Do not expose exception text: API errors can include tokens,
+                # credentials, or server payloads that are not key-labelled.
+                "message": "lifecycle operation failed",
+            }
+
+    def clear_failure(self) -> None:
+        with self.lock:
+            self.failure_count = 0
+            self.retry_until_mono = 0.0
+            self.next_retry_at = None
+            self.error = None
+
+    def mark_attempt(self) -> None:
+        with self.lock:
+            now = monotonic()
+            self.last_attempt_mono = now
+            self.last_attempt_at = _format_utc(_utc_now())
+
+
+_lifecycle = _LifecycleRuntime(region=_configured_region)
+# Compatibility snapshots only.  No production path reads these values.
 api_client: APIClient | None = None
-client_region: str = pjsk_region
+client_region: str = _configured_region
 user_logged_in: bool = False
 user_info: dict[str, Any] | None = None
 scheduler_start_lock = Lock()
 scheduler_started: bool = False
 
+
+def _validate_configured_region() -> None:
+    """Fail closed before worker, scheduler, or liveness services start."""
+    if not _configured_region:
+        raise RuntimeError(
+            "SEKAI_REGION must be set for shared_client; refusing implicit jp default"
+        )
+    if _configured_region not in Config.REGIONS:
+        raise RuntimeError(
+            f"Unsupported shared_client SEKAI_REGION: {_configured_region!r}"
+        )
+
+
+_validate_configured_region()
 start_worker()
 
 
@@ -149,9 +282,9 @@ def run_job(job: Callable[[], Any]) -> Any:
 
 def day_change_func() -> None:
     """Scheduled job to relogin once per day (at 4 AM JST)."""
-    if user_logged_in:
+    if _is_logged_in():
         try:
-            run_job(lambda: login_account(True))
+            _client_job(lambda: login_account(True), _ClientOperation.AUTHENTICATION)
         except JSONRPCDispatchException as error:
             logger.error("Scheduled daily relogin failed: %s", error.error.data)
 
@@ -166,9 +299,132 @@ day_change_job = scheduler.add_job(day_change_func, cron_trigger, name="day_chan
 
 def require_api_client() -> APIClient:
     """Return the initialized API client or fail with the public API error."""
-    if api_client is None:
+    client = _effective_client()
+    if client is None:
         raise RuntimeError("Init before calling this method")
-    return api_client
+    return client
+
+
+def _effective_client() -> APIClient | None:
+    """Return the committed process client."""
+    with _lifecycle.lock:
+        return _lifecycle.client
+
+
+def _is_logged_in() -> bool:
+    with _lifecycle.lock:
+        return _lifecycle.authenticated
+
+
+def _effective_user_info() -> dict[str, Any] | None:
+    with _lifecycle.lock:
+        return _lifecycle.user
+
+
+def _client_job(
+    job: Callable[[], Any],
+    operation: _ClientOperation = _ClientOperation.NORMAL,
+) -> Any:
+    """Run API work behind the lifecycle read/write barrier."""
+
+    def guarded() -> Any:
+        with _lifecycle.lock:
+            client = _lifecycle.client
+            if client is not None:
+                previous = (
+                    _snapshot_client_state(client),
+                    deepcopy(_lifecycle.user),
+                    _lifecycle.authenticated,
+                )
+            else:
+                previous = None
+            auth_generation = _lifecycle.auth_generation
+
+        try:
+            return job()
+        except Exception as error:
+            with _lifecycle.lock:
+                # A queued job may only restore the client it observed.  In
+                # particular, never overwrite a candidate committed by a
+                # nested initialization or authentication transition.
+                if _lifecycle.client is client and previous is not None:
+                    auth_changed = _lifecycle.auth_generation != auth_generation
+                    if not auth_changed:
+                        assert client is not None
+                        _restore_client_state(client, previous[0])
+                        _lifecycle.user = previous[1]
+                        _lifecycle.authenticated = previous[2]
+                        hidden_failure = _consume_hidden_auth_failure()
+                        if (
+                            operation
+                            in (
+                                _ClientOperation.INITIALIZATION,
+                                _ClientOperation.AUTHENTICATION,
+                                _ClientOperation.LIFECYCLE,
+                            )
+                            and _lifecycle.state is not LifecycleState.DEGRADED
+                            and not hidden_failure
+                        ):
+                            _lifecycle.record_failure(error, LifecycleState.DEGRADED)
+                        _publish_snapshot_locked()
+            raise
+
+    return run_job(guarded)
+
+
+def _read_job(read: Callable[[], Any]) -> Any:
+    """Run a client read behind the same barrier as mutating API work."""
+    return _client_job(read)
+
+
+def _publish_snapshot_locked() -> None:
+    """Publish compatibility observations only after a committed transition."""
+    global api_client, client_region, user_logged_in, user_info
+    api_client = _lifecycle.client
+    client_region = _lifecycle.region
+    user_logged_in = _lifecycle.authenticated
+    user_info = deepcopy(_lifecycle.user)
+
+
+def _api_lifecycle_transition(event: AuthTransition) -> None:
+    """Reconcile APIClient's internal automatic auth transitions."""
+    with _lifecycle.lock:
+        if event.kind is AuthTransitionKind.ATTEMPT:
+            _lifecycle.mark_attempt()
+            _lifecycle.active_auth_transaction_id = event.transaction_id
+        elif event.kind is AuthTransitionKind.SUCCESS:
+            if event.transaction_id != _lifecycle.active_auth_transaction_id:
+                return
+            _lifecycle.active_auth_transaction_id = None
+            client = _lifecycle.client
+            if client is not None and client.user_info:
+                _lifecycle.auth_generation += 1
+                _lifecycle.user = deepcopy(client.user_info)
+                _lifecycle.authenticated = True
+                _lifecycle.state = LifecycleState.READY
+                _lifecycle.clear_failure()
+                _lifecycle.hidden_auth_failure_pending = False
+                _publish_snapshot_locked()
+        elif event.kind is AuthTransitionKind.FAILURE and event.error is not None:
+            if event.transaction_id != _lifecycle.active_auth_transaction_id:
+                return
+            _lifecycle.active_auth_transaction_id = None
+            _lifecycle.record_failure(event.error, LifecycleState.DEGRADED)
+            _lifecycle.hidden_auth_failure_pending = True
+            _publish_snapshot_locked()
+
+
+def _consume_hidden_auth_failure() -> bool:
+    """Consume callback failure ownership exactly once."""
+    with _lifecycle.lock:
+        if not _lifecycle.hidden_auth_failure_pending:
+            return False
+        _lifecycle.hidden_auth_failure_pending = False
+        return True
+
+
+def _attach_lifecycle_callback(client: APIClient) -> None:
+    client.lifecycle_callback = _api_lifecycle_transition
 
 
 def _snapshot_client_state(client: APIClient) -> dict[str, Any]:
@@ -248,8 +504,9 @@ def get_account_info() -> dict[str, Any]:
     Raises:
         ValueError: If credentials not found for cn/tw/kr regions
     """
-    if client_region in ("jp", "en"):
-        filepath = path.join(dirname, f"sharedAccount.{client_region}.yaml")
+    region = _lifecycle.region
+    if region in ("jp", "en"):
+        filepath = path.join(dirname, f"sharedAccount.{region}.yaml")
         if path.exists(filepath):
             _enforce_account_yaml_permissions(filepath)
             with open(filepath, encoding="utf-8") as f:
@@ -258,7 +515,7 @@ def get_account_info() -> dict[str, Any]:
                 raise ValueError(f"Invalid account info file: {filepath}")
             return account_info
         else:
-            logger.warning("no %s account found, registering a new one", client_region)
+            logger.warning("no %s account found, registering a new one", region)
             register_info = require_api_client().register_new_account()
             credential = register_info["credential"]
             signature = register_info["userRegistration"]["signature"]
@@ -274,12 +531,12 @@ def get_account_info() -> dict[str, Any]:
             _write_account_yaml_atomic(filepath, account_info)
             return account_info
 
-    if client_region in ("cn", "tw", "kr"):
-        access_token = getenv(f"SEKAI_{client_region.upper()}_ACCESS_TOKEN", None)
-        sdk_open_id = getenv(f"SEKAI_{client_region.upper()}_SDK_OPEN_ID", None)
+    if region in ("cn", "tw", "kr"):
+        access_token = getenv(f"SEKAI_{region.upper()}_ACCESS_TOKEN", None)
+        sdk_open_id = getenv(f"SEKAI_{region.upper()}_SDK_OPEN_ID", None)
         if not access_token or not sdk_open_id:
             raise ValueError(
-                f"Missing access token and/or SDK open id for {client_region} server"
+                f"Missing access token and/or SDK open id for {region} server"
             )
         return {"loginInfo": {"accessToken": access_token}, "userId": sdk_open_id}
 
@@ -299,26 +556,57 @@ def login_account(forced: bool = False) -> dict[str, Any]:
     Returns:
         User profile information from the server
     """
-    global user_logged_in, user_info
-    if user_logged_in and not forced:
-        if user_info is None:
+    with _lifecycle.lock:
+        _lifecycle.mark_attempt()
+    if _is_logged_in() and not forced:
+        cached_user = _effective_user_info()
+        if cached_user is None:
             raise RuntimeError("Logged in client has no user info")
-        return user_info
+        return cached_user
 
     client = require_api_client()
-    previous_state: dict[str, Any] | None = None
-    if user_logged_in:
-        previous_state = _snapshot_client_state(client)
+    was_authenticated = _is_logged_in()
+    previous_state = _snapshot_client_state(client)
+    with _lifecycle.lock:
+        previous_auth_generation = _lifecycle.auth_generation
 
+    with _lifecycle.lock:
+        _lifecycle.state = (
+            LifecycleState.REAUTHENTICATING
+            if was_authenticated
+            else LifecycleState.INITIALIZING
+        )
     day_change_job.pause()
     try:
         client.account_info = get_account_info()
-        user_info = client.login()
-        user_logged_in = True
-        return user_info
-    except Exception:
-        if previous_state is not None:
-            _restore_client_state(client, previous_state)
+        candidate_user = client.login()
+        with _lifecycle.lock:
+            _lifecycle.user = deepcopy(candidate_user)
+            _lifecycle.authenticated = True
+            _lifecycle.state = LifecycleState.READY
+            _lifecycle.clear_failure()
+            _lifecycle.hidden_auth_failure_pending = False
+            _publish_snapshot_locked()
+        return candidate_user
+    except Exception as error:
+        with _lifecycle.lock:
+            auth_committed = (
+                _lifecycle.auth_generation != previous_auth_generation
+                and _lifecycle.authenticated
+                and _lifecycle.state is LifecycleState.READY
+            )
+            if not auth_committed:
+                _restore_client_state(client, previous_state)
+            # A nested hidden authentication may have committed a newer
+            # session before an ordinary outer operation error propagates.
+            # That committed state owns the lifecycle outcome and must remain
+            # ready; only an uncommitted explicit login/relogin can degrade.
+            if not auth_committed and not was_authenticated:
+                _lifecycle.authenticated = False
+                _lifecycle.user = None
+            if not auth_committed and not _consume_hidden_auth_failure():
+                _lifecycle.record_failure(error, LifecycleState.DEGRADED)
+            _publish_snapshot_locked()
         raise
     finally:
         day_change_job.resume()
@@ -337,30 +625,105 @@ def init(region: str) -> bool:
     Returns:
         True if initialization successful
     """
-    global client_region
-    if region:
-        client_region = region
+    _validate_configured_region()
+    requested_region = region or _configured_region
+    if requested_region != _configured_region:
+        raise ValueError(
+            f"Region mismatch: process is configured for {_configured_region!r}, "
+            f"not {requested_region!r}"
+        )
+    if requested_region not in Config.REGIONS:
+        raise ValueError(f"Unsupported formal shared-client region: {requested_region}")
+    result = _client_job(_initialize_client, _ClientOperation.INITIALIZATION)
+    return bool(result)
 
-    global api_client
-    client = APIClient(region=client_region, logger=logger)
-    if client_region == "jp":
-        client.init_cookie()
-    api_client = client
 
-    logger.info("Initialized API client for %s server", client_region)
+def _initialize_client() -> bool:
+    """Build and validate a candidate before committing it to the runtime."""
+    with _lifecycle.lock:
+        if _lifecycle.client is not None:
+            # Same-region init is intentionally a true no-op.
+            return True
+        if _lifecycle.retry_until_mono > monotonic():
+            raise RuntimeError("shared client lifecycle retry backoff is active")
+        _lifecycle.state = LifecycleState.INITIALIZING
+        _lifecycle.mark_attempt()
+
+    try:
+        candidate = APIClient(region=_lifecycle.region, logger=logger)
+        _attach_lifecycle_callback(candidate)
+        if _lifecycle.region == "jp":
+            candidate.init_cookie()
+    except Exception as error:
+        with _lifecycle.lock:
+            _lifecycle.record_failure(error, LifecycleState.FAILED)
+            _publish_snapshot_locked()
+        raise
+
+    with _lifecycle.lock:
+        _lifecycle.client = candidate
+        # Every successful init starts a fresh auth lifecycle.  Do not carry
+        # authentication flags or profile data across a same-region reinit.
+        _lifecycle.authenticated = False
+        _lifecycle.user = None
+        _lifecycle.state = LifecycleState.DEGRADED
+        _lifecycle.clear_failure()
+        _publish_snapshot_locked()
+    logger.info("Initialized API client for %s server", _lifecycle.region)
     return True
 
 
 @api.dispatcher.add_method
 def is_init() -> bool:
     """Check if API client is initialized."""
-    return bool(api_client)
+    with _lifecycle.lock:
+        return _lifecycle.client is not None
 
 
 @api.dispatcher.add_method
 def is_login() -> bool:
     """Check if user is logged in."""
-    return user_logged_in
+    return _is_logged_in()
+
+
+@api.dispatcher.add_method
+def lifecycle_status() -> dict[str, Any]:
+    """Return structured, secret-free lifecycle information."""
+    return _lifecycle.status()
+
+
+@api.dispatcher.add_method
+def readiness() -> dict[str, Any]:
+    """Return the readiness snapshot without performing I/O."""
+    return _lifecycle.status()
+
+
+@api.dispatcher.add_method
+def liveness() -> dict[str, Any]:
+    """Cheap process liveness probe; it never touches the API client."""
+    _validate_configured_region()
+    return {"ok": True, "region": _lifecycle.region}
+
+
+@api.dispatcher.add_method
+def ensure_ready() -> dict[str, Any]:
+    """Make one serialized initialization-plus-login attempt."""
+
+    def attempt() -> dict[str, Any]:
+        status = _lifecycle.status()
+        if status["ready"]:
+            return status
+        if status["retry_after"] is not None:
+            return {**status, "attempted": False, "reason": "retry backoff active"}
+        _lifecycle.mark_attempt()
+        try:
+            _initialize_client()
+            login_account(True)
+        except Exception:
+            return {**_lifecycle.status(), "attempted": True}
+        return {**_lifecycle.status(), "attempted": True}
+
+    return dict(_client_job(attempt, _ClientOperation.LIFECYCLE))
 
 
 @api.dispatcher.add_method
@@ -371,7 +734,7 @@ def login() -> Any:
     Returns:
         User profile or JSONRPCInternalError
     """
-    return run_job(lambda: login_account())
+    return _client_job(lambda: login_account(), _ClientOperation.AUTHENTICATION)
 
 
 @api.dispatcher.add_method
@@ -382,7 +745,7 @@ def relogin() -> Any:
     Returns:
         User profile or JSONRPCInternalError
     """
-    return run_job(lambda: login_account(True))
+    return _client_job(lambda: login_account(True), _ClientOperation.AUTHENTICATION)
 
 
 @api.dispatcher.add_method
@@ -397,13 +760,13 @@ def check_versions(input_ver_info: dict[str, Any] | None = None) -> Any:
         Version status or JSONRPCInternalError
     """
     client = require_api_client()
-    return run_job(lambda: client.check_versions(input_ver_info))
+    return _client_job(lambda: client.check_versions(input_ver_info))
 
 
 @api.dispatcher.add_method
 def version_info() -> dict[str, Any]:
     """Get current game version information."""
-    return require_api_client().version_info
+    return dict(_read_job(lambda: deepcopy(require_api_client().version_info)))
 
 
 @api.dispatcher.add_method
@@ -414,22 +777,26 @@ def account_info() -> dict[str, Any]:
     (e.g. event_tracker) can correlate requests without exposing
     credentials/signatures.
     """
-    if not user_logged_in:
+    if not _is_logged_in():
         raise RuntimeError("Login before calling this method")
 
-    return {
-        "userId": require_api_client().account_info.get("userId"),
-        "region": client_region,
-    }
+    return dict(
+        _read_job(
+            lambda: {
+                "userId": require_api_client().account_info.get("userId"),
+                "region": _lifecycle.region,
+            }
+        )
+    )
 
 
 @api.dispatcher.add_method
 def login_user_info() -> dict[str, Any] | None:
     """Get logged-in user profile."""
-    if not user_logged_in:
+    if not _is_logged_in():
         raise RuntimeError("Login before calling this method")
 
-    return user_info
+    return deepcopy(_effective_user_info())
 
 
 @api.dispatcher.add_method
@@ -443,11 +810,11 @@ def fetch_user_profile(user_id: str) -> Any:
     Returns:
         User profile or JSONRPCInternalError
     """
-    if not user_logged_in:
+    if not _is_logged_in():
         raise RuntimeError("Login before calling this method")
 
     client = require_api_client()
-    return run_job(lambda: client.fetch_user_profile(user_id))
+    return _client_job(lambda: client.fetch_user_profile(user_id))
 
 
 @api.dispatcher.add_method
@@ -462,32 +829,34 @@ def fetch_user_event_ranking(target_user_id: str, event_id: int) -> Any:
     Returns:
         Event ranking or JSONRPCInternalError
     """
-    if not user_logged_in:
+    if not _is_logged_in():
         raise RuntimeError("Login before calling this method")
 
     client = require_api_client()
-    return run_job(lambda: client.fetch_user_event_ranking(target_user_id, event_id))
+    return _client_job(
+        lambda: client.fetch_user_event_ranking(target_user_id, event_id)
+    )
 
 
 @api.dispatcher.add_method
 def fetch_master_data() -> Any:
     """Fetch game master data."""
     client = require_api_client()
-    return run_job(lambda: client.call_pjsk_api("/suite/master"))
+    return _client_job(lambda: client.call_pjsk_api("/suite/master"))
 
 
 @api.dispatcher.add_method
 def fetch_system_data() -> Any:
     """Fetch system data (versions, maintenance status, etc)."""
     client = require_api_client()
-    return run_job(lambda: client.fetch_system_data())
+    return _client_job(lambda: client.fetch_system_data())
 
 
 @api.dispatcher.add_method
 def fetch_information() -> Any:
     """Fetch in-game information/notices."""
     client = require_api_client()
-    return run_job(lambda: client.fetch_information())
+    return _client_job(lambda: client.fetch_information())
 
 
 @api.dispatcher.add_method
@@ -501,11 +870,11 @@ def fetch_event_rank_first_100(event_id: int) -> Any:
     Returns:
         Top 100 rankings or JSONRPCInternalError
     """
-    if not user_logged_in:
+    if not _is_logged_in():
         raise RuntimeError("Login before calling this method")
 
     client = require_api_client()
-    return run_job(lambda: client.fetch_event_rank_first_100(event_id))
+    return _client_job(lambda: client.fetch_event_rank_first_100(event_id))
 
 
 @api.dispatcher.add_method
@@ -519,11 +888,11 @@ def fetch_event_rank_border(event_id: int) -> Any:
     Returns:
         Ranking borders or JSONRPCInternalError
     """
-    if not user_logged_in:
+    if not _is_logged_in():
         raise RuntimeError("Login before calling this method")
 
     client = require_api_client()
-    return run_job(lambda: client.fetch_event_rank_border(event_id))
+    return _client_job(lambda: client.fetch_event_rank_border(event_id))
 
 
 @api.dispatcher.add_method
@@ -550,7 +919,7 @@ def call_pjsk_api(endpoint: str, method: str = "get", body: str | dict = "") -> 
             "ENABLE_UNSAFE_PJSK_RPC=true to enable it (unsafe)."
         )
     client = require_api_client()
-    return run_job(lambda: client.call_pjsk_api(endpoint, method, body))
+    return _client_job(lambda: client.call_pjsk_api(endpoint, method, body))
 
 
 @api.dispatcher.add_method
@@ -571,30 +940,33 @@ def fetch_master_split(split_path: str) -> Any:
     Raises:
         RuntimeError: If split_path is not in the allowlist
     """
-    if not user_logged_in:
+    if not _is_logged_in():
         raise RuntimeError("Login before calling this method")
 
-    client = require_api_client()
-    allowed = client.master_split_paths
-    if split_path not in allowed:
-        raise RuntimeError(f"Master split path {split_path!r} is not in the allowlist")
+    def fetch() -> Any:
+        client = require_api_client()
+        if split_path not in client.master_split_paths:
+            raise RuntimeError(
+                f"Master split path {split_path!r} is not in the allowlist"
+            )
+        return client.call_pjsk_api(f"/{split_path}")
 
-    return run_job(lambda: client.call_pjsk_api(f"/{split_path}"))
+    return _client_job(fetch)
 
 
 @api.dispatcher.add_method
 def master_split_paths() -> list[str]:
     """Get master data split paths."""
-    if not user_logged_in:
+    if not _is_logged_in():
         raise RuntimeError("Login before calling this method")
 
-    return require_api_client().master_split_paths
+    return list(_read_job(lambda: deepcopy(require_api_client().master_split_paths)))
 
 
 @api.dispatcher.add_method
 def refresh_master_split_paths() -> Any:
     """Refresh master split paths without running the full login workflow."""
-    if not user_logged_in:
+    if not _is_logged_in():
         raise RuntimeError("Login before calling this method")
 
     client = require_api_client()
@@ -607,7 +979,7 @@ def refresh_master_split_paths() -> Any:
             _restore_client_state(client, previous_state)
             raise
 
-    return run_job(refresh)
+    return _client_job(refresh)
 
 
 @api.dispatcher.add_method
@@ -624,7 +996,7 @@ def request_and_decrypt(url: str, method: str = "get", body: str | dict = "") ->
         Decrypted response or JSONRPCInternalError
     """
     client = require_api_client()
-    return run_job(lambda: client.request_and_decrypt(url, method, body))
+    return _client_job(lambda: client.request_and_decrypt(url, method, body))
 
 
 app = Flask(__name__)

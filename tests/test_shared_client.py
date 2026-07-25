@@ -1,17 +1,79 @@
 """Unit tests for shared client scheduled login behavior."""
 
 import logging
+import os
 import queue
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from threading import Event, Thread
 from unittest.mock import Mock, patch
 
 import pytest
 from jsonrpc.exceptions import JSONRPCDispatchException, JSONRPCInternalError
 
 import shared_client
+from api_client import AuthTransition, AuthTransitionKind
 
 
 @pytest.fixture
-def logged_in_client(monkeypatch):
+def reset_lifecycle(monkeypatch):
+    runtime = shared_client._lifecycle
+    with runtime.lock:
+        old = (
+            runtime.client,
+            runtime.authenticated,
+            deepcopy(runtime.user),
+            runtime.state,
+            runtime.error,
+            runtime.retry_until_mono,
+            runtime.failure_count,
+            runtime.last_attempt_mono,
+            runtime.last_attempt_at,
+            runtime.next_retry_at,
+            runtime.hidden_auth_failure_pending,
+            runtime.active_auth_transaction_id,
+            runtime.auth_generation,
+        )
+        runtime.client = None
+        runtime.authenticated = False
+        runtime.user = None
+        runtime.state = shared_client.LifecycleState.UNINITIALIZED
+        runtime.error = None
+        runtime.retry_until_mono = 0.0
+        runtime.failure_count = 0
+        runtime.last_attempt_mono = None
+        runtime.last_attempt_at = None
+        runtime.next_retry_at = None
+        runtime.hidden_auth_failure_pending = False
+        runtime.active_auth_transaction_id = None
+        runtime.auth_generation = 0
+        shared_client._publish_snapshot_locked()
+    yield
+    with runtime.lock:
+        (
+            runtime.client,
+            runtime.authenticated,
+            runtime.user,
+            runtime.state,
+            runtime.error,
+            runtime.retry_until_mono,
+            runtime.failure_count,
+            runtime.last_attempt_mono,
+            runtime.last_attempt_at,
+            runtime.next_retry_at,
+            runtime.hidden_auth_failure_pending,
+            runtime.active_auth_transaction_id,
+            runtime.auth_generation,
+        ) = old
+        shared_client._publish_snapshot_locked()
+
+
+@pytest.fixture
+def logged_in_client(reset_lifecycle, monkeypatch):
     client = Mock()
     client.headers = {"x-session-token": "active-token", "x-app-version": "1.0"}
     client.account_info = {"userId": "current-user"}
@@ -19,9 +81,12 @@ def logged_in_client(monkeypatch):
     client.master_split_paths = ["current-path"]
     client.user_info = {"name": "current-user"}
 
-    monkeypatch.setattr(shared_client, "api_client", client)
-    monkeypatch.setattr(shared_client, "user_logged_in", True)
-    monkeypatch.setattr(shared_client, "user_info", {"name": "current-user"})
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.user = {"name": "current-user"}
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
+        shared_client._publish_snapshot_locked()
     monkeypatch.setattr(
         shared_client, "get_account_info", lambda: {"userId": "replacement-user"}
     )
@@ -55,19 +120,65 @@ def test_failed_forced_login_restores_active_session(monkeypatch, logged_in_clie
     day_change_job.resume.assert_called_once_with()
 
 
-def test_day_change_logs_queued_relogin_failure(monkeypatch, caplog):
-    monkeypatch.setattr(shared_client, "user_logged_in", True)
+def test_nested_hidden_auth_success_survives_outer_login_error(
+    monkeypatch, reset_lifecycle
+):
+    client = Mock()
+    client.headers = {"x-session-token": "old-token"}
+    client.account_info = {"userId": "old-user"}
+    client.version_info = {"dataVersion": "old-data"}
+    client.master_split_paths = ["old-path"]
+    client.user_info = {}
+
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._publish_snapshot_locked()
+    shared_client._attach_lifecycle_callback(client)
+    monkeypatch.setattr(
+        shared_client, "get_account_info", lambda: {"userId": "new-user"}
+    )
+    monkeypatch.setattr(shared_client, "day_change_job", Mock())
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+
+    def hidden_auth_then_outer_error():
+        client.headers["x-session-token"] = "new-token"
+        client.user_info = {"name": "new-user"}
+        client.lifecycle_callback(AuthTransition(1, AuthTransitionKind.ATTEMPT))
+        client.lifecycle_callback(AuthTransition(1, AuthTransitionKind.SUCCESS))
+        raise RuntimeError("ordinary outer operation failed")
+
+    client.login.side_effect = hidden_auth_then_outer_error
+
+    with pytest.raises(RuntimeError, match="ordinary outer operation failed"):
+        shared_client.login()
+
+    with shared_client._lifecycle.lock:
+        assert shared_client._lifecycle.state is shared_client.LifecycleState.READY
+        assert shared_client._lifecycle.authenticated is True
+        assert shared_client._lifecycle.user == {"name": "new-user"}
+        assert shared_client._lifecycle.failure_count == 0
+        assert shared_client._lifecycle.retry_until_mono == 0.0
+    assert client.headers["x-session-token"] == "new-token"
+    assert client.user_info == {"name": "new-user"}
+
+
+def test_day_change_logs_queued_relogin_failure(monkeypatch, caplog, reset_lifecycle):
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.client = Mock()
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
+        shared_client._publish_snapshot_locked()
     error = JSONRPCDispatchException(
         code=JSONRPCInternalError.CODE,
         message=JSONRPCInternalError.MESSAGE,
         data="daily refresh failed",
     )
 
-    with patch.object(shared_client, "run_job", side_effect=error) as run_job:
+    with patch.object(shared_client, "_client_job", side_effect=error) as client_job:
         caplog.set_level(logging.ERROR, logger=shared_client.__name__)
         shared_client.day_change_func()
 
-    run_job.assert_called_once()
+    client_job.assert_called_once()
     assert "Scheduled daily relogin failed: daily refresh failed" in caplog.text
 
 
@@ -104,9 +215,11 @@ def test_run_job_raises_serializable_dispatch_error(monkeypatch):
     assert raised.value.error.data == "api failed"
 
 
-def test_rpc_worker_error_is_returned_as_jsonrpc_error(monkeypatch):
+def test_rpc_worker_error_is_returned_as_jsonrpc_error(monkeypatch, reset_lifecycle):
     client = Mock()
-    monkeypatch.setattr(shared_client, "api_client", client)
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._publish_snapshot_locked()
     monkeypatch.setattr(shared_client, "start_scheduler", lambda: None)
     monkeypatch.setattr(shared_client.Config, "get_internal_rpc_token", lambda: "tok")
     monkeypatch.setattr(
@@ -185,12 +298,14 @@ def test_write_account_yaml_atomic_mode_0600_and_cleanup_on_failure(
     assert list(tmp_path.glob(".sharedAccount.*.tmp")) == []
 
 
-def test_account_info_rpc_returns_only_userid_and_region(monkeypatch):
+def test_account_info_rpc_returns_only_userid_and_region(monkeypatch, reset_lifecycle):
     client = Mock()
     client.account_info = {"userId": "u1", "credential": "C", "signature": "S"}
-    monkeypatch.setattr(shared_client, "api_client", client)
-    monkeypatch.setattr(shared_client, "user_logged_in", True)
-    monkeypatch.setattr(shared_client, "client_region", "jp")
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
+        shared_client._publish_snapshot_locked()
 
     result = shared_client.account_info()
 
@@ -200,22 +315,110 @@ def test_account_info_rpc_returns_only_userid_and_region(monkeypatch):
     assert "signature" not in result
 
 
-def test_fetch_master_split_rejects_unallowlisted_path(monkeypatch):
+def test_fetch_master_split_rejects_unallowlisted_path(monkeypatch, reset_lifecycle):
     client = Mock()
     client.master_split_paths = ["suite/master/valid"]
-    monkeypatch.setattr(shared_client, "api_client", client)
-    monkeypatch.setattr(shared_client, "user_logged_in", True)
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
 
-    with pytest.raises(RuntimeError, match="not in the allowlist"):
+    with pytest.raises(JSONRPCDispatchException):
         shared_client.fetch_master_split("suite/master/evil")
 
 
-def test_fetch_master_split_allowlisted_calls_client(monkeypatch):
+def test_ordinary_api_failure_preserves_ready_and_retry_gate(reset_lifecycle):
+    client = Mock()
+    client.master_split_paths = ["suite/master/valid"]
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
+        shared_client._publish_snapshot_locked()
+    before = shared_client.lifecycle_status()
+
+    with pytest.raises(JSONRPCDispatchException):
+        shared_client.fetch_master_split("suite/master/evil")
+
+    after = shared_client.lifecycle_status()
+    assert after["state"] == shared_client.LifecycleState.READY
+    assert after["ready"] is True
+    assert after["next_retry_at"] == before["next_retry_at"]
+
+
+def test_client_job_does_not_block_lifecycle_reads(reset_lifecycle, monkeypatch):
+    started = Event()
+    release = Event()
+    client = Mock()
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._publish_snapshot_locked()
+
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+
+    def blocking_job():
+        started.set()
+        assert release.wait(timeout=2)
+        return "done"
+
+    worker = Thread(target=shared_client._client_job, args=(blocking_job,))
+    worker.start()
+    assert started.wait(timeout=2)
+
+    assert shared_client.readiness()["initialized"] is True
+    assert shared_client.lifecycle_status()["initialized"] is True
+
+    release.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+
+
+def test_status_timestamps_are_utc_strings_and_retry_uses_monotonic_gate(
+    monkeypatch, reset_lifecycle
+):
+    wall_clock = datetime(2026, 7, 23, 12, 34, 56, 789000).astimezone()
+    monkeypatch.setattr(shared_client, "_utc_now", lambda: wall_clock)
+    monkeypatch.setattr(shared_client, "monotonic", lambda: 100.0)
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.mark_attempt()
+        shared_client._lifecycle.record_failure(
+            RuntimeError("auth failed"), shared_client.LifecycleState.DEGRADED
+        )
+
+    status = shared_client.lifecycle_status()
+    parsed_last = datetime.fromisoformat(
+        status["last_attempt_at"].replace("Z", "+00:00")
+    )
+    parsed_next = datetime.fromisoformat(status["next_retry_at"].replace("Z", "+00:00"))
+    assert parsed_last == wall_clock
+    assert parsed_next > parsed_last
+    assert isinstance(status["last_attempt_at"], str)
+    assert isinstance(status["next_retry_at"], str)
+    assert "100.0" not in str(status)
+
+
+def test_authentication_failure_degrades_and_sets_retry_gate(
+    monkeypatch, logged_in_client
+):
+    logged_in_client.login.side_effect = RuntimeError("authentication failed")
+    monkeypatch.setattr(shared_client, "day_change_job", Mock())
+
+    with pytest.raises(RuntimeError, match="authentication failed"):
+        shared_client.login_account(True)
+
+    status = shared_client.lifecycle_status()
+    assert status["state"] == shared_client.LifecycleState.DEGRADED
+    assert status["next_retry_at"] is not None
+
+
+def test_fetch_master_split_allowlisted_calls_client(monkeypatch, reset_lifecycle):
     client = Mock()
     client.master_split_paths = ["suite/master/valid"]
     client.call_pjsk_api.return_value = {"k": "v"}
-    monkeypatch.setattr(shared_client, "api_client", client)
-    monkeypatch.setattr(shared_client, "user_logged_in", True)
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
 
     result = shared_client.fetch_master_split("suite/master/valid")
 
@@ -230,11 +433,194 @@ def test_generic_call_pjsk_api_disabled_by_default(monkeypatch):
         shared_client.call_pjsk_api("/suite/master")
 
 
-def test_generic_call_pjsk_api_enabled_with_flag(monkeypatch):
+def test_generic_call_pjsk_api_enabled_with_flag(monkeypatch, reset_lifecycle):
     monkeypatch.setattr(shared_client.Config, "enable_unsafe_pjsk_rpc", lambda: True)
     client = Mock()
     client.call_pjsk_api.return_value = {"ok": True}
-    monkeypatch.setattr(shared_client, "api_client", client)
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._publish_snapshot_locked()
 
     result = shared_client.call_pjsk_api("/suite/master")
     assert result == {"ok": True}
+
+
+def test_mismatched_region_is_rejected(reset_lifecycle):
+    with pytest.raises(ValueError, match="Region mismatch"):
+        shared_client.init("en" if shared_client._configured_region == "jp" else "jp")
+
+
+def test_duplicate_init_is_a_noop_and_preserves_ready(monkeypatch, reset_lifecycle):
+    client = Mock()
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.user = {"name": "ready"}
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
+        shared_client._publish_snapshot_locked()
+
+    with patch.object(shared_client, "APIClient") as api_client:
+        assert shared_client._initialize_client() is True
+        api_client.assert_not_called()
+
+    assert shared_client.lifecycle_status()["ready"] is True
+    assert shared_client.lifecycle_status()["authenticated"] is True
+
+
+def test_snapshot_publication_is_one_way_after_commit(reset_lifecycle):
+    client = Mock()
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.user = {"name": "published"}
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
+        shared_client._publish_snapshot_locked()
+
+    # Mutating the compatibility snapshot cannot change authoritative state.
+    shared_client.user_logged_in = False
+    shared_client.user_info = {"name": "stale"}
+    assert shared_client.is_login() is True
+    assert shared_client.login_user_info() == {"name": "published"}
+
+
+def test_ensure_ready_backoff_and_recovery_are_serialized(monkeypatch, reset_lifecycle):
+    client = Mock()
+    client.headers = {"x-session-token": "old"}
+    client.account_info = {"userId": "u"}
+    client.version_info = {}
+    client.master_split_paths = []
+    client.user_info = {}
+    client.login.side_effect = [RuntimeError("first failure"), {"name": "recovered"}]
+    monkeypatch.setattr(shared_client, "get_account_info", lambda: {"userId": "u"})
+    monkeypatch.setattr(shared_client, "day_change_job", Mock())
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.state = shared_client.LifecycleState.DEGRADED
+        shared_client._lifecycle.retry_until_mono = 0.0
+
+    results = []
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(shared_client.ensure_ready) for _ in range(2)]
+        results = [future.result() for future in futures]
+    assert client.login.call_count == 1
+    assert any(result["attempted"] for result in results)
+
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.retry_until_mono = 0.0
+    recovered = shared_client.ensure_ready()
+    assert recovered["ready"] is True
+    assert client.login.call_count == 2
+
+
+def test_hidden_auth_callback_success_and_failure(reset_lifecycle):
+    client = Mock()
+    client.user_info = {"name": "hidden-success"}
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.state = shared_client.LifecycleState.REAUTHENTICATING
+    shared_client._api_lifecycle_transition(
+        AuthTransition(1, AuthTransitionKind.ATTEMPT)
+    )
+    shared_client._api_lifecycle_transition(
+        AuthTransition(1, AuthTransitionKind.SUCCESS)
+    )
+    assert shared_client.lifecycle_status()["ready"] is True
+    assert shared_client.user_info == {"name": "hidden-success"}
+
+    shared_client._api_lifecycle_transition(
+        AuthTransition(2, AuthTransitionKind.ATTEMPT)
+    )
+    shared_client._api_lifecycle_transition(
+        AuthTransition(2, AuthTransitionKind.FAILURE, RuntimeError("token=secret"))
+    )
+    status = shared_client.lifecycle_status()
+    assert status["state"] == shared_client.LifecycleState.DEGRADED
+    assert "secret" not in str(status["error"])
+
+
+def test_hidden_auth_callback_records_fresh_attempt_on_success_and_failure(
+    monkeypatch, reset_lifecycle
+):
+    monotonic_values = iter([10.0, 10.0, 20.0, 20.0, 20.0])
+    wall_values = iter(
+        [
+            datetime(2026, 7, 23, 12, 0, 0, tzinfo=UTC),
+            datetime(2026, 7, 23, 12, 0, 1, tzinfo=UTC),
+            datetime(2026, 7, 23, 12, 0, 2, tzinfo=UTC),
+        ]
+    )
+    monkeypatch.setattr(shared_client, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(shared_client, "_utc_now", lambda: next(wall_values))
+
+    shared_client._api_lifecycle_transition(
+        AuthTransition(1, AuthTransitionKind.ATTEMPT)
+    )
+    first = shared_client.lifecycle_status()["last_attempt_at"]
+    shared_client._api_lifecycle_transition(
+        AuthTransition(2, AuthTransitionKind.ATTEMPT)
+    )
+    shared_client._api_lifecycle_transition(
+        AuthTransition(
+            2, AuthTransitionKind.FAILURE, RuntimeError("hidden authentication failed")
+        )
+    )
+    second = shared_client.lifecycle_status()["last_attempt_at"]
+    assert first != second
+    assert shared_client._lifecycle.last_attempt_mono == 20.0
+
+
+def test_slow_failure_deadline_uses_failure_instant(monkeypatch, reset_lifecycle):
+    monotonic_values = iter([100.0, 150.0])
+    wall_values = iter(
+        [
+            datetime(2026, 7, 23, 12, 0, 0, tzinfo=UTC),
+            datetime(2026, 7, 23, 12, 0, 50, tzinfo=UTC),
+        ]
+    )
+    monkeypatch.setattr(shared_client, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(shared_client, "_utc_now", lambda: next(wall_values))
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.mark_attempt()
+        shared_client._lifecycle.record_failure(
+            RuntimeError("slow authentication failed"),
+            shared_client.LifecycleState.DEGRADED,
+        )
+    monkeypatch.setattr(shared_client, "monotonic", lambda: 150.0)
+    status = shared_client.lifecycle_status()
+    deadline = datetime.fromisoformat(status["next_retry_at"].replace("Z", "+00:00"))
+    failure_time = datetime(2026, 7, 23, 12, 0, 50, tzinfo=UTC)
+    assert deadline == failure_time + timedelta(
+        seconds=shared_client.Config.LIFECYCLE_RETRY_BASE_SECONDS
+    )
+    assert status["retry_after"] == pytest.approx(
+        shared_client.Config.LIFECYCLE_RETRY_BASE_SECONDS
+    )
+
+
+def test_scheduled_relogin_uses_lifecycle_barrier(monkeypatch, reset_lifecycle):
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = Mock()
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
+        shared_client._publish_snapshot_locked()
+    with patch.object(shared_client, "_client_job") as client_job:
+        shared_client.day_change_func()
+    client_job.assert_called_once()
+
+
+@pytest.mark.parametrize("configured", ["", "not-a-region"])
+def test_invalid_region_fails_startup_in_isolated_process(configured):
+    env = os.environ.copy()
+    env.pop("SEKAI_REGION", None)
+    if configured:
+        env["SEKAI_REGION"] = configured
+    result = subprocess.run(
+        [sys.executable, "-c", "import shared_client"],
+        cwd=str(Path(__file__).parents[1]),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "SEKAI_REGION" in (result.stderr + result.stdout)

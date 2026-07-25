@@ -9,7 +9,7 @@
 # ALLOW_INSECURE_INTERNAL_RPC / ENABLE_UNSAFE_PJSK_RPC.
 apps:
   - name: sharedApiClient-kr
-    script: uv run gunicorn --worker-class gevent --timeout 0 --bind 127.0.0.1:39393 shared_client:app
+    script: uv run gunicorn --worker-class gevent --workers 1 --timeout 0 --bind 127.0.0.1:39393 shared_client:app
     cwd: /root/sekai-client
     env:
       SEKAI_REGION: kr
