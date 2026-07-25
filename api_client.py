@@ -163,12 +163,35 @@ class APIClient:
         resulting Set-Cookie header for subsequent requests.
 
         Raises:
-            requests.RequestException: If cookie initialization fails
+            RuntimeError: If the cookie response is unsuccessful or incomplete
         """
-        r = requests.post(
-            pjsk_cookie_post_url[self.region], timeout=Config.REQUEST_TIMEOUT
-        )
-        self.headers["cookie"] = r.headers["set-cookie"]
+        try:
+            r = requests.post(
+                pjsk_cookie_post_url[self.region],
+                timeout=Config.REQUEST_TIMEOUT,
+                allow_redirects=False,
+            )
+        except requests.RequestException:
+            raise RuntimeError("Cookie initialization request failed") from None
+
+        if 300 <= r.status_code < 400:
+            raise RuntimeError(
+                f"Cookie initialization redirect refused (HTTP {r.status_code})"
+            )
+
+        try:
+            r.raise_for_status()
+        except requests.RequestException:
+            raise RuntimeError(
+                f"Cookie initialization failed (HTTP {r.status_code})"
+            ) from None
+
+        cookie = r.headers.get("set-cookie") or r.headers.get("Set-Cookie")
+        if not cookie:
+            raise RuntimeError(
+                "Cookie initialization failed: response missing Set-Cookie header"
+            )
+        self.headers["cookie"] = cookie
 
     def _encrypt_request_body(self, method: str, body: str | dict) -> bytes | None:
         if method.lower() not in ("post", "put", "patch"):
@@ -200,6 +223,7 @@ class APIClient:
             headers=self.headers,
             data=data,
             timeout=Config.REQUEST_TIMEOUT,
+            allow_redirects=False,
         )
         self.logger.debug(
             "response url=%s%s, method=%s, headers=%s, status=%s",
@@ -560,11 +584,13 @@ class APIClient:
             res_data: APIResponse = None
             try:
                 r = self._send_api_request(endpoint, method, data)
-                res_data = self._decrypt_response_data(r)
 
+                if 300 <= r.status_code < 400:
+                    raise requests.HTTPError(response=r)
+                res_data = self._decrypt_response_data(r)
                 r.raise_for_status()
                 return res_data
-            except requests.HTTPError as err:
+            except requests.HTTPError:
                 status_code = r.status_code if r is not None else "unknown"
                 self.logger.error(
                     "Request PJSK api error, endpoint=%s, method=%s, "
@@ -581,7 +607,9 @@ class APIClient:
                     attempt += 1
                     continue
 
-                raise RuntimeError(r, res_data) from err
+                raise RuntimeError(
+                    f"PJSK API request failed (HTTP {status_code})"
+                ) from None
             except requests.RequestException as err:
                 self.logger.error(
                     "Request PJSK api request exception, endpoint=%s, "
@@ -593,7 +621,7 @@ class APIClient:
                 if attempt < max_retries:
                     attempt += 1
                     continue
-                raise RuntimeError(str(err)) from err
+                raise RuntimeError("PJSK API request failed") from None
 
     def check_versions(
         self, input_ver_info: dict[str, Any] | None = None
@@ -798,6 +826,8 @@ class APIClient:
             timeout=Config.REQUEST_TIMEOUT,
             allow_redirects=False,
         )
+        if 300 <= res.status_code < 400:
+            raise RuntimeError(f"Master-data redirect refused (HTTP {res.status_code})")
         res.raise_for_status()
 
         return decrypt_msgpack(res.content)

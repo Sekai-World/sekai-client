@@ -57,6 +57,87 @@ def test_jp_403_refreshes_cookie_and_retries_without_xml_content_type(monkeypatc
     assert client._send_api_request.call_count == 2
 
 
+def test_init_cookie_checks_status_and_stores_set_cookie(monkeypatch):
+    response = Mock(status_code=200, headers={"set-cookie": "session-cookie"})
+    monkeypatch.setattr(requests, "post", Mock(return_value=response))
+
+    client = APIClient(region="jp")
+    client.init_cookie()
+
+    response.raise_for_status.assert_called_once_with()
+    assert client.headers["cookie"] == "session-cookie"
+    assert requests.post.call_args.kwargs["allow_redirects"] is False
+
+
+def test_init_cookie_missing_set_cookie_is_bounded_error(monkeypatch):
+    response = Mock(status_code=200, headers={})
+    monkeypatch.setattr(requests, "post", Mock(return_value=response))
+
+    with pytest.raises(RuntimeError, match="missing Set-Cookie"):
+        APIClient(region="jp").init_cookie()
+
+    response.raise_for_status.assert_called_once_with()
+
+
+def test_init_cookie_rejects_redirect_without_following(monkeypatch):
+    response = Mock(status_code=302, headers={"location": "https://secret.example"})
+    monkeypatch.setattr(requests, "post", Mock(return_value=response))
+
+    with pytest.raises(RuntimeError, match=r"redirect refused.*302"):
+        APIClient(region="jp").init_cookie()
+
+    response.raise_for_status.assert_not_called()
+    assert requests.post.call_args.kwargs["allow_redirects"] is False
+
+
+def test_init_cookie_request_error_does_not_expose_upstream_details(monkeypatch):
+    monkeypatch.setattr(
+        requests,
+        "post",
+        Mock(side_effect=requests.ConnectionError("upstream-secret-response")),
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        APIClient(region="jp").init_cookie()
+
+    assert str(excinfo.value) == "Cookie initialization request failed"
+    assert "upstream-secret-response" not in str(excinfo.value)
+
+
+def test_init_cookie_http_error_does_not_expose_upstream_details(monkeypatch):
+    response = Mock(status_code=500, headers={})
+    response.raise_for_status.side_effect = requests.HTTPError(
+        "upstream-secret-response"
+    )
+    monkeypatch.setattr(requests, "post", Mock(return_value=response))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        APIClient(region="jp").init_cookie()
+
+    assert "500" in str(excinfo.value)
+    assert "upstream-secret-response" not in str(excinfo.value)
+
+
+def test_call_pjsk_api_http_error_does_not_expose_response_data():
+    client = APIClient(region="jp")
+    response = Mock(status_code=500)
+    response.raise_for_status.side_effect = requests.HTTPError(
+        "upstream-secret-response", response=response
+    )
+    client._send_api_request = Mock(return_value=response)
+    client._decrypt_response_data = Mock(
+        return_value={"errorCode": "upstream-secret-error"}
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        client.call_pjsk_api("/system", retry_after_error=False)
+
+    error = str(excinfo.value)
+    assert error == "PJSK API request failed (HTTP 500)"
+    assert "upstream-secret-response" not in error
+    assert "upstream-secret-error" not in error
+
+
 def test_jp_session_error_reauthenticates_instead_of_refreshing_cookie():
     client = APIClient(region="jp")
     client.account_info = {"userId": "user"}
@@ -102,6 +183,21 @@ def test_request_and_decrypt_allows_allowlisted_master_data_url(monkeypatch):
     base = nuverse_master_data_base_url["tw"]
     url = f"{base}/master-data-60001.info"
     assert client.request_and_decrypt(url) == b"data"
+
+
+def test_request_and_decrypt_rejects_redirect_without_following(monkeypatch):
+    response = Mock(status_code=302, content=b"redirect-body")
+    monkeypatch.setattr(requests, "request", Mock(return_value=response))
+    client = APIClient(region="tw")
+
+    from utils.constants import nuverse_master_data_base_url
+
+    url = f"{nuverse_master_data_base_url['tw']}/master-data-60001.info"
+    with pytest.raises(RuntimeError, match=r"redirect refused.*302"):
+        client.request_and_decrypt(url)
+
+    assert requests.request.call_args.kwargs["allow_redirects"] is False
+    response.raise_for_status.assert_not_called()
 
 
 def test_request_and_decrypt_rejects_non_get():

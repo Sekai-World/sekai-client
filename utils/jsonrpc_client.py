@@ -5,7 +5,9 @@ Provides a simple wrapper around requests to make JSON-RPC calls
 to local sekai-client JSON-RPC servers.
 """
 
+from ipaddress import IPv6Address, ip_address
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 from jsonrpcclient.requests import request_uuid
@@ -42,14 +44,36 @@ class JSONRPCClient:
         """
         self.url = url
 
-    def _is_loopback_target(self) -> bool:
-        """Whether this client's URL points at loopback (127.0.0.1 / ::1)."""
-        from urllib.parse import urlparse
+    def _is_loopback_target(self, url: str | None = None) -> bool:
+        """Whether ``url`` points at a loopback host.
 
-        host = urlparse(self.url).hostname or ""
-        return host in ("127.0.0.1", "::1", "localhost")
+        Besides the usual names and addresses, treat IPv4-mapped IPv6
+        loopback addresses (for example ``::ffff:127.0.0.1``) as loopback.
+        This keeps the token boundary consistent across equivalent local URL
+        spellings.
+        """
+        target_url = self.url if url is None else url
+        try:
+            host = (urlparse(target_url).hostname or "").rstrip(".").lower()
+        except ValueError:
+            return False
+        if host == "localhost":
+            return True
 
-    def _build_headers(self) -> dict[str, str]:
+        try:
+            address = ip_address(host)
+        except ValueError:
+            return False
+
+        if address.is_loopback:
+            return True
+        return (
+            isinstance(address, IPv6Address)
+            and address.ipv4_mapped is not None
+            and address.ipv4_mapped.is_loopback
+        )
+
+    def _build_headers(self, url: str | None = None) -> dict[str, str]:
         """Build request headers, including the internal RPC auth token.
 
         Fails closed: if no token is configured and dev bypass is disabled,
@@ -58,17 +82,19 @@ class JSONRPCClient:
         The token is only ever sent to loopback targets, so it cannot
         leak to an external URL.
         """
+        target_url = self.url if url is None else url
         headers: dict[str, str] = {}
         token = Config.get_internal_rpc_token()
         if token:
-            if not self._is_loopback_target():
+            if not self._is_loopback_target(target_url):
                 raise RuntimeError(
-                    "Refusing to send INTERNAL_RPC_TOKEN to a non-loopback "
-                    f"URL: {self.url!r}"
+                    "Refusing to send INTERNAL_RPC_TOKEN to a non-loopback target"
                 )
             headers[INTERNAL_RPC_TOKEN_HEADER] = token
             return headers
-        if Config.allow_insecure_internal_rpc() and self._is_loopback_target():
+        if Config.allow_insecure_internal_rpc() and self._is_loopback_target(
+            target_url
+        ):
             return headers
         raise RuntimeError(
             "INTERNAL_RPC_TOKEN is not configured; cannot issue internal "
@@ -107,22 +133,40 @@ class JSONRPCClient:
         """
         request_params = tuple(params) if isinstance(params, list) else params
 
-        headers = self._build_headers()
-        r = requests.post(
-            self.url,
-            json=request_uuid(func_name, request_params),
-            headers=headers,
-            timeout=Config.REQUEST_TIMEOUT if timeout is None else timeout,
-        )
-        # Surface HTTP errors (auth rejection, 5xx) before attempting to parse.
-        r.raise_for_status()
+        # Keep authorization and transport tied to one immutable per-request
+        # target.  In particular, a dynamic token read must not observe a URL
+        # changed concurrently (or by a callback) after authorization.
+        target_url = self.url
+        headers = self._build_headers(target_url)
+        try:
+            r = requests.post(
+                target_url,
+                json=request_uuid(func_name, request_params),
+                headers=headers,
+                timeout=Config.REQUEST_TIMEOUT if timeout is None else timeout,
+                allow_redirects=False,
+            )
+        except requests.RequestException:
+            raise RuntimeError("JSON-RPC request failed") from None
+
+        status_code = r.status_code
+        if isinstance(status_code, int) and 300 <= status_code < 400:
+            raise RuntimeError(f"JSON-RPC redirect refused (HTTP {status_code})")
+
+        # Surface HTTP errors (auth rejection, 5xx) before attempting to parse,
+        # without retaining requests' URL/body-bearing exception text.
+        try:
+            r.raise_for_status()
+        except requests.RequestException:
+            raise RuntimeError(f"JSON-RPC HTTP error (HTTP {status_code})") from None
 
         try:
             payload = r.json()
-        except ValueError as err:
-            raise RuntimeError(f"Invalid JSON-RPC response: {r.text}") from err
-
-        parsed = parse(payload)
+            parsed = parse(payload)
+        except Exception:
+            # Do not include response text or parser details: either can carry
+            # upstream JSON-RPC messages, data, or credentials.
+            raise RuntimeError("Invalid JSON-RPC response") from None
 
         if isinstance(parsed, Ok):
             return parsed.result
@@ -130,14 +174,12 @@ class JSONRPCClient:
         if not isinstance(parsed, Error):
             raise RuntimeError("Batch JSON-RPC responses are not supported")
 
-        error_message = parsed.message
         error_code = getattr(parsed, "code", None)
-        error_data = getattr(parsed, "data", None)
-        if error_code is not None:
-            error_message = f"{error_code}: {error_message}"
-        if error_data is not None:
-            error_message = f"{error_message} data={error_data!r}"
-        raise RuntimeError(error_message)
+        if isinstance(error_code, int) and not isinstance(error_code, bool):
+            # Error codes are useful for callers, but never expose the
+            # upstream message or data and keep the context bounded.
+            raise RuntimeError(f"JSON-RPC error (code={str(error_code)[:32]})")
+        raise RuntimeError("JSON-RPC error")
 
     @property
     def url(self) -> str:
