@@ -330,39 +330,44 @@ def _client_job(
     def guarded() -> Any:
         with _lifecycle.lock:
             client = _lifecycle.client
-            previous = (
-                (
+            if client is not None:
+                previous = (
                     _snapshot_client_state(client),
                     deepcopy(_lifecycle.user),
                     _lifecycle.authenticated,
-                    _lifecycle.auth_generation,
                 )
-                if client is not None
-                else None
-            )
-            try:
-                return job()
-            except Exception as error:
-                if previous is not None and client is not None:
-                    auth_changed = _lifecycle.auth_generation != previous[3]
+            else:
+                previous = None
+            auth_generation = _lifecycle.auth_generation
+
+        try:
+            return job()
+        except Exception as error:
+            with _lifecycle.lock:
+                # A queued job may only restore the client it observed.  In
+                # particular, never overwrite a candidate committed by a
+                # nested initialization or authentication transition.
+                if _lifecycle.client is client and previous is not None:
+                    auth_changed = _lifecycle.auth_generation != auth_generation
                     if not auth_changed:
+                        assert client is not None
                         _restore_client_state(client, previous[0])
                         _lifecycle.user = previous[1]
                         _lifecycle.authenticated = previous[2]
-                    hidden_failure = _consume_hidden_auth_failure()
-                    if (
-                        operation
-                        in (
-                            _ClientOperation.INITIALIZATION,
-                            _ClientOperation.AUTHENTICATION,
-                            _ClientOperation.LIFECYCLE,
-                        )
-                        and _lifecycle.state is not LifecycleState.DEGRADED
-                        and not hidden_failure
-                    ):
-                        _lifecycle.record_failure(error, LifecycleState.DEGRADED)
-                    _publish_snapshot_locked()
-                raise
+                        hidden_failure = _consume_hidden_auth_failure()
+                        if (
+                            operation
+                            in (
+                                _ClientOperation.INITIALIZATION,
+                                _ClientOperation.AUTHENTICATION,
+                                _ClientOperation.LIFECYCLE,
+                            )
+                            and _lifecycle.state is not LifecycleState.DEGRADED
+                            and not hidden_failure
+                        ):
+                            _lifecycle.record_failure(error, LifecycleState.DEGRADED)
+                        _publish_snapshot_locked()
+            raise
 
     return run_job(guarded)
 
@@ -650,8 +655,9 @@ def _initialize_client() -> bool:
         if _lifecycle.region == "jp":
             candidate.init_cookie()
     except Exception as error:
-        _lifecycle.record_failure(error, LifecycleState.FAILED)
-        _publish_snapshot_locked()
+        with _lifecycle.lock:
+            _lifecycle.record_failure(error, LifecycleState.FAILED)
+            _publish_snapshot_locked()
         raise
 
     with _lifecycle.lock:

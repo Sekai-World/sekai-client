@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event, Thread
 from unittest.mock import Mock, patch
 
 import pytest
@@ -137,6 +138,7 @@ def test_nested_hidden_auth_success_survives_outer_login_error(
         shared_client, "get_account_info", lambda: {"userId": "new-user"}
     )
     monkeypatch.setattr(shared_client, "day_change_job", Mock())
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
 
     def hidden_auth_then_outer_error():
         client.headers["x-session-token"] = "new-token"
@@ -148,7 +150,7 @@ def test_nested_hidden_auth_success_survives_outer_login_error(
     client.login.side_effect = hidden_auth_then_outer_error
 
     with pytest.raises(RuntimeError, match="ordinary outer operation failed"):
-        shared_client.login_account()
+        shared_client.login()
 
     with shared_client._lifecycle.lock:
         assert shared_client._lifecycle.state is shared_client.LifecycleState.READY
@@ -213,7 +215,7 @@ def test_run_job_raises_serializable_dispatch_error(monkeypatch):
     assert raised.value.error.data == "api failed"
 
 
-def test_rpc_worker_error_is_returned_as_jsonrpc_error(monkeypatch):
+def test_rpc_worker_error_is_returned_as_jsonrpc_error(monkeypatch, reset_lifecycle):
     client = Mock()
     with shared_client._lifecycle.lock:
         shared_client._lifecycle.client = client
@@ -296,7 +298,7 @@ def test_write_account_yaml_atomic_mode_0600_and_cleanup_on_failure(
     assert list(tmp_path.glob(".sharedAccount.*.tmp")) == []
 
 
-def test_account_info_rpc_returns_only_userid_and_region(monkeypatch):
+def test_account_info_rpc_returns_only_userid_and_region(monkeypatch, reset_lifecycle):
     client = Mock()
     client.account_info = {"userId": "u1", "credential": "C", "signature": "S"}
     with shared_client._lifecycle.lock:
@@ -313,7 +315,7 @@ def test_account_info_rpc_returns_only_userid_and_region(monkeypatch):
     assert "signature" not in result
 
 
-def test_fetch_master_split_rejects_unallowlisted_path(monkeypatch):
+def test_fetch_master_split_rejects_unallowlisted_path(monkeypatch, reset_lifecycle):
     client = Mock()
     client.master_split_paths = ["suite/master/valid"]
     with shared_client._lifecycle.lock:
@@ -342,6 +344,33 @@ def test_ordinary_api_failure_preserves_ready_and_retry_gate(reset_lifecycle):
     assert after["state"] == shared_client.LifecycleState.READY
     assert after["ready"] is True
     assert after["next_retry_at"] == before["next_retry_at"]
+
+
+def test_client_job_does_not_block_lifecycle_reads(reset_lifecycle, monkeypatch):
+    started = Event()
+    release = Event()
+    client = Mock()
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._publish_snapshot_locked()
+
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+
+    def blocking_job():
+        started.set()
+        assert release.wait(timeout=2)
+        return "done"
+
+    worker = Thread(target=shared_client._client_job, args=(blocking_job,))
+    worker.start()
+    assert started.wait(timeout=2)
+
+    assert shared_client.readiness()["initialized"] is True
+    assert shared_client.lifecycle_status()["initialized"] is True
+
+    release.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
 
 
 def test_status_timestamps_are_utc_strings_and_retry_uses_monotonic_gate(
@@ -382,7 +411,7 @@ def test_authentication_failure_degrades_and_sets_retry_gate(
     assert status["next_retry_at"] is not None
 
 
-def test_fetch_master_split_allowlisted_calls_client(monkeypatch):
+def test_fetch_master_split_allowlisted_calls_client(monkeypatch, reset_lifecycle):
     client = Mock()
     client.master_split_paths = ["suite/master/valid"]
     client.call_pjsk_api.return_value = {"k": "v"}
@@ -404,7 +433,7 @@ def test_generic_call_pjsk_api_disabled_by_default(monkeypatch):
         shared_client.call_pjsk_api("/suite/master")
 
 
-def test_generic_call_pjsk_api_enabled_with_flag(monkeypatch):
+def test_generic_call_pjsk_api_enabled_with_flag(monkeypatch, reset_lifecycle):
     monkeypatch.setattr(shared_client.Config, "enable_unsafe_pjsk_rpc", lambda: True)
     client = Mock()
     client.call_pjsk_api.return_value = {"ok": True}
