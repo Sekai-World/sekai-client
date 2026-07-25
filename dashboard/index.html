@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sekai Service Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17242b;
+      --muted: #65747c;
+      --paper: #f1f4f2;
+      --surface: #ffffff;
+      --line: #d8e0dc;
+      --teal: #087865;
+      --teal-dark: #055d4e;
+      --amber: #a55a08;
+      --red: #b22b24;
+      --blue: #1c5f8d;
+      --shadow: 0 18px 45px rgba(30, 52, 46, .08);
+      font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(90deg, rgba(8, 120, 101, .035) 1px, transparent 1px) 0 0 / 36px 36px,
+        linear-gradient(rgba(8, 120, 101, .035) 1px, transparent 1px) 0 0 / 36px 36px,
+        var(--paper);
+      color: var(--ink);
+    }
+    button, input { font: inherit; }
+    button {
+      min-height: 42px;
+      border: 1px solid #b9c6c0;
+      border-radius: 8px;
+      padding: 9px 14px;
+      background: var(--surface);
+      color: var(--ink);
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform .16s ease, box-shadow .16s ease, background .16s ease, opacity .16s ease;
+    }
+    button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(25, 48, 41, .12); }
+    button:focus-visible, input:focus-visible { outline: 3px solid rgba(28, 95, 141, .28); outline-offset: 2px; }
+    button:disabled { cursor: wait; opacity: .5; }
+    button.primary { border-color: var(--teal); background: var(--teal); color: #fff; }
+    button.primary:hover:not(:disabled) { background: var(--teal-dark); }
+    button.danger { border-color: #e2b5b1; color: #92251f; background: #fffafa; }
+    button.danger-strong { border-color: var(--red); background: var(--red); color: #fff; }
+    button.quiet { min-height: 36px; padding: 6px 10px; color: var(--muted); }
+    .masthead {
+      border-top: 5px solid var(--teal);
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, .88);
+      backdrop-filter: blur(12px);
+    }
+    header, main { width: min(1240px, 100%); margin: 0 auto; padding: 24px; }
+    header { display: grid; grid-template-columns: minmax(260px, 1fr) auto; gap: 26px; align-items: center; }
+    .eyebrow { margin-bottom: 3px; color: var(--teal); font: 800 11px/1.2 "SFMono-Regular", Consolas, monospace; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { margin: 0; font: 700 clamp(25px, 3vw, 38px)/1.05 "Avenir Next Condensed", "Arial Narrow", sans-serif; letter-spacing: -.025em; }
+    .toolbar { display: flex; gap: 9px; align-items: end; flex-wrap: wrap; justify-content: flex-end; }
+    .token-field { display: grid; grid-template-columns: auto auto; gap: 5px 10px; align-items: center; }
+    .token-field label { grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-weight: 700; }
+    input[type="password"], input[type="text"] {
+      width: min(250px, 60vw);
+      min-height: 42px;
+      border: 1px solid #b9c6c0;
+      border-radius: 8px;
+      padding: 9px 11px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .remember { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .remember input { accent-color: var(--teal); }
+    main { padding-top: 28px; padding-bottom: 56px; }
+    .notice {
+      display: grid;
+      grid-template-columns: 10px 1fr;
+      gap: 12px;
+      align-items: center;
+      min-height: 58px;
+      margin-bottom: 20px;
+      padding: 12px 15px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, .82);
+      box-shadow: var(--shadow);
+    }
+    .notice-dot { width: 10px; height: 10px; border-radius: 50%; background: #839089; }
+    .notice[data-kind="progress"] .notice-dot { background: var(--blue); animation: pulse 1.2s ease-in-out infinite; }
+    .notice[data-kind="success"] .notice-dot { background: var(--teal); }
+    .notice[data-kind="error"] .notice-dot { background: var(--red); }
+    .notice-title { font-size: 14px; font-weight: 800; }
+    .notice-detail { margin-top: 1px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .region { margin: 0 0 20px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+    .region-head { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding: 17px 18px; border-bottom: 1px solid var(--line); background: #fbfcfb; }
+    .region-identity { min-width: 0; }
+    .region-kicker { margin-bottom: 3px; color: var(--muted); font: 700 10px/1.2 "SFMono-Regular", Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    .region-title { display: flex; gap: 9px; align-items: center; margin: 0; font-size: 20px; overflow-wrap: anywhere; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .service { position: relative; min-width: 0; padding: 18px; border-right: 1px solid var(--line); }
+    .service:last-child { border-right: 0; }
+    .service::before { position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--state-color, #87928d); content: ""; }
+    .service-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
+    .type { color: var(--muted); font: 700 10px/1.2 "SFMono-Regular", Consolas, monospace; letter-spacing: .09em; text-transform: uppercase; }
+    .name { margin-top: 4px; font-weight: 750; overflow-wrap: anywhere; }
+    .pill { flex: 0 0 auto; border-radius: 999px; padding: 4px 9px; background: var(--state-bg, #edf0ee); color: var(--state-color, #59655f); font-size: 11px; font-weight: 800; white-space: nowrap; }
+    .state-healthy { --state-color: #08715a; --state-bg: #dcf4ea; }
+    .state-degraded { --state-color: #94600c; --state-bg: #fff0cb; }
+    .state-probe_failed { --state-color: #a4470a; --state-bg: #ffe7d2; }
+    .state-offline, .state-missing { --state-color: #a62b24; --state-bg: #fde3e0; }
+    .state-restarting { --state-color: #1c5f8d; --state-bg: #dfeef8; }
+    .state-unknown { --state-color: #59655f; --state-bg: #edf0ee; }
+    .meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 17px; }
+    .metric { padding: 8px 9px; border-radius: 7px; background: #f4f6f5; }
+    .metric-label { display: block; color: var(--muted); font: 700 9px/1.2 "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .metric-value { display: block; margin-top: 3px; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+    .probe { margin: -5px 0 15px; color: var(--muted); font-size: 12px; }
+    .errors { margin: 14px 0 0; border: 1px solid #efd6d3; border-radius: 8px; background: #fff8f7; overflow: hidden; }
+    .errors summary { padding: 9px 10px; color: #8f2f29; font-size: 12px; font-weight: 800; cursor: pointer; }
+    pre { max-height: 150px; margin: 0; padding: 10px; border-top: 1px solid #efd6d3; overflow: auto; color: #64221e; font: 11px/1.55 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .empty { padding: 54px 20px; border: 1px dashed #b9c6c0; border-radius: 12px; background: rgba(255,255,255,.65); text-align: center; color: var(--muted); }
+    dialog { width: min(520px, calc(100% - 28px)); padding: 0; border: 0; border-radius: 14px; color: var(--ink); box-shadow: 0 28px 90px rgba(20, 35, 31, .3); }
+    dialog::backdrop { background: rgba(18, 31, 28, .58); backdrop-filter: blur(3px); }
+    .dialog-body { padding: 24px; }
+    .dialog-label { color: var(--red); font: 800 10px/1.2 "SFMono-Regular", Consolas, monospace; letter-spacing: .13em; text-transform: uppercase; }
+    dialog h2 { margin: 6px 0 10px; font-size: 23px; }
+    .dialog-copy { margin: 0; color: var(--muted); line-height: 1.55; }
+    .affected { margin: 16px 0; padding: 12px 12px 12px 30px; border-radius: 8px; background: #f3f5f4; font-size: 13px; line-height: 1.7; }
+    .confirm-field { display: grid; gap: 6px; margin-top: 17px; color: var(--muted); font-size: 12px; font-weight: 700; }
+    .confirm-field input { width: 100%; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 15px 24px; border-top: 1px solid var(--line); background: #f7f8f7; }
+    @keyframes pulse { 50% { transform: scale(1.45); opacity: .45; } }
+    @media (max-width: 900px) {
+      header { grid-template-columns: 1fr; }
+      .toolbar { justify-content: flex-start; }
+      .grid { grid-template-columns: 1fr; }
+      .service { border-right: 0; border-bottom: 1px solid var(--line); }
+      .service:last-child { border-bottom: 0; }
+    }
+    @media (max-width: 560px) {
+      header, main { padding-left: 15px; padding-right: 15px; }
+      .toolbar, .token-field { width: 100%; }
+      .token-field { grid-template-columns: 1fr auto; }
+      .token-field input[type="password"] { width: 100%; }
+      .toolbar > button { flex: 1 1 auto; }
+      .region-head { align-items: stretch; flex-direction: column; }
+      .region-head button { width: 100%; }
+      .meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .dialog-actions { flex-direction: column-reverse; }
+      .dialog-actions button { width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="masthead">
+    <header>
+      <div>
+        <div class="eyebrow">Operations / live services</div>
+        <h1>Sekai Service Dashboard</h1>
+      </div>
+      <div class="toolbar" aria-label="Dashboard controls">
+        <div class="token-field">
+          <label for="token">API token</label>
+          <input id="token" type="password" placeholder="Enter token" autocomplete="off" spellcheck="false">
+          <label class="remember"><input id="rememberToken" type="checkbox"> Remember this device</label>
+        </div>
+        <button id="saveToken">Save token</button>
+        <button id="clearToken" class="quiet">Clear token</button>
+        <button id="refresh" class="primary">Refresh status</button>
+      </div>
+    </header>
+  </div>
+  <main>
+    <div id="notice" class="notice" data-kind="progress" role="status" aria-live="polite" aria-atomic="true">
+      <span class="notice-dot" aria-hidden="true"></span>
+      <div><div id="noticeTitle" class="notice-title">Loading status</div><div id="noticeDetail" class="notice-detail">Connecting to the dashboard API.</div></div>
+    </div>
+    <div id="app"></div>
+  </main>
+
+  <dialog id="confirmDialog" aria-labelledby="dialogTitle" aria-describedby="dialogCopy">
+    <div class="dialog-body">
+      <div class="dialog-label" id="dialogLabel">Restart confirmation</div>
+      <h2 id="dialogTitle">Confirm restart</h2>
+      <p id="dialogCopy" class="dialog-copy"></p>
+      <ul id="affectedServices" class="affected"></ul>
+      <label id="confirmField" class="confirm-field" hidden>
+        <span id="confirmHint"></span>
+        <input id="confirmInput" type="text" autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+    <div class="dialog-actions">
+      <button id="cancelRestart">Cancel</button>
+      <button id="confirmRestart" class="danger-strong">Restart service</button>
+    </div>
+  </dialog>
+
+  <script>
+    "use strict";
+
+    const TOKEN_KEY = "sekaiDashboardToken";
+    const app = document.getElementById("app");
+    const notice = document.getElementById("notice");
+    const noticeTitle = document.getElementById("noticeTitle");
+    const noticeDetail = document.getElementById("noticeDetail");
+    const tokenInput = document.getElementById("token");
+    const rememberToken = document.getElementById("rememberToken");
+    const refreshButton = document.getElementById("refresh");
+    const dialog = document.getElementById("confirmDialog");
+    const dialogTitle = document.getElementById("dialogTitle");
+    const dialogCopy = document.getElementById("dialogCopy");
+    const affectedServices = document.getElementById("affectedServices");
+    const confirmField = document.getElementById("confirmField");
+    const confirmHint = document.getElementById("confirmHint");
+    const confirmInput = document.getElementById("confirmInput");
+    const confirmRestart = document.getElementById("confirmRestart");
+
+    const stateDetails = Object.freeze({
+      healthy: {label: "Healthy", description: "Running normally"},
+      degraded: {label: "Degraded", description: "Running with issues"},
+      probe_failed: {label: "Probe failed", description: "Health check did not respond"},
+      offline: {label: "Offline", description: "Service is not running"},
+      missing: {label: "Missing", description: "Service was not found"},
+      restarting: {label: "Restarting", description: "Restart is in progress"}
+    });
+    const busyServices = new Set();
+    const busyRegions = new Set();
+    let latestData = null;
+    let refreshInProgress = false;
+    let pendingConfirmation = null;
+
+    function loadToken() {
+      const sessionToken = sessionStorage.getItem(TOKEN_KEY);
+      const rememberedToken = localStorage.getItem(TOKEN_KEY);
+      if (sessionToken !== null) {
+        tokenInput.value = sessionToken;
+        rememberToken.checked = false;
+      } else if (rememberedToken !== null) {
+        tokenInput.value = rememberedToken;
+        rememberToken.checked = true;
+      }
+    }
+
+    function setNotice(kind, title, detail) {
+      notice.dataset.kind = kind;
+      noticeTitle.textContent = title;
+      noticeDetail.textContent = detail || "";
+    }
+
+    function headers() {
+      return {"x-api-token": tokenInput.value, "content-type": "application/json"};
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {...options, headers: headers()});
+      let body;
+      try {
+        body = await response.json();
+      } catch (_error) {
+        throw new Error(response.ok ? "The server returned an unreadable response." : `Request failed (${response.status}).`);
+      }
+      if (!response.ok) throw new Error(body.message || body.error || response.statusText || `Request failed (${response.status}).`);
+      return body;
+    }
+
+    function element(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = String(text);
+      return node;
+    }
+
+    function normalizedState(value) {
+      return Object.hasOwn(stateDetails, value) ? value : "unknown";
+    }
+
+    // Prefer the dashboard state contract. The fallback keeps this page usable
+    // while older API processes are still returning status/ok fields.
+    function serviceState(service) {
+      if (Object.hasOwn(stateDetails, service.state)) return service.state;
+      if (service.status === "missing") return "missing";
+      if (service.status !== "online") return "offline";
+      if (service.probe && service.probe.ok === false) return "probe_failed";
+      if ((service.logs?.errorCount || 0) > 0 || service.ok === false) return "degraded";
+      return "healthy";
+    }
+
+    function regionState(regionData) {
+      if (Object.hasOwn(stateDetails, regionData.state)) return regionData.state;
+      const services = regionData && typeof regionData.services === "object" && regionData.services !== null
+        ? Object.values(regionData.services) : [];
+      const states = services.map(serviceState);
+      if (states.includes("restarting")) return "restarting";
+      if (states.includes("offline") || states.includes("missing")) return "offline";
+      if (states.includes("probe_failed")) return "probe_failed";
+      if (states.includes("degraded")) return "degraded";
+      return states.length ? "healthy" : "unknown";
+    }
+
+    function statePill(value) {
+      const state = normalizedState(value);
+      const pill = element("span", `pill state-${state}`, stateDetails[state]?.label || "Status unavailable");
+      pill.title = stateDetails[state]?.description || "The server returned an unsupported state.";
+      return pill;
+    }
+
+    function metric(label, value) {
+      const item = element("div", "metric");
+      item.append(element("span", "metric-label", label), element("span", "metric-value", value));
+      return item;
+    }
+
+    function displayNumber(value, suffix = "") {
+      return typeof value === "number" && Number.isFinite(value) ? `${value}${suffix}` : "—";
+    }
+
+    function serviceKey(region, type) { return `${region}\u0000${type}`; }
+
+    function serviceCard(region, service) {
+      const state = serviceState(service);
+      const card = element("section", `service state-${state}`);
+      const head = element("div", "service-head");
+      const identity = element("div");
+      identity.append(element("div", "type", service.type || "Service"), element("div", "name", service.name || "Unnamed service"));
+      head.append(identity, statePill(state));
+
+      const meta = element("div", "meta");
+      const memory = typeof service.memory === "number" ? `${Math.round(service.memory / 1024 / 1024)} MB` : "—";
+      meta.append(
+        metric("PID", displayNumber(service.pid)),
+        metric("CPU", displayNumber(service.cpu, "%")),
+        metric("Memory", memory),
+        metric("Restarts", displayNumber(service.restartCount))
+      );
+      card.append(head, meta);
+
+      if (service.probe) {
+        const probeState = state === "probe_failed" ? "Health check failed" : "Health check available";
+        card.append(element("div", "probe", probeState));
+      }
+
+      const restart = element("button", "danger", "Restart service");
+      restart.type = "button";
+      restart.dataset.role = "service-restart";
+      restart.dataset.region = String(region);
+      restart.dataset.service = String(service.type || "");
+      restart.addEventListener("click", () => openServiceConfirmation(region, service));
+      card.append(restart);
+
+      const errors = Array.isArray(service.logs?.recentErrors) ? service.logs.recentErrors : [];
+      if (errors.length) {
+        const details = element("details", "errors");
+        details.append(element("summary", "", `Recent error logs (${errors.length})`));
+        const log = element("pre");
+        errors.forEach((error, index) => {
+          if (index) log.append(document.createTextNode("\n"));
+          log.append(document.createTextNode(String(error)));
+        });
+        details.append(log);
+        card.append(details);
+      }
+      return card;
+    }
+
+    function render(data) {
+      latestData = data;
+      const fragment = document.createDocumentFragment();
+      const regions = data && typeof data.regions === "object" && data.regions !== null ? Object.entries(data.regions) : [];
+      if (!regions.length) fragment.append(element("div", "empty", "No service regions were returned."));
+
+      regions.forEach(([region, regionData]) => {
+        const section = element("section", "region");
+        const head = element("div", "region-head");
+        const identity = element("div", "region-identity");
+        const title = element("h2", "region-title");
+        title.append(statePill(regionState(regionData)), document.createTextNode(String(region)));
+        identity.append(element("div", "region-kicker", "Region"), title);
+
+        const regionRestart = element("button", "danger", "Restart region");
+        regionRestart.type = "button";
+        regionRestart.dataset.role = "region-restart";
+        regionRestart.dataset.region = String(region);
+        regionRestart.addEventListener("click", () => openRegionConfirmation(region, regionData));
+        head.append(identity, regionRestart);
+
+        const grid = element("div", "grid");
+        const services = regionData && typeof regionData.services === "object" && regionData.services !== null
+          ? Object.values(regionData.services) : [];
+        services.forEach(service => grid.append(serviceCard(region, service)));
+        section.append(head, grid);
+        fragment.append(section);
+      });
+      app.replaceChildren(fragment);
+      updateDisabledControls();
+    }
+
+    function updateDisabledControls() {
+      refreshButton.disabled = refreshInProgress;
+      app.querySelectorAll("button[data-role]").forEach(button => {
+        const region = button.dataset.region;
+        if (button.dataset.role === "region-restart") {
+          button.disabled = busyRegions.has(region) || Array.from(busyServices).some(key => key.startsWith(`${region}\u0000`));
+        } else {
+          button.disabled = busyRegions.has(region) || busyServices.has(serviceKey(region, button.dataset.service));
+        }
+      });
+    }
+
+    async function refresh(options = {}) {
+      if (refreshInProgress) return;
+      refreshInProgress = true;
+      updateDisabledControls();
+      if (!options.afterRestart) setNotice("progress", "Refreshing status", "Request in progress.");
+      try {
+        const data = await api("/dashboard/api/status");
+        render(data);
+        const updated = Number(data.updatedAt) * 1000;
+        const timestamp = Number.isFinite(updated) && updated > 0 ? new Date(updated).toLocaleString() : "just now";
+        if (!options.afterRestart) setNotice("success", "Status refreshed", `Updated ${timestamp}.`);
+        return true;
+      } catch (error) {
+        const prefix = options.afterRestart ? "Restart succeeded, but status refresh failed" : "Status refresh failed";
+        setNotice("error", "refresh_failed", `${prefix}: ${error.message}`);
+        return false;
+      } finally {
+        refreshInProgress = false;
+        updateDisabledControls();
+      }
+    }
+
+    function resetDialog() {
+      affectedServices.replaceChildren();
+      confirmInput.value = "";
+      confirmField.hidden = true;
+      confirmRestart.disabled = false;
+      pendingConfirmation = null;
+    }
+
+    function appendAffected(services) {
+      services.forEach(label => affectedServices.append(element("li", "", label)));
+      affectedServices.hidden = services.length === 0;
+    }
+
+    function openServiceConfirmation(region, service) {
+      resetDialog();
+      const serviceLabel = service.name || service.type || "Unnamed service";
+      dialogTitle.textContent = "Restart one service?";
+      dialogCopy.textContent = `This restarts ${serviceLabel} in region ${region}. It may be briefly unavailable.`;
+      appendAffected([`${region} / ${service.type || "service"} / ${serviceLabel}`]);
+      confirmRestart.textContent = "Restart service";
+      pendingConfirmation = {kind: "service", region, serviceType: String(service.type || ""), serviceLabel};
+      dialog.showModal();
+    }
+
+    function openRegionConfirmation(region, regionData) {
+      resetDialog();
+      const services = regionData && typeof regionData.services === "object" && regionData.services !== null
+        ? Object.values(regionData.services) : [];
+      dialogTitle.textContent = `Restart region ${region}?`;
+      dialogCopy.textContent = "This restarts every service listed below and may interrupt the entire region.";
+      appendAffected(services.map(service => `${service.type || "service"} — ${service.name || "Unnamed service"}`));
+      confirmField.hidden = false;
+      confirmHint.textContent = `Type ${region} to confirm.`;
+      confirmInput.placeholder = String(region);
+      confirmRestart.textContent = "Restart all listed services";
+      confirmRestart.disabled = true;
+      pendingConfirmation = {kind: "region", region, services};
+      dialog.showModal();
+      confirmInput.focus();
+    }
+
+    confirmInput.addEventListener("input", () => {
+      confirmRestart.disabled = !pendingConfirmation || pendingConfirmation.kind !== "region" || confirmInput.value !== String(pendingConfirmation.region);
+    });
+    document.getElementById("cancelRestart").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("close", resetDialog);
+
+    confirmRestart.addEventListener("click", async () => {
+      const action = pendingConfirmation;
+      if (!action) return;
+      dialog.close();
+      if (action.kind === "service") await restartService(action);
+      else await restartRegion(action);
+    });
+
+    async function restartService(action) {
+      const key = serviceKey(action.region, action.serviceType);
+      if (busyServices.has(key) || busyRegions.has(action.region)) return;
+      busyServices.add(key);
+      updateDisabledControls();
+      setNotice("progress", "Restart in progress", `Restarting ${action.serviceLabel} in region ${action.region}.`);
+      try {
+        const result = await api(`/dashboard/api/regions/${encodeURIComponent(action.region)}/services/${encodeURIComponent(action.serviceType)}/restart`, {method: "POST"});
+        if (result.restartStatus === "refresh_failed") {
+          setNotice("error", "refresh_failed", result.message || `Restart completed, but ${action.serviceLabel} health could not be confirmed.`);
+          await refresh({afterRestart: true});
+          return;
+        }
+        setNotice("success", "Restart succeeded", `${action.serviceLabel} in region ${action.region} restarted.`);
+        await refresh({afterRestart: true});
+      } catch (error) {
+        setNotice("error", "restart_failed", `Could not restart ${action.serviceLabel} in region ${action.region}: ${error.message}`);
+      } finally {
+        busyServices.delete(key);
+        updateDisabledControls();
+      }
+    }
+
+    async function restartRegion(action) {
+      if (busyRegions.has(action.region)) return;
+      busyRegions.add(action.region);
+      updateDisabledControls();
+      setNotice("progress", "Region restart in progress", `Restarting ${action.services.length} services in region ${action.region}.`);
+      try {
+        const result = await api(`/dashboard/api/regions/${encodeURIComponent(action.region)}/restart`, {method: "POST"});
+        if (result.restartStatus === "refresh_failed") {
+          setNotice("error", "refresh_failed", `Region restart completed, but one or more service health checks could not be confirmed.`);
+          await refresh({afterRestart: true});
+          return;
+        }
+        setNotice("success", "Region restart succeeded", `All requested services in region ${action.region} restarted.`);
+        await refresh({afterRestart: true});
+      } catch (error) {
+        setNotice("error", "restart_failed", `Could not restart region ${action.region}: ${error.message}`);
+      } finally {
+        busyRegions.delete(action.region);
+        updateDisabledControls();
+      }
+    }
+
+    document.getElementById("saveToken").addEventListener("click", () => {
+      const token = tokenInput.value;
+      if (rememberToken.checked) {
+        localStorage.setItem(TOKEN_KEY, token);
+        sessionStorage.removeItem(TOKEN_KEY);
+        setNotice("success", "Token saved", "This device will remember the token after the browser closes.");
+      } else {
+        sessionStorage.setItem(TOKEN_KEY, token);
+        localStorage.removeItem(TOKEN_KEY);
+        setNotice("success", "Token saved for this session", "The token will be removed when this browser session ends.");
+      }
+    });
+
+    document.getElementById("clearToken").addEventListener("click", () => {
+      sessionStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(TOKEN_KEY);
+      tokenInput.value = "";
+      rememberToken.checked = false;
+      setNotice("success", "Token cleared", "Saved dashboard credentials were removed from this browser.");
+      tokenInput.focus();
+    });
+
+    refreshButton.addEventListener("click", refresh);
+    loadToken();
+    refresh();
+  </script>
+</body>
+</html>

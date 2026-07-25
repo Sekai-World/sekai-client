@@ -1,0 +1,58 @@
+# PM2 deployment templates
+
+Production currently uses one PM2 YAML file per process under `/root/pm2`.
+The files in `examples/` mirror that layout while keeping credentials out of
+Git.
+
+## Rendering a template
+
+Each sensitive value is an environment placeholder such as
+`${INTERNAL_RPC_TOKEN}`. Export the required variables in a trusted shell, then
+render a template with `envsubst` into `/root/pm2`:
+
+```bash
+umask 077
+envsubst < deployment/pm2/examples/sharedApiClientJP.yaml.example \
+  > /root/pm2/sharedApiClientJP.yaml
+```
+
+Render only the files being deployed. Validate the generated YAML without
+printing secret values, then start or reload that file explicitly:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+import yaml
+
+for path in Path("/root/pm2").glob("*.yaml"):
+    yaml.safe_load(path.read_text())
+    print(f"valid: {path.name}")
+PY
+
+pm2 startOrReload /root/pm2/sharedApiClientJP.yaml --update-env
+```
+
+Do not commit rendered YAML files. Keep `/root/pm2/*.yaml` mode `0600` because
+they contain expanded credentials.
+
+## Security requirements
+
+- Use the same non-empty `INTERNAL_RPC_TOKEN` for all formal shared clients,
+  check-update workers, event trackers, and the public API.
+- The standalone `checkUpdate-cn` process does not use internal RPC and must not
+  receive `INTERNAL_RPC_TOKEN`.
+- `API_TOKEN` belongs only to the public API/Dashboard process.
+- `STRAPI_TOKEN` belongs only to the JP check-update process.
+- Do not set `ALLOW_INSECURE_INTERNAL_RPC` or `ENABLE_UNSAFE_PJSK_RPC` in
+  production.
+- Never embed a GitHub personal access token in `REMOTE_GIT_BASE_URL`; use an
+  SSH deploy key or a credential helper.
+
+## Why YAML is retained
+
+The per-process YAML layout matches the current operational deployment and
+allows individual services to be updated independently. A single
+`ecosystem.config.js` would reduce duplication, but it would also be a deployment
+migration rather than a documentation-only change. Migrate only after all
+per-region settings are modeled and the generated process definitions are
+compared with the running PM2 environment.

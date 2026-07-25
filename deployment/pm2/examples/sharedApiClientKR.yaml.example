@@ -1,0 +1,23 @@
+# One-process-per-file PM2 YAML template for sharedApiClient-kr.
+#
+# Generate a real deployment file with envsubst, e.g.:
+#   export INTERNAL_RPC_TOKEN='...'  AES_KEY='...'
+#   export SEKAI_KR_ACCESS_TOKEN='...'  SEKAI_KR_DEVICE_ID='...'  SEKAI_KR_SDK_OPEN_ID='...'
+#   envsubst < sharedApiClientKR.yaml.example > /root/pm2/sharedApiClientKR.yaml
+#
+# Sensitive values are ${VARIABLE_NAME} placeholders. Production does not set
+# ALLOW_INSECURE_INTERNAL_RPC / ENABLE_UNSAFE_PJSK_RPC.
+apps:
+  - name: sharedApiClient-kr
+    script: uv run gunicorn --worker-class gevent --workers 1 --timeout 0 --bind 127.0.0.1:39393 shared_client:app
+    cwd: /root/sekai-client
+    env:
+      SEKAI_REGION: kr
+      AES_IV: 6d737833495630693958453575595a31
+      AES_KEY: ${AES_KEY}
+      APP_VER: 2.8.0
+      LOGLEVEL: DEBUG
+      SEKAI_KR_ACCESS_TOKEN: ${SEKAI_KR_ACCESS_TOKEN}
+      SEKAI_KR_DEVICE_ID: ${SEKAI_KR_DEVICE_ID}
+      SEKAI_KR_SDK_OPEN_ID: ${SEKAI_KR_SDK_OPEN_ID}
+      INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}

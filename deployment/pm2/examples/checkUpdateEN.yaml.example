@@ -1,0 +1,25 @@
+# One-process-per-file PM2 YAML template for checkUpdate-en.
+#
+# Generate a real deployment file with envsubst, e.g.:
+#   export INTERNAL_RPC_TOKEN='...'  AES_KEY='...'  REMOTE_GIT_BASE_URL='https://github.com/Sekai-World'
+#   envsubst < checkUpdateEN.yaml.example > /root/pm2/checkUpdateEN.yaml
+#
+# Sensitive values are ${VARIABLE_NAME} placeholders. Production does not set
+# ALLOW_INSECURE_INTERNAL_RPC / ENABLE_UNSAFE_PJSK_RPC.
+apps:
+  - name: checkUpdate-en
+    script: uv run python check_update.py
+    cwd: /root/sekai-client
+    env:
+      SEKAI_REGION: en
+      AES_IV: 7E856C907987F8AEC6AFC0C54738FC7E
+      AES_KEY: ${AES_KEY}
+      CHECK_UPDATE_SIMPLE_MODE: "false"
+      CHECK_UPDATE_VERSIONS_URL: ""
+      ENABLE_SEKAI_UPDATE_MASTER: "true"
+      ENABLE_SEKAI_UPDATE_USER_INFO: "true"
+      GIT_FOLDER_SEKAI_MASTER_DB_DIFF: sekai-master-db-en-diff
+      JSONRPC_PORT: "39392"
+      LOGLEVEL: DEBUG
+      REMOTE_GIT_BASE_URL: https://github.com/Sekai-World
+      INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}
