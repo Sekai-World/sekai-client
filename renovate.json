@@ -2,5 +2,23 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "matchDepTypes": ["requires-python"],
+      "enabled": false
+    },
+    {
+      "matchManagers": ["pyenv"],
+      "enabled": false
+    },
+    {
+      "matchPackageNames": ["actions/checkout"],
+      "allowedVersions": "<5"
+    },
+    {
+      "matchPackageNames": ["astral-sh/setup-uv"],
+      "allowedVersions": "<8"
+    }
   ]
 }
