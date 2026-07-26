@@ -11,14 +11,6 @@
     {
       "matchManagers": ["pyenv"],
       "enabled": false
-    },
-    {
-      "matchPackageNames": ["actions/checkout"],
-      "allowedVersions": "<5"
-    },
-    {
-      "matchPackageNames": ["astral-sh/setup-uv"],
-      "allowedVersions": "<8"
     }
   ]
 }
