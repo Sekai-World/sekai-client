@@ -6,7 +6,7 @@ import pytest
 import requests
 
 import api_client
-from api_client import APIClient
+from api_client import APIClient, RetryPolicy
 
 
 def test_refresh_master_split_paths_only_applies_auth_metadata():
@@ -130,7 +130,7 @@ def test_call_pjsk_api_http_error_does_not_expose_response_data():
     )
 
     with pytest.raises(RuntimeError) as excinfo:
-        client.call_pjsk_api("/system", retry_after_error=False)
+        client.call_pjsk_api("/system", retry_policy=RetryPolicy.NEVER)
 
     error = str(excinfo.value)
     assert error == "PJSK API request failed (HTTP 500)"
@@ -152,7 +152,7 @@ def test_redirect_does_not_persist_session_token_and_is_rejected(monkeypatch):
     monkeypatch.setattr(requests, "request", request)
 
     with pytest.raises(RuntimeError, match=r"PJSK API request failed \(HTTP 302\)"):
-        client.call_pjsk_api("/system", retry_after_error=False)
+        client.call_pjsk_api("/system", retry_policy=RetryPolicy.NEVER)
 
     assert client.headers["x-session-token"] == "existing-token"
     assert request.call_args.kwargs["allow_redirects"] is False
@@ -167,6 +167,85 @@ def test_non_redirect_response_persists_session_token(monkeypatch):
     client._send_api_request("/system", "get", None)
 
     assert client.headers["x-session-token"] == "new-token"
+
+
+def test_post_network_failure_is_not_retried(monkeypatch):
+    client = APIClient(region="jp")
+    request = Mock(side_effect=requests.ConnectionError("unknown outcome"))
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(client, "_encrypt_request_body", lambda method, body: b"data")
+    monkeypatch.setattr(api_client, "sleep", Mock())
+
+    with pytest.raises(RuntimeError, match="PJSK API request failed"):
+        client.call_pjsk_api("/user", "post", {"platform": "iOS"})
+
+    assert request.call_count == 1
+
+
+def test_get_transient_failure_retries_with_same_request_id(monkeypatch):
+    client = APIClient(region="jp")
+    response = Mock(status_code=200, headers={}, content=b"")
+    response.raise_for_status.return_value = None
+    request = Mock(
+        side_effect=[requests.ConnectionError("temporary failure"), response]
+    )
+    sleep_mock = Mock()
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(api_client, "sleep", sleep_mock)
+    monkeypatch.setattr(api_client.random, "uniform", lambda low, high: 0.75)
+
+    assert client.call_pjsk_api("/system") is None
+
+    assert request.call_count == 2
+    request_ids = [
+        call.kwargs["headers"]["x-request-id"] for call in request.call_args_list
+    ]
+    assert len(set(request_ids)) == 1
+    sleep_mock.assert_called_once_with(0.75)
+
+
+def test_get_429_respects_retry_after(monkeypatch):
+    client = APIClient(region="jp")
+    limited = Mock(status_code=429, headers={"Retry-After": "2.5"}, content=b"")
+    limited.raise_for_status.side_effect = requests.HTTPError(response=limited)
+    success = Mock(status_code=200, headers={}, content=b"")
+    success.raise_for_status.return_value = None
+    request = Mock(side_effect=[limited, success])
+    sleep_mock = Mock()
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(api_client, "sleep", sleep_mock)
+
+    assert client.call_pjsk_api("/system") is None
+
+    sleep_mock.assert_called_once_with(2.5)
+    assert client.rate_limited is False
+
+
+def test_retry_after_http_date_is_supported(monkeypatch):
+    response = Mock(
+        status_code=429,
+        headers={"Retry-After": "Thu, 13 Aug 2026 12:00:05 GMT"},
+    )
+    fixed_now = api_client.datetime(2026, 8, 13, 12, 0, 0, tzinfo=api_client.UTC)
+    datetime_mock = Mock()
+    datetime_mock.now.return_value = fixed_now
+    monkeypatch.setattr(api_client, "datetime", datetime_mock)
+
+    assert APIClient._retry_after_seconds(response) == pytest.approx(5.0)
+
+
+def test_non_transient_get_400_is_not_retried(monkeypatch):
+    client = APIClient(region="jp")
+    response = Mock(status_code=400, headers={}, content=b"")
+    response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    request = Mock(return_value=response)
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(api_client, "sleep", Mock())
+
+    with pytest.raises(RuntimeError, match=r"HTTP 400"):
+        client.call_pjsk_api("/system")
+
+    assert request.call_count == 1
 
 
 def test_jp_session_error_reauthenticates_instead_of_refreshing_cookie():
