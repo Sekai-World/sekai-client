@@ -17,6 +17,13 @@ from jsonrpc.exceptions import JSONRPCDispatchException, JSONRPCInternalError
 
 import shared_client
 from api_client import AuthTransition, AuthTransitionKind
+from utils import deadline as deadline_module
+from utils.deadline import (
+    Deadline,
+    DeadlineExceeded,
+    reset_current_deadline,
+    set_current_deadline,
+)
 
 
 @pytest.fixture
@@ -606,6 +613,101 @@ def test_scheduled_relogin_uses_lifecycle_barrier(monkeypatch, reset_lifecycle):
     with patch.object(shared_client, "_client_job") as client_job:
         shared_client.day_change_func()
     client_job.assert_called_once()
+
+
+def test_expired_job_restores_client_and_lifecycle_state(monkeypatch, logged_in_client):
+    now = 100.0
+    monkeypatch.setattr(deadline_module, "monotonic", lambda: now)
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+    deadline = Deadline.after(1.0)
+    token = set_current_deadline(deadline)
+
+    def late_result():
+        nonlocal now
+        logged_in_client.headers["x-session-token"] = "late-token"
+        logged_in_client.user_info = {"name": "late-user"}
+        with shared_client._lifecycle.lock:
+            shared_client._lifecycle.user = {"name": "late-user"}
+            shared_client._lifecycle.auth_generation += 1
+            shared_client._lifecycle.state = shared_client.LifecycleState.DEGRADED
+            shared_client._publish_snapshot_locked()
+        now = 102.0
+        return {"name": "late-user"}
+
+    try:
+        with pytest.raises(DeadlineExceeded, match="deadline exceeded"):
+            shared_client._client_job(late_result)
+    finally:
+        reset_current_deadline(token)
+
+    assert logged_in_client.headers["x-session-token"] == "active-token"
+    assert logged_in_client.user_info == {"name": "current-user"}
+    with shared_client._lifecycle.lock:
+        assert shared_client._lifecycle.user == {"name": "current-user"}
+        assert shared_client._lifecycle.auth_generation == 0
+        assert shared_client._lifecycle.state is shared_client.LifecycleState.READY
+    assert shared_client.user_info == {"name": "current-user"}
+
+
+def test_expired_initialization_cannot_replace_committed_client(
+    monkeypatch, logged_in_client
+):
+    now = 200.0
+    monkeypatch.setattr(deadline_module, "monotonic", lambda: now)
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+    deadline = Deadline.after(1.0)
+    token = set_current_deadline(deadline)
+    late_client = Mock()
+
+    def late_initialization():
+        nonlocal now
+        with shared_client._lifecycle.lock:
+            shared_client._lifecycle.client = late_client
+            shared_client._lifecycle.authenticated = False
+            shared_client._lifecycle.user = None
+            shared_client._lifecycle.state = shared_client.LifecycleState.INITIALIZING
+            shared_client._publish_snapshot_locked()
+        now = 202.0
+        return True
+
+    try:
+        with pytest.raises(DeadlineExceeded, match="deadline exceeded"):
+            shared_client._client_job(
+                late_initialization, shared_client._ClientOperation.INITIALIZATION
+            )
+    finally:
+        reset_current_deadline(token)
+
+    with shared_client._lifecycle.lock:
+        assert shared_client._lifecycle.client is logged_in_client
+        assert shared_client._lifecycle.authenticated is True
+        assert shared_client._lifecycle.state is shared_client.LifecycleState.READY
+    assert shared_client.api_client is logged_in_client
+
+
+def test_expired_hidden_auth_callback_cannot_publish(monkeypatch, logged_in_client):
+    now = 300.0
+    monkeypatch.setattr(deadline_module, "monotonic", lambda: now)
+    deadline = Deadline.after(1.0)
+    token = set_current_deadline(deadline)
+    now = 302.0
+    logged_in_client.user_info = {"name": "late-user"}
+
+    try:
+        shared_client._api_lifecycle_transition(
+            AuthTransition(1, AuthTransitionKind.ATTEMPT)
+        )
+        shared_client._api_lifecycle_transition(
+            AuthTransition(1, AuthTransitionKind.SUCCESS)
+        )
+    finally:
+        reset_current_deadline(token)
+
+    with shared_client._lifecycle.lock:
+        assert shared_client._lifecycle.active_auth_transaction_id is None
+        assert shared_client._lifecycle.auth_generation == 0
+        assert shared_client._lifecycle.user == {"name": "current-user"}
+        assert shared_client._lifecycle.state is shared_client.LifecycleState.READY
 
 
 @pytest.mark.parametrize("configured", ["", "not-a-region"])
