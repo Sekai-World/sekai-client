@@ -353,8 +353,8 @@ UNINITIALIZED
 - [x] 使用指数退避、jitter 和服务端 `Retry-After`。
 - [x] 调用方放弃后，任务不得最终提交登录、session、用户或版本状态。
 - [x] 429 等待不得无限占用唯一 worker。
-- [ ] 记录队列长度、等待时间、执行时间、拒绝数和超时数。
-- [ ] 评估队列容量与快速拒绝策略，但暂不盲目增加 Gunicorn worker。
+- [x] 记录队列长度、等待时间、执行时间、拒绝数和超时数。
+- [x] 评估队列容量与快速拒绝策略，但暂不盲目增加 Gunicorn worker。
 
 ### 验收条件
 
@@ -375,6 +375,7 @@ UNINITIALIZED
 - 2026-08-13：完成 Phase 6 PR 1 代码切片。JSON-RPC client 通过内部 header 发送相对预算，shared client 在接收端转换为本机 monotonic 绝对 deadline，并让入队等待、结果等待、worker 上下文、游戏 HTTP、版本探测与现有 429 等待共享剩余预算。跨进程不传绝对时间，避免依赖时钟同步；服务端预算不超过自身 `ANSWER_QUEUE_TIMEOUT`。新增 `tests/test_deadline.py` 覆盖 monotonic 预算、timeout 截断、header、无效预算和游戏 HTTP 传播。验证：Ruff、scoped Mypy、`pytest tests/ -q`（478 passed）与 `git diff --check` 全部通过。状态提交保护、幂等策略和队列指标仍属于后续独立 PR。
 - 2026-08-13：完成 Phase 6 PR 2 代码切片。每个序列化 client job 在执行前保存完整 client/runtime 快照，返回前再次检查 deadline；迟到任务会恢复 client、session、version、user、生命周期错误/退避和 auth generation，初始化任务也不能用迟到 candidate 替换已提交 client。隐藏认证 callback 在 deadline 过期后不再发布生命周期状态。新增测试覆盖迟到普通任务、迟到初始化和迟到隐藏认证 callback。验证：Ruff、scoped Mypy、`pytest tests/ -q`（481 passed）与 `git diff --check` 全部通过。强制终止正在阻塞的线程不在边界内；任务在安全返回接缝执行回滚。
 - 2026-08-13：完成 Phase 6 PR 3 代码切片。以 `RetryPolicy.NEVER` / `IDEMPOTENT` 替代布尔重试开关；GET 默认可重试，POST/PUT/PATCH 默认不重试，避免网络结果不确定时重复写入。仅网络异常、429、临时 5xx 与既有可恢复协议响应可进入重试；同一逻辑调用保持同一 request ID。退避使用有上限的指数基数和 jitter，支持数值秒及 HTTP-date `Retry-After`，所有等待均受共同 RPC deadline 限制，429 状态通过 `finally` 清理。验证：Ruff、scoped Mypy、`pytest tests/ -q`（487 passed）与 `git diff --check` 全部通过。带幂等键的写操作仍未实现，留给远程账号服务契约。
+- 2026-08-13：完成 Phase 6 PR 4 代码切片。正式队列项使用带 deadline 与入队时间的 `QueuedJob` envelope，worker 在执行前丢弃已过期任务；保留旧 tuple 兼容测试/内部调用。新增线程安全的进程内累计指标：depth、capacity、accepted/rejected/timed-out/expired-before-start/completed、累计排队和执行秒数，并通过 lifecycle/readiness RPC 暴露无敏感信息快照。队列满返回稳定结构 `{code: queue_full, retryable: true, retry_after: 1}`，继续保持容量 1 和单 worker，不用扩 worker 掩盖串行状态约束。验证：Ruff、scoped Mypy、`pytest tests/ -q`（490 passed）与 `git diff --check` 全部通过。
 
 ### 子项 A：协作式更新周期 Deadline（已落地，独立于 RPC/队列 deadline）
 
