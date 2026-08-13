@@ -25,17 +25,24 @@ from uuid import uuid4
 
 import requests
 
-from accounts import AccountRegion, AccountRegistrationAdapter
+from accounts import (
+    AccountCredential,
+    AccountRegion,
+    AccountRegistrationAdapter,
+    JpEnCredential,
+    TwKrCredential,
+)
 from config import Config
+from game_auth import GameAuthenticationService
+from game_protocol import GameProtocolTransport
+from game_services import GameAPIService, PublicGameAPIService
 from utils.constants import (
     app_id_regions,
-    base_pjsk_api_url,
     initial_api_headers,
     nuverse_master_data_base_url,
-    pjsk_cookie_post_url,
     pjsk_region,
 )
-from utils.crypto import decrypt, decrypt_msgpack, encrypt, encrypt_msgpack
+from utils.crypto import decrypt_msgpack
 from utils.deadline import DeadlineExceeded, bounded_timeout, current_deadline
 from utils.get_app_ver import (
     get_app_ver_and_hash_en,
@@ -109,6 +116,7 @@ class APIClient:
         self._auth_transaction_id = 0
         self.region = region
         self.headers = deepcopy(initial_api_headers[region])
+        self.protocol = GameProtocolTransport(region, self.headers, logger)
         self.rate_limited = False
 
     @property
@@ -156,6 +164,8 @@ class APIClient:
         """
         self._region = data
         self.headers = deepcopy(initial_api_headers[data])
+        if hasattr(self, "protocol"):
+            self.protocol = GameProtocolTransport(data, self.headers, self.logger)
 
     @property
     def master_split_paths(self) -> list[str]:
@@ -177,42 +187,10 @@ class APIClient:
         Raises:
             RuntimeError: If the cookie response is unsuccessful or incomplete
         """
-        try:
-            r = requests.post(
-                pjsk_cookie_post_url[self.region],
-                timeout=bounded_timeout(Config.REQUEST_TIMEOUT),
-                allow_redirects=False,
-            )
-        except requests.RequestException:
-            raise RuntimeError("Cookie initialization request failed") from None
-
-        if 300 <= r.status_code < 400:
-            raise RuntimeError(
-                f"Cookie initialization redirect refused (HTTP {r.status_code})"
-            )
-
-        try:
-            r.raise_for_status()
-        except requests.RequestException:
-            raise RuntimeError(
-                f"Cookie initialization failed (HTTP {r.status_code})"
-            ) from None
-
-        cookie = r.headers.get("set-cookie") or r.headers.get("Set-Cookie")
-        if not cookie:
-            raise RuntimeError(
-                "Cookie initialization failed: response missing Set-Cookie header"
-            )
-        self.headers["cookie"] = cookie
+        self.protocol.init_cookie()
 
     def _encrypt_request_body(self, method: str, body: str | dict) -> bytes | None:
-        if method.lower() not in ("post", "put", "patch"):
-            return None
-        if isinstance(body, str):
-            return encrypt(body.encode())
-        if isinstance(body, dict):
-            return encrypt_msgpack(body)
-        raise ValueError("body type should be str or dict.")
+        return self.protocol.encrypt_request_body(method, body)
 
     def _send_api_request(
         self,
@@ -221,46 +199,10 @@ class APIClient:
         data: bytes | None,
         request_id: str | None = None,
     ) -> requests.Response:
-        self.headers["x-request-id"] = request_id or str(uuid4())
-        self.headers["content-type"] = "application/octet-stream"
-        self.logger.debug(
-            "request url=%s%s, method=%s, headers=%s",
-            base_pjsk_api_url[self.region],
-            endpoint,
-            method.lower(),
-            self.headers.items(),
-        )
-        response = requests.request(
-            method=method.lower(),
-            url=f"{base_pjsk_api_url[self.region]}{endpoint}",
-            headers=self.headers,
-            data=data,
-            timeout=bounded_timeout(Config.REQUEST_TIMEOUT),
-            allow_redirects=False,
-        )
-        self.logger.debug(
-            "response url=%s%s, method=%s, headers=%s, status=%s",
-            base_pjsk_api_url[self.region],
-            endpoint,
-            method.lower(),
-            response.headers.items(),
-            response.status_code,
-        )
-        # Never accept a session token from a refused redirect response.
-        if not 300 <= response.status_code < 400 and response.headers.get(
-            "x-session-token", None
-        ):
-            self.headers["x-session-token"] = response.headers["x-session-token"]
-        return response
+        return self.protocol.send(endpoint, method, data, request_id)
 
     def _decrypt_response_data(self, response: requests.Response) -> APIResponse:
-        content_type = response.headers.get("content-type", "")
-        if not response.content or "octet-stream" not in content_type:
-            return None
-        try:
-            return decrypt_msgpack(response.content)
-        except Exception:
-            return decrypt(response.content)
+        return self.protocol.decrypt_response(response)
 
     @staticmethod
     def _require_dict_response(response: APIResponse, endpoint: str) -> dict[str, Any]:
@@ -446,19 +388,21 @@ class APIClient:
 
     def _authenticate(self) -> dict[str, Any]:
         self.headers.pop("x-session-token", None)
+        credential: AccountCredential
         if self.region in ("jp", "en"):
-            user_id = self.account_info["userId"]
-            credential = self.account_info["credential"]
-            auth_data = self.call_pjsk_api(
-                f"/user/{user_id}/auth?refreshUpdatedResources=False",
-                "put",
-                {"credential": credential},
+            credential = JpEnCredential(
+                AccountRegion(self.region),
+                str(self.account_info["userId"]),
+                str(self.account_info["credential"]),
+                str(self.account_info["signature"]),
             )
-            auth_data = self._require_dict_response(auth_data, "/user/auth")
-            self.master_split_paths = auth_data["suiteMasterSplitPath"]
-            return auth_data
-
-        if self.region in ("cn", "tw", "kr"):
+        elif self.region in ("tw", "kr"):
+            credential = TwKrCredential(
+                AccountRegion(self.region),
+                str(self.account_info["userId"]),
+                str(self.account_info["loginInfo"]["accessToken"]),
+            )
+        elif self.region == "cn":
             access_token = self.account_info["loginInfo"]["accessToken"]
             return self._require_dict_response(
                 self.call_pjsk_api(
@@ -466,8 +410,12 @@ class APIClient:
                 ),
                 "/user/auth",
             )
+        else:
+            raise ValueError(f"Unsupported region: {self.region}")
 
-        raise ValueError(f"Unsupported region: {self.region}")
+        result = GameAuthenticationService(self).authenticate(credential)
+        self.master_split_paths = list(result.master_split_paths)
+        return result.data
 
     def _apply_auth_headers_and_version_info(self, auth_data: dict[str, Any]) -> None:
         session_token = auth_data["sessionToken"]
@@ -806,9 +754,7 @@ class APIClient:
         return self.master_split_paths
 
     def fetch_suite_user(self, update_user_info: bool = False) -> dict[str, Any]:
-        user_id = self.account_info["userId"]
-        endpoint = f"/suite/user/{user_id}"
-        res = self._require_dict_response(self.call_pjsk_api(endpoint), endpoint)
+        res = GameAPIService(self, str(self.account_info["userId"])).fetch_suite_user()
 
         if update_user_info:
             self.user_info = res
@@ -816,47 +762,34 @@ class APIClient:
         return res
 
     def fetch_user_profile(self, user_id: str) -> dict[str, Any]:
-        my_user_id = self.account_info["userId"]
-        if self.region == "jp":
-            endpoint = f"/user/{my_user_id}/{user_id}/profile"
-        else:
-            endpoint = f"/user/{user_id}/profile"
-        return self._require_dict_response(self.call_pjsk_api(endpoint), endpoint)
+        return GameAPIService(
+            self, str(self.account_info["userId"])
+        ).fetch_user_profile(self.region, user_id)
 
     def fetch_user_event_ranking(
         self, target_user_id: str, event_id: int
     ) -> dict[str, Any]:
-        user_id = self.account_info["userId"]
-        endpoint = (
-            f"/user/{user_id}/event/{event_id}/ranking?targetUserId={target_user_id}"
-        )
-        return self._require_dict_response(self.call_pjsk_api(endpoint), endpoint)
+        return GameAPIService(
+            self, str(self.account_info["userId"])
+        ).fetch_user_event_ranking(target_user_id, event_id)
 
     def fetch_information(self):
-        return self.call_pjsk_api("/information")
+        return PublicGameAPIService(self).fetch_information()
 
     def fetch_system_data(self) -> dict[str, Any]:
-        return self._require_dict_response(self.call_pjsk_api("/system"), "/system")
+        return PublicGameAPIService(self).fetch_system_data()
 
     def fetch_event_rank_first_100(self, event_id: int) -> dict[str, Any]:
-        user_id = self.account_info["userId"]
-        endpoint = f"/user/{user_id}/event/{event_id}/ranking?rankingViewType=top100"
-        return self._require_dict_response(
-            self.call_pjsk_api(endpoint),
-            endpoint,
-        )
+        return GameAPIService(
+            self, str(self.account_info["userId"])
+        ).fetch_event_rank_first_100(event_id)
 
     def fetch_event_rank_border(self, event_id: int) -> dict[str, Any]:
-        endpoint = f"/event/{event_id}/ranking-border"
-        return self._require_dict_response(self.call_pjsk_api(endpoint), endpoint)
+        return PublicGameAPIService(self).fetch_event_rank_border(event_id)
 
     def accept_agreement(self):
-        user_id = self.account_info["userId"]
-        credential = self.account_info["credential"]
-        return self.call_pjsk_api(
-            f"/user/{user_id}/rule-agreement",
-            "post",
-            {"credential": credential, "userId": 0},
+        return GameAPIService(self, str(self.account_info["userId"])).accept_agreement(
+            str(self.account_info["credential"]),
         )
 
     def fetch_master_split(self, split_path: str) -> Any:
