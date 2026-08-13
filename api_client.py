@@ -32,6 +32,7 @@ from utils.constants import (
     pjsk_region,
 )
 from utils.crypto import decrypt, decrypt_msgpack, encrypt, encrypt_msgpack
+from utils.deadline import DeadlineExceeded, bounded_timeout, current_deadline
 from utils.get_app_ver import (
     get_app_ver_and_hash_en,
     get_app_ver_and_hash_jp,
@@ -168,7 +169,7 @@ class APIClient:
         try:
             r = requests.post(
                 pjsk_cookie_post_url[self.region],
-                timeout=Config.REQUEST_TIMEOUT,
+                timeout=bounded_timeout(Config.REQUEST_TIMEOUT),
                 allow_redirects=False,
             )
         except requests.RequestException:
@@ -222,7 +223,7 @@ class APIClient:
             url=f"{base_pjsk_api_url[self.region]}{endpoint}",
             headers=self.headers,
             data=data,
-            timeout=Config.REQUEST_TIMEOUT,
+            timeout=bounded_timeout(Config.REQUEST_TIMEOUT),
             allow_redirects=False,
         )
         self.logger.debug(
@@ -293,8 +294,13 @@ class APIClient:
         if response is not None and response.status_code == 429:
             self.logger.warning("%s server hits rate limit, sleep for 60s", self.region)
             self.rate_limited = True
-            sleep(60.0)
-            self.rate_limited = False
+            try:
+                deadline = current_deadline()
+                if deadline is not None and deadline.remaining() < 60.0:
+                    raise DeadlineExceeded("Request deadline exceeded")
+                sleep(60.0)
+            finally:
+                self.rate_limited = False
             return True
 
         if response is not None and response.status_code == 426:
@@ -826,7 +832,7 @@ class APIClient:
             method,
             url,
             data=body,
-            timeout=Config.REQUEST_TIMEOUT,
+            timeout=bounded_timeout(Config.REQUEST_TIMEOUT),
             allow_redirects=False,
         )
         if 300 <= res.status_code < 400:
