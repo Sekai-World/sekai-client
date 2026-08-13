@@ -33,14 +33,21 @@ import jwt
 import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from flask import Flask, abort, request
+from flask import Flask, abort, has_request_context, request
 from jsonrpc.exceptions import JSONRPCDispatchException, JSONRPCInternalError
 from pytz import timezone
 
 from api_client import APIClient, AuthTransition, AuthTransitionKind
 from config import Config
 from logging_config import enable_log_redaction
-from utils.jsonrpc_client import INTERNAL_RPC_TOKEN_HEADER
+from utils.deadline import (
+    Deadline,
+    DeadlineExceeded,
+    current_deadline,
+    reset_current_deadline,
+    set_current_deadline,
+)
+from utils.jsonrpc_client import INTERNAL_RPC_TIMEOUT_HEADER, INTERNAL_RPC_TOKEN_HEADER
 from utils.redaction import redact_structure, redact_text
 from utils.task_queue import job_queue, start_worker
 from utils.ujsonrpcapi import api
@@ -208,8 +215,15 @@ def enqueue_job(
         the job was not enqueued and response_queue is None.
     """
     response_queue: queue.Queue[Any] = queue.Queue(maxsize=1)
+    deadline = current_deadline()
+    timeout = Config.JOB_QUEUE_TIMEOUT
+    if deadline is not None:
+        try:
+            timeout = min(timeout, deadline.require_remaining())
+        except DeadlineExceeded:
+            return None, JSONRPCInternalError(data="Request deadline exceeded")
     try:
-        job_queue.put((job, response_queue), timeout=Config.JOB_QUEUE_TIMEOUT)
+        job_queue.put((job, response_queue), timeout=timeout)
     except queue.Full:
         return None, JSONRPCInternalError(data="Job queue is full, please retry later")
     return response_queue, None
@@ -226,9 +240,15 @@ def get_answer(response_queue: queue.Queue[Any]) -> Any | JSONRPCInternalError:
         Job result, or JSONRPCInternalError if timeout or exception occurred
     """
     try:
-        res: Any = response_queue.get(timeout=Config.ANSWER_QUEUE_TIMEOUT)
+        deadline = current_deadline()
+        timeout = Config.ANSWER_QUEUE_TIMEOUT
+        if deadline is not None:
+            timeout = min(timeout, deadline.require_remaining())
+        res: Any = response_queue.get(timeout=timeout)
     except queue.Empty:
-        return JSONRPCInternalError(data="Timed out waiting for worker response")
+        return JSONRPCInternalError(data="Request deadline exceeded")
+    except DeadlineExceeded:
+        return JSONRPCInternalError(data="Request deadline exceeded")
 
     if isinstance(res, RuntimeError):
         err_data = str(res)
@@ -238,6 +258,48 @@ def get_answer(response_queue: queue.Queue[Any]) -> Any | JSONRPCInternalError:
     elif isinstance(res, Exception):
         return JSONRPCInternalError(data=str(res))
     return res
+
+
+def _new_request_deadline() -> Deadline:
+    budget = Config.ANSWER_QUEUE_TIMEOUT
+    if not has_request_context():
+        return Deadline.after(budget)
+
+    raw_budget = request.headers.get(INTERNAL_RPC_TIMEOUT_HEADER)
+    if raw_budget is None:
+        return Deadline.after(budget)
+    try:
+        parsed_budget = int(raw_budget) / 1000
+    except ValueError:
+        parsed_budget = 0
+    if parsed_budget <= 0:
+        raise JSONRPCDispatchException(
+            code=JSONRPCInternalError.CODE,
+            message=JSONRPCInternalError.MESSAGE,
+            data="Invalid request deadline",
+        )
+    return Deadline.after(min(budget, parsed_budget))
+
+
+def _await_queued_job(job: Callable[[], Any], deadline: Deadline) -> Any:
+    def deadline_guarded_job() -> Any:
+        token = set_current_deadline(deadline)
+        try:
+            deadline.require_remaining()
+            return job()
+        finally:
+            reset_current_deadline(token)
+
+    token = set_current_deadline(deadline)
+    try:
+        response_queue, err = enqueue_job(deadline_guarded_job)
+        if err is not None:
+            return err
+        if response_queue is None:
+            return JSONRPCInternalError(data="Job was not enqueued")
+        return get_answer(response_queue)
+    finally:
+        reset_current_deadline(token)
 
 
 def run_job(job: Callable[[], Any]) -> Any:
@@ -255,14 +317,7 @@ def run_job(job: Callable[[], Any]) -> Any:
     Raises:
         JSONRPCDispatchException: If the queued job failed or timed out
     """
-    response_queue, err = enqueue_job(job)
-    result: Any
-    if err is not None:
-        result = err
-    elif response_queue is None:
-        result = JSONRPCInternalError(data="Job was not enqueued")
-    else:
-        result = get_answer(response_queue)
+    result = _await_queued_job(job, _new_request_deadline())
 
     if isinstance(result, JSONRPCInternalError):
         # Redact any secret that leaked into the error payload before

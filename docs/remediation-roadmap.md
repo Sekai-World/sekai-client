@@ -345,9 +345,9 @@ UNINITIALIZED
 
 ### 任务
 
-- [ ] 为每次 RPC 创建绝对 deadline。
-- [ ] 将剩余预算传递给队列等待、HTTP 请求和 retry。
-- [ ] 保证所有重试总时间小于 RPC deadline。
+- [x] 为每次 RPC 创建绝对 deadline。
+- [x] 将剩余预算传递给队列等待、HTTP 请求和 retry。
+- [x] 保证现有重试总时间受 RPC deadline 限制。
 - [ ] 只自动重试明确幂等的操作。
 - [ ] 有副作用的操作需要幂等键，并在重试中保持同一 request ID。
 - [ ] 使用指数退避、jitter 和服务端 `Retry-After`。
@@ -372,7 +372,7 @@ UNINITIALIZED
 
 ### 执行记录
 
-- 待填写
+- 2026-08-13：完成 Phase 6 PR 1 代码切片。JSON-RPC client 通过内部 header 发送相对预算，shared client 在接收端转换为本机 monotonic 绝对 deadline，并让入队等待、结果等待、worker 上下文、游戏 HTTP、版本探测与现有 429 等待共享剩余预算。跨进程不传绝对时间，避免依赖时钟同步；服务端预算不超过自身 `ANSWER_QUEUE_TIMEOUT`。新增 `tests/test_deadline.py` 覆盖 monotonic 预算、timeout 截断、header、无效预算和游戏 HTTP 传播。验证：Ruff、scoped Mypy、`pytest tests/ -q`（478 passed）与 `git diff --check` 全部通过。状态提交保护、幂等策略和队列指标仍属于后续独立 PR。
 
 ### 子项 A：协作式更新周期 Deadline（已落地，独立于 RPC/队列 deadline）
 
