@@ -6,6 +6,8 @@ import requests
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
+from utils.deadline import bounded_timeout
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,7 +22,7 @@ def get_app_ver_qooapp(appid: str) -> str:
                 "Gecko/20100101 Firefox/108.0"
             )
         },
-        timeout=10,
+        timeout=bounded_timeout(10),
     )
     r.raise_for_status()
 
@@ -45,7 +47,7 @@ def get_app_ver_and_hash_jp() -> dict[str, Any]:
     url = "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-master/refs/heads/main/versions/current_version.json"
 
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=bounded_timeout(10))
         r.raise_for_status()
         data = r.json()
     except (requests.RequestException, ValueError) as err:
@@ -53,7 +55,7 @@ def get_app_ver_and_hash_jp() -> dict[str, Any]:
         # try to get from github repo
 
         url = "https://sekai-world.github.io/sekai-master-db-diff/versions.json"
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=bounded_timeout(10))
         r.raise_for_status()
         data = r.json()
 
@@ -67,7 +69,7 @@ def get_app_ver_and_hash_en() -> dict[str, Any]:
     url = "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-en-master/refs/heads/main/versions/current_version.json"
 
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=bounded_timeout(10))
         r.raise_for_status()
         data = r.json()
     except (requests.RequestException, ValueError) as err:
@@ -75,7 +77,7 @@ def get_app_ver_and_hash_en() -> dict[str, Any]:
         # try to get from github repo
 
         url = "https://sekai-world.github.io/sekai-master-db-en-diff/versions.json"
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=bounded_timeout(10))
         r.raise_for_status()
         data = r.json()
 

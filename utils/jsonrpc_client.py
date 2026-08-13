@@ -19,6 +19,7 @@ from config import Config
 # sekai-client processes (shared_client / check_update / event_tracker /
 # api_public_server). All such calls must run on loopback only.
 INTERNAL_RPC_TOKEN_HEADER = "x-internal-rpc-token"
+INTERNAL_RPC_TIMEOUT_HEADER = "x-internal-rpc-timeout-ms"
 
 
 class JSONRPCClient:
@@ -138,12 +139,16 @@ class JSONRPCClient:
         # changed concurrently (or by a callback) after authorization.
         target_url = self.url
         headers = self._build_headers(target_url)
+        request_timeout = Config.REQUEST_TIMEOUT if timeout is None else timeout
+        if request_timeout <= 0:
+            raise ValueError("JSON-RPC timeout must be positive")
+        headers[INTERNAL_RPC_TIMEOUT_HEADER] = str(max(1, int(request_timeout * 1000)))
         try:
             r = requests.post(
                 target_url,
                 json=request_uuid(func_name, request_params),
                 headers=headers,
-                timeout=Config.REQUEST_TIMEOUT if timeout is None else timeout,
+                timeout=request_timeout,
                 allow_redirects=False,
             )
         except requests.RequestException:
