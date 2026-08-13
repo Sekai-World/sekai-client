@@ -16,6 +16,7 @@ import pytest
 from jsonrpc.exceptions import JSONRPCDispatchException, JSONRPCInternalError
 
 import shared_client
+from accounts import AccountLease, AccountRegion, JpEnCredential
 from api_client import AuthTransition, AuthTransitionKind
 from utils import deadline as deadline_module
 from utils.deadline import (
@@ -125,6 +126,35 @@ def test_failed_forced_login_restores_active_session(monkeypatch, logged_in_clie
     assert shared_client.user_info == {"name": "current-user"}
     day_change_job.pause.assert_called_once_with()
     day_change_job.resume.assert_called_once_with()
+
+
+def test_injected_provider_lease_is_released_when_login_fails(
+    monkeypatch, logged_in_client
+):
+    lease = AccountLease(
+        "lease-new",
+        "shared-client-jp",
+        datetime.now(UTC) + timedelta(minutes=5),
+        JpEnCredential(AccountRegion.JP, "new-user", "credential", "signature"),
+    )
+    provider = Mock()
+    provider.acquire.return_value = lease
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_active_account_lease", None)
+    monkeypatch.setattr(shared_client, "day_change_job", Mock())
+    # Exercise the provider-backed compatibility entry point from login_account.
+    monkeypatch.undo()
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_active_account_lease", None)
+    monkeypatch.setattr(shared_client, "day_change_job", Mock())
+    logged_in_client.login.side_effect = RuntimeError("login failed")
+
+    with pytest.raises(RuntimeError, match="login failed"):
+        shared_client.login_account(True)
+
+    provider.acquire.assert_called_once()
+    provider.release.assert_called_once_with("lease-new")
+    assert shared_client._active_account_lease is None
 
 
 def test_nested_hidden_auth_success_survives_outer_login_error(
@@ -276,37 +306,6 @@ def test_enqueue_job_rejects_with_error_when_queue_full(monkeypatch):
         "retryable": True,
         "retry_after": 1,
     }
-
-
-def test_write_account_yaml_atomic_mode_0600_and_cleanup_on_failure(
-    monkeypatch, tmp_path
-):
-    target = tmp_path / "sharedAccount.jp.yaml"
-
-    # Happy path: temp file replaced onto target with 0600 mode.
-    shared_client._write_account_yaml_atomic(
-        str(target), {"userId": "1", "credential": "c", "signature": "s"}
-    )
-    assert target.exists()
-    assert oct(target.stat().st_mode & 0o777) == "0o600"
-    content = target.read_text()
-    assert "1" in content  # never asserts the secret values leak in tests
-    assert "credential" in content
-
-    # Failure path: exception during dump leaves no temp file behind.
-    leftover = list(tmp_path.glob(".sharedAccount.*.tmp"))
-    assert leftover == []
-
-    def boom(*args, **kwargs):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(shared_client, "yaml", type("Y", (), {"safe_dump": boom})())
-    with pytest.raises(OSError):
-        shared_client._write_account_yaml_atomic(
-            str(tmp_path / "sharedAccount.en.yaml"), {"userId": "2"}
-        )
-    # Temp file was cleaned up on failure.
-    assert list(tmp_path.glob(".sharedAccount.*.tmp")) == []
 
 
 def test_account_info_rpc_returns_only_userid_and_region(monkeypatch, reset_lifecycle):

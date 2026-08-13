@@ -119,12 +119,12 @@ Acceptance criteria:
 
 ### Phase 1: Isolate Existing Account Sources
 
-- [ ] Move YAML and environment-variable account loading into
+- [x] Move YAML and environment-variable account loading into
   `LocalAccountProvider` without changing production behavior.
-- [ ] Remove YAML, JWT decoding, and environment credential handling from
+- [x] Remove YAML, JWT decoding, and environment credential handling from
   `shared_client`.
-- [ ] Inject `AccountProvider` into the client runtime.
-- [ ] Add tests for acquisition failure, invalid credentials, release, and login
+- [x] Inject `AccountProvider` into the client runtime.
+- [x] Add tests for acquisition failure, invalid credentials, release, and login
   rollback.
 
 Acceptance criteria:
