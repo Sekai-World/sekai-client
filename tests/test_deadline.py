@@ -91,3 +91,21 @@ def test_game_http_timeout_is_bounded_by_rpc_deadline(mock_request, monkeypatch)
         reset_current_deadline(token)
 
     assert mock_request.call_args.kwargs["timeout"] == pytest.approx(0.4)
+
+
+def test_retry_delay_cannot_exceed_remaining_deadline(monkeypatch):
+    now = 40.0
+    monkeypatch.setattr(deadline_module, "monotonic", lambda: now)
+    monkeypatch.setattr(api_client.random, "uniform", lambda low, high: 2.0)
+    sleep_mock = Mock()
+    monkeypatch.setattr(api_client, "sleep", sleep_mock)
+    client = api_client.APIClient("jp")
+    deadline = Deadline.after(1.0)
+    token = set_current_deadline(deadline)
+    try:
+        with pytest.raises(DeadlineExceeded, match="deadline exceeded"):
+            client._wait_before_retry(None, 2)
+    finally:
+        reset_current_deadline(token)
+
+    sleep_mock.assert_not_called()

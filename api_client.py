@@ -11,9 +11,12 @@ Supported full API regions: 'jp' (Japan), 'en' (English), 'tw' (Taiwan),
 """
 
 import logging
+import random
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from time import sleep
 from typing import Any
@@ -50,6 +53,13 @@ class AuthTransitionKind(StrEnum):
     ATTEMPT = "attempt"
     SUCCESS = "success"
     FAILURE = "failure"
+
+
+class RetryPolicy(StrEnum):
+    """Whether a logical game API operation may be repeated safely."""
+
+    NEVER = "never"
+    IDEMPOTENT = "idempotent"
 
 
 @dataclass(frozen=True)
@@ -208,8 +218,9 @@ class APIClient:
         endpoint: str,
         method: str,
         data: bytes | None,
+        request_id: str | None = None,
     ) -> requests.Response:
-        self.headers["x-request-id"] = str(uuid4())
+        self.headers["x-request-id"] = request_id or str(uuid4())
         self.headers["content-type"] = "application/octet-stream"
         self.logger.debug(
             "request url=%s%s, method=%s, headers=%s",
@@ -289,18 +300,6 @@ class APIClient:
         ):
             self.logger.warning("%s server rejected cookie, refreshing...", self.region)
             self.init_cookie()
-            return True
-
-        if response is not None and response.status_code == 429:
-            self.logger.warning("%s server hits rate limit, sleep for 60s", self.region)
-            self.rate_limited = True
-            try:
-                deadline = current_deadline()
-                if deadline is not None and deadline.remaining() < 60.0:
-                    raise DeadlineExceeded("Request deadline exceeded")
-                sleep(60.0)
-            finally:
-                self.rate_limited = False
             return True
 
         if response is not None and response.status_code == 426:
@@ -559,7 +558,7 @@ class APIClient:
         endpoint: str,
         method: str = "get",
         body: str | dict = "",
-        retry_after_error: bool = True,
+        retry_policy: RetryPolicy | None = None,
     ) -> APIResponse:
         """
         Make an encrypted API call to the PJSK game server.
@@ -572,7 +571,8 @@ class APIClient:
             endpoint: API endpoint path (e.g., "/user/profile")
             method: HTTP method ('get', 'post', 'put', 'patch')
             body: Request body (string or dict, will be encrypted)
-            retry_after_error: Whether to retry on server errors
+            retry_policy: Explicit retry safety. Defaults to IDEMPOTENT for GET
+                and NEVER for methods that can have side effects.
 
         Returns:
             Decrypted response data (bytes or dict)
@@ -584,15 +584,28 @@ class APIClient:
         if self.rate_limited:
             raise RuntimeError("Cooling down for rate limit...")
 
-        data = self._encrypt_request_body(method, body)
+        normalized_method = method.lower()
+        data = self._encrypt_request_body(normalized_method, body)
+        policy = (
+            RetryPolicy(retry_policy)
+            if retry_policy is not None
+            else (
+                RetryPolicy.IDEMPOTENT
+                if normalized_method == "get"
+                else RetryPolicy.NEVER
+            )
+        )
 
-        max_retries = Config.MAX_API_RETRIES if retry_after_error else 0
+        max_retries = Config.MAX_API_RETRIES if policy is RetryPolicy.IDEMPOTENT else 0
+        request_id = str(uuid4())
         attempt = 0
         while True:
             r = None
             res_data: APIResponse = None
             try:
-                r = self._send_api_request(endpoint, method, data)
+                r = self._send_api_request(
+                    endpoint, normalized_method, data, request_id
+                )
 
                 if 300 <= r.status_code < 400:
                     raise requests.HTTPError(response=r)
@@ -610,10 +623,16 @@ class APIClient:
                     status_code,
                 )
 
-                should_retry = self._handle_http_error_retry(r, res_data)
+                should_retry = policy is RetryPolicy.IDEMPOTENT and (
+                    self._handle_http_error_retry(r, res_data)
+                )
 
-                if should_retry and attempt < max_retries:
+                transient = r is not None and (
+                    r.status_code == 429 or 500 <= r.status_code < 600
+                )
+                if (should_retry or transient) and attempt < max_retries:
                     attempt += 1
+                    self._wait_before_retry(r, attempt)
                     continue
 
                 raise RuntimeError(
@@ -629,8 +648,50 @@ class APIClient:
                 )
                 if attempt < max_retries:
                     attempt += 1
+                    self._wait_before_retry(None, attempt)
                     continue
                 raise RuntimeError("PJSK API request failed") from None
+
+    @staticmethod
+    def _retry_after_seconds(response: requests.Response | None) -> float | None:
+        if response is None or response.status_code != 429:
+            return None
+        value = response.headers.get("Retry-After")
+        if value is None:
+            return None
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=UTC)
+            return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+    def _wait_before_retry(
+        self, response: requests.Response | None, attempt: int
+    ) -> None:
+        retry_after = self._retry_after_seconds(response)
+        if retry_after is None:
+            base = min(30.0, 2.0 ** (attempt - 1))
+            delay = random.uniform(base * 0.5, base * 1.5)
+        else:
+            delay = retry_after
+
+        deadline = current_deadline()
+        if deadline is not None and delay >= deadline.remaining():
+            raise DeadlineExceeded("Request deadline exceeded")
+
+        rate_limited = response is not None and response.status_code == 429
+        if rate_limited:
+            self.rate_limited = True
+        try:
+            sleep(delay)
+        finally:
+            if rate_limited:
+                self.rate_limited = False
 
     def check_versions(
         self, input_ver_info: dict[str, Any] | None = None
