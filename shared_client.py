@@ -15,9 +15,7 @@ Regional Ports (configurable via environment):
 """
 
 import logging
-import os
 import queue
-import tempfile
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -28,15 +26,21 @@ from os import getenv, path
 from threading import Lock, RLock
 from time import monotonic
 from typing import Any
+from uuid import uuid4
 
-import jwt
-import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from flask import Flask, abort, has_request_context, request
 from jsonrpc.exceptions import JSONRPCDispatchException, JSONRPCInternalError
 from pytz import timezone
 
+from accounts import (
+    AccountLease,
+    AccountProvider,
+    AccountRegion,
+    LocalAccountProvider,
+    credential_to_account_info,
+)
 from api_client import APIClient, AuthTransition, AuthTransitionKind
 from config import Config
 from logging_config import enable_log_redaction
@@ -64,6 +68,16 @@ enable_log_redaction()
 logger = logging.getLogger(__name__)
 
 dirname = path.dirname(__file__)
+_account_provider: AccountProvider | None = None
+_active_account_lease: AccountLease | None = None
+
+
+def configure_account_provider(provider: AccountProvider | None) -> None:
+    """Inject an account provider; `None` restores the local default."""
+    global _account_provider, _active_account_lease
+    _account_provider = provider
+    _active_account_lease = None
+
 
 # Header used to authenticate internal JSON-RPC calls between the
 # sekai-client processes. All such calls must run on loopback only.
@@ -570,102 +584,24 @@ def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
     client.user_info = state["user_info"]
 
 
-def _enforce_account_yaml_permissions(filepath: str) -> None:
-    """
-    Ensure an existing account YAML file is not world/readable.
-
-    On POSIX, chmod the file to 0600 (best-effort: ignores
-    errors so non-POSIX platforms such as Windows are unaffected). Callers
-    that read the file should not print its contents.
-    """
-    try:
-        if os.stat(filepath).st_mode & 0o077:
-            os.chmod(filepath, 0o600)
-    except OSError:
-        pass
-
-
-def _write_account_yaml_atomic(filepath: str, account_info: dict[str, Any]) -> None:
-    """
-    Write account YAML atomically with restrictive permissions.
-
-    Writes to a temp file in the same directory, flushes + fsyncs, then
-    atomically ``os.replace`` onto the target. The file is chmod'd 0600 so
-    credentials are not world-readable. The temp file is removed on any
-    failure. Never prints the secret contents.
-    """
-    directory = path.dirname(filepath) or "."
-    fd, tmp_path = tempfile.mkstemp(
-        dir=directory, prefix=".sharedAccount.", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            yaml.safe_dump(account_info, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, filepath)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
 def get_account_info() -> dict[str, Any]:
-    """
-    Load or generate account credentials for the current region.
+    """Acquire a local lease and adapt it to the current game client payload."""
+    global _account_provider, _active_account_lease
 
-    For jp/en regions: loads from sharedAccount.{region}.yaml file
-    or registers new account if file doesn't exist.
-
-    For cn/tw/kr regions: reads credentials from environment variables
-    SEKAI_{REGION_UPPER}_ACCESS_TOKEN and SEKAI_{REGION_UPPER}_SDK_OPEN_ID.
-
-    Returns:
-        Account info dictionary with userId, credential, signature
-
-    Raises:
-        ValueError: If credentials not found for cn/tw/kr regions
-    """
-    region = _lifecycle.region
-    if region in ("jp", "en"):
-        filepath = path.join(dirname, f"sharedAccount.{region}.yaml")
-        if path.exists(filepath):
-            _enforce_account_yaml_permissions(filepath)
-            with open(filepath, encoding="utf-8") as f:
-                account_info = yaml.safe_load(f)
-            if not isinstance(account_info, dict):
-                raise ValueError(f"Invalid account info file: {filepath}")
-            return account_info
-        else:
-            logger.warning("no %s account found, registering a new one", region)
-            register_info = require_api_client().register_new_account()
-            credential = register_info["credential"]
-            signature = register_info["userRegistration"]["signature"]
-            user_id = jwt.decode(credential, options={"verify_signature": False})[
-                "userId"
-            ]
-
-            account_info = {
-                "signature": signature,
-                "credential": credential,
-                "userId": user_id,
-            }
-            _write_account_yaml_atomic(filepath, account_info)
-            return account_info
-
-    if region in ("cn", "tw", "kr"):
-        access_token = getenv(f"SEKAI_{region.upper()}_ACCESS_TOKEN", None)
-        sdk_open_id = getenv(f"SEKAI_{region.upper()}_SDK_OPEN_ID", None)
-        if not access_token or not sdk_open_id:
-            raise ValueError(
-                f"Missing access token and/or SDK open id for {region} server"
-            )
-        return {"loginInfo": {"accessToken": access_token}, "userId": sdk_open_id}
-
-    return {}
+    region = AccountRegion(_lifecycle.region)
+    if _account_provider is None:
+        _account_provider = LocalAccountProvider(
+            dirname,
+            register_account=lambda: require_api_client().register_new_account(),
+        )
+    lease = _account_provider.acquire(
+        region,
+        f"shared-client-{region.value}",
+        ttl_seconds=24 * 60 * 60,
+        idempotency_key=f"login-{uuid4()}",
+    )
+    _active_account_lease = lease
+    return credential_to_account_info(lease.credential)
 
 
 def login_account(forced: bool = False) -> dict[str, Any]:
@@ -689,9 +625,12 @@ def login_account(forced: bool = False) -> dict[str, Any]:
             raise RuntimeError("Logged in client has no user info")
         return cached_user
 
+    global _active_account_lease
+
     client = require_api_client()
     was_authenticated = _is_logged_in()
     previous_state = _snapshot_client_state(client)
+    previous_account_lease = _active_account_lease
     with _lifecycle.lock:
         previous_auth_generation = _lifecycle.auth_generation
 
@@ -705,6 +644,12 @@ def login_account(forced: bool = False) -> dict[str, Any]:
     try:
         client.account_info = get_account_info()
         candidate_user = client.login()
+        if (
+            previous_account_lease is not None
+            and previous_account_lease is not _active_account_lease
+            and _account_provider is not None
+        ):
+            _account_provider.release(previous_account_lease.lease_id)
         with _lifecycle.lock:
             _lifecycle.user = deepcopy(candidate_user)
             _lifecycle.authenticated = True
@@ -714,6 +659,14 @@ def login_account(forced: bool = False) -> dict[str, Any]:
             _publish_snapshot_locked()
         return candidate_user
     except Exception as error:
+        failed_lease = _active_account_lease
+        if (
+            failed_lease is not None
+            and failed_lease is not previous_account_lease
+            and _account_provider is not None
+        ):
+            _account_provider.release(failed_lease.lease_id)
+        _active_account_lease = previous_account_lease
         with _lifecycle.lock:
             auth_committed = (
                 _lifecycle.auth_generation != previous_auth_generation
