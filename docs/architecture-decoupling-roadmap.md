@@ -102,11 +102,11 @@ of an unrestricted dictionary.
 
 ### Phase 0: Contract and Safety Baseline
 
-- [ ] Define typed `AccountCredential`, `AccountLease`, and account-service error
+- [x] Define typed `AccountCredential`, `AccountLease`, and account-service error
   models.
-- [ ] Define the `AccountProvider` protocol: acquire, release, and report invalid.
-- [ ] Specify lease expiry, renewal, idempotency, and failure semantics.
-- [ ] Add contract tests independent of HTTP and storage implementations.
+- [x] Define the `AccountProvider` protocol: acquire, release, and report invalid.
+- [x] Specify lease expiry, reacquisition, idempotency, and failure semantics.
+- [x] Add contract tests independent of HTTP and storage implementations.
 - [ ] Decide the account-service repository name, database, deployment target,
   and encryption-key management.
 

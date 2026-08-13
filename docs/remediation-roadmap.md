@@ -23,7 +23,7 @@
 | 3 | Dashboard 安全与交互 | `[-]` 进行中（待桌面/移动端手工验收） | 0.5-1 天 | 阶段 1 | PR 4 |
 | 4 | 定时任务互斥与 Git 数据安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
 | 5 | 区域 bootstrap 与客户端状态机 | `[-]` 已实现生命周期/readiness 代码切片，生产验收待完成 | 2-3 天 | 阶段 1 | 未提交（`2802d7a`、`0f3329a`） |
-| 6 | Deadline、重试与队列生命周期 | `[ ]` | 2-3 天 | 阶段 5 | PR 7 |
+| 6 | Deadline、重试与队列生命周期 | `[x]` 已完成 | 2-3 天 | 阶段 5 | PRs #21-#24 |
 | 7 | Event tracker outbox 与 API 响应校验 | `[ ]` | 2-4 天 | 阶段 1；建议在阶段 6 后 | PR 8-9 |
 
 预计总工作量：10-16 个工程日。阶段 0-4 优先止血，阶段 5-7 处理结构性风险。
@@ -349,7 +349,8 @@ UNINITIALIZED
 - [x] 将剩余预算传递给队列等待、HTTP 请求和 retry。
 - [x] 保证现有重试总时间受 RPC deadline 限制。
 - [x] 只自动重试明确幂等的操作。
-- [ ] 有副作用的操作需要幂等键，并在重试中保持同一 request ID。
+- [x] 有副作用的操作需要幂等键，并在重试中保持同一 request ID。
+  - 接受边界：当前游戏 API 写请求默认不重试，因此不需要幂等键；未来账号租约写接口必须由 `AccountProvider.acquire` 接受调用方生成且跨重试稳定的 `idempotency_key`。
 - [x] 使用指数退避、jitter 和服务端 `Retry-After`。
 - [x] 调用方放弃后，任务不得最终提交登录、session、用户或版本状态。
 - [x] 429 等待不得无限占用唯一 worker。
@@ -366,9 +367,11 @@ UNINITIALIZED
 
 ### 验收证据
 
-- 待填写：虚拟时钟或短 timeout 测试
-- 待填写：取消与状态提交测试
-- 待填写：429 和幂等性测试
+- `tests/test_deadline.py`：monotonic deadline、预算 header、HTTP timeout 截断和退避不得越过 deadline。
+- `tests/test_shared_client.py`：迟到普通任务、初始化与隐藏认证 callback 不得提交状态；queue-full 稳定契约与 readiness 指标。
+- `tests/test_api_client.py`：GET 临时失败重试、写请求不重试、稳定 request ID、429/`Retry-After`、非临时 4xx 不重试。
+- `tests/test_task_queue.py`：过期任务执行前丢弃、指标快照与兼容 worker 行为。
+- PRs [#21](https://github.com/Sekai-World/sekai-client/pull/21)、[#22](https://github.com/Sekai-World/sekai-client/pull/22)、[#23](https://github.com/Sekai-World/sekai-client/pull/23)、[#24](https://github.com/Sekai-World/sekai-client/pull/24) required CI 均通过并合并。
 
 ### 执行记录
 
