@@ -254,9 +254,10 @@ Phase 7 should be completed before broad production migration when practical so
 account-source migration and event-delivery reliability are not changed at the
 same time.
 
-The Phase 0 production audit is complete. The immediate next action is to finish
-public-release CI hardening, publish the repository, activate its `main` ruleset,
-and then implement the critical remediation Phase 6 reliability work.
+The Phase 0 production audit and public-release gate are complete. The repository
+is public, PR CI uses GitHub-hosted runners with pinned actions, and the default
+branch ruleset is active. The immediate next action is the critical remediation
+Phase 6 reliability work.
 
 ## Suggested Pull Requests
 
