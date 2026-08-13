@@ -12,6 +12,7 @@ from accounts import (
     AccountUnavailableError,
     InvalidAccountReason,
     InvalidLeaseError,
+    JpEnCredential,
 )
 from accounts.local import LocalAccountProvider, credential_to_account_info
 
@@ -34,16 +35,11 @@ def test_loads_existing_jp_yaml_and_restricts_permissions(tmp_path):
     assert account_path.stat().st_mode & 0o777 == 0o600
 
 
-def test_registers_missing_account_atomically(monkeypatch, tmp_path):
+def test_registers_missing_account_atomically(tmp_path):
     register = Mock(
-        return_value={
-            "credential": "encoded",
-            "userRegistration": {"signature": "signed"},
-        }
-    )
-    monkeypatch.setattr(
-        "accounts.local.jwt.decode",
-        lambda credential, options: {"userId": "registered-user"},
+        return_value=JpEnCredential(
+            AccountRegion.EN, "registered-user", "encoded", "signed"
+        )
     )
     provider = LocalAccountProvider(tmp_path, register)
 
@@ -60,18 +56,12 @@ def test_registers_missing_account_atomically(monkeypatch, tmp_path):
 
 def test_atomic_registration_write_cleans_up_after_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        "accounts.local.jwt.decode", lambda *args, **kwargs: {"userId": "1"}
-    )
-    monkeypatch.setattr(
         "accounts.local.yaml.safe_dump",
         Mock(side_effect=OSError("disk full")),
     )
     provider = LocalAccountProvider(
         tmp_path,
-        lambda: {
-            "credential": "encoded",
-            "userRegistration": {"signature": "signed"},
-        },
+        lambda region: JpEnCredential(region, "1", "encoded", "signed"),
     )
 
     with pytest.raises(OSError):
