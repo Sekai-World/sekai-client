@@ -18,7 +18,7 @@
 | 阶段 | 内容 | 状态 | 预计工作量 | 依赖 | 建议 PR |
 |---|---|---|---:|---|---|
 | 0 | 生产事实确认与 CN 范围决策 | `[x]` 已完成 | 0.5 天 | 无 | PR 1 (#5 merged) |
-| 1 | 测试基线与 CI | `[!]` CI 已实现，私有仓库套餐无法激活 ruleset | 1 天 | 阶段 0 | PR 2 (#6 merged) |
+| 1 | 测试基线与 CI | `[x]` 已完成 | 1 天 | 阶段 0 | PR 2 (#6 merged) |
 | 2 | 凭据、日志和内部 RPC 安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | PR 3 (#7 merged) |
 | 3 | Dashboard 安全与交互 | `[-]` 进行中（待桌面/移动端手工验收） | 0.5-1 天 | 阶段 1 | PR 4 |
 | 4 | 定时任务互斥与 Git 数据安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
@@ -118,8 +118,8 @@ uv run --extra dev pytest tests/
 
 - [x] PR 自动执行 lint、类型检查和测试。
 - [x] 关键失败路径具备回归测试（登录缓存、bootstrap fail-fast、队列满、push 失败返回）。
-- [ ] CI 失败能阻止合并。
-  - 状态：`[!]` 2026-08-13 已配置目标为 `main`、required check 为 `CI / Lint, type-check and test` 的 ruleset，但规则不是 Active，GitHub 要求为当前私有仓库升级套餐后才能生效。Bypass list 为组织管理员和仓库管理员。当前仍不能强制阻止未通过 CI 的合并；需选择升级套餐、公开仓库，或明确接受该残余风险。
+- [x] CI 失败能阻止合并。
+  - 状态：`[x]` 2026-08-13 仓库公开后已激活目标为默认分支的 `protect default` ruleset；严格要求 `CI / Lint, type-check and test` 通过，并要求通过 PR 合并、禁止删除和 non-fast-forward push。Bypass list 为组织管理员和仓库管理员，仅用于紧急恢复。
 
 ### 验收证据
 
@@ -476,12 +476,12 @@ and test-count records above are retained as execution history.
   and i18n repository states were confirmed in production. High historical EN
   restart counters remain a non-blocking observation; both processes are
   currently stable with zero unstable restarts.
-- Phase 1 CI targets `main`. A ruleset requiring
-  `CI / Lint, type-check and test` was configured for `main` on 2026-08-13, with
-  organization and repository administrators in the bypass list, but GitHub
-  will not activate it for this private repository without a plan upgrade.
-  Phase 1 is externally blocked until the plan/visibility changes or the
-  unenforced-gate risk is explicitly accepted.
+- Phase 1 is complete. Before publication, PR CI was moved from the persistent
+  self-hosted runner to `ubuntu-latest`, action references were pinned to commit
+  SHAs, Gitleaks 8.30.1 scanned all four Git commits with zero findings, and the
+  GitHub-hosted push CI passed. The repository is public and the active
+  `protect default` ruleset strictly requires
+  `CI / Lint, type-check and test` on pull requests.
 - Phase 3 code is present on `main`; desktop/mobile browser and real PM2 restart
   acceptance evidence is still missing.
 - Phase 5 lifecycle and readiness code is present on `main`; the older
