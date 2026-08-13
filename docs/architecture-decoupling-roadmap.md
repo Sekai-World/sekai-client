@@ -135,7 +135,7 @@ Acceptance criteria:
 
 ### Phase 2: Extract Protocol and Registration Logic
 
-- [ ] Split `APIClient` into protocol transport, authentication/session, and game
+- [x] Split `APIClient` into protocol transport, authentication/session, and game
   API services.
 - [x] Make request retry policy explicit and idempotency-aware.
 - [x] Extract a minimal registration adapter without tutorial completion or
