@@ -385,30 +385,31 @@ def _client_job(
     def guarded() -> Any:
         with _lifecycle.lock:
             client = _lifecycle.client
-            if client is not None:
-                previous = (
-                    _snapshot_client_state(client),
-                    deepcopy(_lifecycle.user),
-                    _lifecycle.authenticated,
-                )
-            else:
-                previous = None
+            previous = _snapshot_runtime_locked()
             auth_generation = _lifecycle.auth_generation
 
         try:
-            return job()
+            result = job()
+            deadline = current_deadline()
+            if deadline is not None:
+                deadline.require_remaining()
+            return result
         except Exception as error:
             with _lifecycle.lock:
+                abandoned = isinstance(error, DeadlineExceeded)
                 # A queued job may only restore the client it observed.  In
                 # particular, never overwrite a candidate committed by a
                 # nested initialization or authentication transition.
-                if _lifecycle.client is client and previous is not None:
+                if abandoned:
+                    _restore_runtime_locked(previous)
+                elif _lifecycle.client is client and client is not None:
                     auth_changed = _lifecycle.auth_generation != auth_generation
                     if not auth_changed:
-                        assert client is not None
-                        _restore_client_state(client, previous[0])
-                        _lifecycle.user = previous[1]
-                        _lifecycle.authenticated = previous[2]
+                        client_state = previous["client_state"]
+                        assert isinstance(client_state, dict)
+                        _restore_client_state(client, client_state)
+                        _lifecycle.user = deepcopy(previous["user"])
+                        _lifecycle.authenticated = bool(previous["authenticated"])
                         hidden_failure = _consume_hidden_auth_failure()
                         if (
                             operation
@@ -444,6 +445,9 @@ def _publish_snapshot_locked() -> None:
 def _api_lifecycle_transition(event: AuthTransition) -> None:
     """Reconcile APIClient's internal automatic auth transitions."""
     with _lifecycle.lock:
+        deadline = current_deadline()
+        if deadline is not None and deadline.remaining() <= 0:
+            return
         if event.kind is AuthTransitionKind.ATTEMPT:
             _lifecycle.mark_attempt()
             _lifecycle.active_auth_transaction_id = event.transaction_id
@@ -490,6 +494,49 @@ def _snapshot_client_state(client: APIClient) -> dict[str, Any]:
         "master_split_paths": deepcopy(client.master_split_paths),
         "user_info": deepcopy(client.user_info),
     }
+
+
+def _snapshot_runtime_locked() -> dict[str, Any]:
+    """Capture all state a queued task may mutate before its final commit."""
+    client = _lifecycle.client
+    return {
+        "client": client,
+        "client_state": _snapshot_client_state(client) if client is not None else None,
+        "authenticated": _lifecycle.authenticated,
+        "user": deepcopy(_lifecycle.user),
+        "state": _lifecycle.state,
+        "error": deepcopy(_lifecycle.error),
+        "failure_count": _lifecycle.failure_count,
+        "last_attempt_mono": _lifecycle.last_attempt_mono,
+        "retry_until_mono": _lifecycle.retry_until_mono,
+        "last_attempt_at": _lifecycle.last_attempt_at,
+        "next_retry_at": _lifecycle.next_retry_at,
+        "hidden_auth_failure_pending": _lifecycle.hidden_auth_failure_pending,
+        "active_auth_transaction_id": _lifecycle.active_auth_transaction_id,
+        "auth_generation": _lifecycle.auth_generation,
+    }
+
+
+def _restore_runtime_locked(state: dict[str, Any]) -> None:
+    """Restore a task snapshot after its caller's deadline has elapsed."""
+    client = state["client"]
+    _lifecycle.client = client
+    client_state = state["client_state"]
+    if client is not None and isinstance(client_state, dict):
+        _restore_client_state(client, client_state)
+    _lifecycle.authenticated = bool(state["authenticated"])
+    _lifecycle.user = deepcopy(state["user"])
+    _lifecycle.state = state["state"]
+    _lifecycle.error = deepcopy(state["error"])
+    _lifecycle.failure_count = int(state["failure_count"])
+    _lifecycle.last_attempt_mono = state["last_attempt_mono"]
+    _lifecycle.retry_until_mono = float(state["retry_until_mono"])
+    _lifecycle.last_attempt_at = state["last_attempt_at"]
+    _lifecycle.next_retry_at = state["next_retry_at"]
+    _lifecycle.hidden_auth_failure_pending = bool(state["hidden_auth_failure_pending"])
+    _lifecycle.active_auth_transaction_id = state["active_auth_transaction_id"]
+    _lifecycle.auth_generation = int(state["auth_generation"])
+    _publish_snapshot_locked()
 
 
 def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
