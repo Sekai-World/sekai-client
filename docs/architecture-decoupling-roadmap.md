@@ -178,14 +178,16 @@ Current implementation audit (2026-08-13):
   `/v1/accounts`; it has no acquire, release, renewal, or invalid-account API.
 - The checked-in protocol configuration is a single TW configuration
   (`com.hermes.mk.asia`). TW/KR research covers obtaining a GSDK access token,
-  but the subsequent game authentication and durable game-account credential
-  flow is not implemented.
-- JP/EN registration and authentication are not implemented in that repository.
+  which, together with `sdk_open_id`, is the complete TW/KR account-provider
+  output expected by this client.
+- JP/EN registration is not implemented in that repository. Game authentication
+  is intentionally client-owned for every region.
 - JSON files are permission-restricted but credentials are not encrypted at
   rest. There is no transactional database-backed lease coordinator.
-- Keep the existing GSDK token API as a regional provisioning adapter. Do not
-  treat a GSDK access token as an `AccountLease` or expose it through the future
-  lease contract without completing game authentication.
+- Keep game authentication and all subsequent login behavior in `sekai-client`.
+  The account service should lease only the inputs required by `/user/auth`:
+  `user_id`, `credential`, and `signature` for JP/EN; `sdk_open_id` and the GSDK
+  access token for TW/KR.
 
 ### Phase 4: Integrate the Remote Provider
 
