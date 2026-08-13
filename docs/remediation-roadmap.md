@@ -119,7 +119,7 @@ uv run --extra dev pytest tests/
 - [x] PR 自动执行 lint、类型检查和测试。
 - [x] 关键失败路径具备回归测试（登录缓存、bootstrap fail-fast、队列满、push 失败返回）。
 - [x] CI 失败能阻止合并。
-  - 状态：`[x]` 2026-08-13 仓库公开后已激活目标为默认分支的 `protect default` ruleset；严格要求 `CI / Lint, type-check and test` 通过，并要求通过 PR 合并、禁止删除和 non-fast-forward push。Bypass list 为组织管理员和仓库管理员，仅用于紧急恢复。
+  - 状态：`[x]` 2026-08-13 仓库公开后已激活目标为默认分支的 `protect default` ruleset；严格要求真实 check context `Lint, type-check and test` 通过，并要求通过 PR 合并、禁止删除和 non-fast-forward push。Bypass list 为组织管理员和仓库管理员，仅用于紧急恢复。PR #19 验证了规则会阻止不满足条件的合并，并在 required check 通过后允许正常合并。
 
 ### 验收证据
 
@@ -481,7 +481,8 @@ and test-count records above are retained as execution history.
   SHAs, Gitleaks 8.30.1 scanned all four Git commits with zero findings, and the
   GitHub-hosted push CI passed. The repository is public and the active
   `protect default` ruleset strictly requires
-  `CI / Lint, type-check and test` on pull requests.
+  `Lint, type-check and test` on pull requests. PR #19 verified enforcement
+  end-to-end without administrator bypass.
 - Phase 3 code is present on `main`; desktop/mobile browser and real PM2 restart
   acceptance evidence is still missing.
 - Phase 5 lifecycle and readiness code is present on `main`; the older
