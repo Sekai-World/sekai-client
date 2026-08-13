@@ -17,8 +17,8 @@
 
 | 阶段 | 内容 | 状态 | 预计工作量 | 依赖 | 建议 PR |
 |---|---|---|---:|---|---|
-| 0 | 生产事实确认与 CN 范围决策 | `[x]` 代码层完成，生产事实待确认 | 0.5 天 | 无 | PR 1 (#5 merged) |
-| 1 | 测试基线与 CI | `[x]` 实施完成（分支保护 required check 待仓库设置确认） | 1 天 | 阶段 0 | PR 2 (#6 merged) |
+| 0 | 生产事实确认与 CN 范围决策 | `[x]` 已完成 | 0.5 天 | 无 | PR 1 (#5 merged) |
+| 1 | 测试基线与 CI | `[!]` CI 已实现，私有仓库套餐无法激活 ruleset | 1 天 | 阶段 0 | PR 2 (#6 merged) |
 | 2 | 凭据、日志和内部 RPC 安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | PR 3 (#7 merged) |
 | 3 | Dashboard 安全与交互 | `[-]` 进行中（待桌面/移动端手工验收） | 0.5-1 天 | 阶段 1 | PR 4 |
 | 4 | 定时任务互斥与 Git 数据安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
@@ -50,14 +50,14 @@
 
 - [x] 确认 CN 不属于正式支持区域，完成 D-001（保留简化版 `checkUpdate-cn` 进程）。
 - [x] 自检代码库区域声明：从 `Config.REGIONS` 与 `api_public_server.client_map` 移除 CN；生产 PM2 使用 `/root/pm2` 下的一进程一个 YAML，正式服务不含 CN，保留独立 `checkUpdate-cn` 与 `CN_PORT`/port-map。
-- [ ] 检查生产环境实际启动的区域和 PM2 进程。
-  - 状态：`[!]` 待生产确认——代码层已变更，但生产实际运行进程需运维核对 PM2 列表。
-- [ ] 确认 shared client 是否始终绑定 `127.0.0.1`。
-  - 状态：`[x]` 已确认——virtono-jp 的 `/root/pm2/sharedApiClient*.yaml` 均固定绑定 `127.0.0.1`。
-- [ ] 确认每个 shared client 的 Gunicorn worker 数量。
-  - 状态：`[!]` 待生产确认——gunicorn 默认 1 worker，需运维确认。
-- [ ] 确认 master/i18n 仓库是否可能存在未推送 commit。
-  - 状态：`[!]` 待生产确认——仅代码层无法判断工作树状态。
+- [x] 检查生产环境实际启动的区域和 PM2 进程。
+  - 状态：`[x]` 2026-08-13 在 virtono-jp 确认 14 个业务进程在线：JP/EN/TW/KR 各有 shared/check/event，另有 `sekai-api` 与 standalone `checkUpdate-cn`。
+- [x] 确认 shared client 是否始终绑定 `127.0.0.1`。
+  - 状态：`[x]` PM2 参数与 `ss -lntp` 均确认四个 shared client 分别绑定 `127.0.0.1:39390-39393`；未对外监听。
+- [x] 确认每个 shared client 的 Gunicorn worker 数量。
+  - 状态：`[x]` 2026-08-13 的进程树确认每个 shared client 为一个 Gunicorn master 加一个 worker；未配置额外 workers。
+- [x] 确认 master/i18n 仓库是否可能存在未推送 commit。
+  - 状态：`[x]` JP/EN/KR/TW/CN master 仓库与共享 i18n 均为干净的 `main...origin/main`，且 `log --branches --not --remotes` 无输出。
 - [x] 记录当前 pytest、Ruff 结果作为基线（见“验收证据”）。
 - [x] 增加启动期/配置层区域映射完整性校验（`Config.validate_region_config`，并在 `api_public_server.bootstrap` 启动失败）。
 
@@ -65,8 +65,8 @@
 
 - [x] 所有声明支持的区域（jp/en/tw/kr）均具有 headers、URL、端口等完整配置。
 - [x] 缺失区域配置时，进程在启动阶段给出明确错误（`Config.validate_region_config` + `api_public_server.bootstrap` 抛 `RuntimeError`）。
-- [ ] 生产部署约束已记录，不再依赖未文档化假设。
-  - 状态：`[!]` 部分完成——代码层约束已加，生产运行事实（绑定地址、worker 数、未推送 commit）仍待运维确认。
+- [x] 生产部署约束已记录，不再依赖未文档化假设。
+  - 状态：`[x]` 拓扑、loopback、单 worker 与全部数据仓库状态均已通过 2026-08-13 只读生产审计确认。
 
 ### 验收证据
 
@@ -77,11 +77,13 @@
   - `config.py`：`REGIONS` 移除 `cn`；新增 `validate_region_config` 并接入 `Config.validate`。
   - `api_public_server.py`：`client_map` 移除 `cn`；`bootstrap` 在区域映射不完整时启动失败。
   - 生产 PM2：已确认 virtono-jp 使用 `/root/pm2` 下 14 个独立 YAML；4 个正式区域各有 shared/check/event，另有 `sekai-api` 与 standalone `checkUpdate-cn`（simple mode）。仓库 `deployment/pm2/examples/` 提供对应无 secret 模板。
-  - 待生产确认项：worker 数、未推送 commit。
+  - 2026-08-13 生产审计：PM2 与进程树确认四个正式区域各一套 shared/check/event，shared client 均为 loopback + 单 worker；JP/EN/KR/TW/CN master 与共享 i18n 仓库均干净且无未推送提交。
+  - EN 观察项：`checkUpdate-en` 与 `eventTracker-en` 累计重启分别为 524/520，但均连续在线约两天、`unstable_restarts=0`。最后退出码为 130，证据不显示当前 crash loop；历史累计次数的具体原因未推断，作为非阻塞观察项保留。
 
 ### 执行记录
 
 - 2026-07-16：完成 D-001 决策与代码层阶段 0 改动。CN 从正式区域声明移除，保留简化版 `checkUpdate-cn`。新增启动期区域映射完整性校验并接入 `Config.validate` 与 `api_public_server.bootstrap`。新增聚焦测试 `tests/test_config.py::TestRegionConfigValidation`。未做 CI/安全/状态机（属阶段 1-7）。生产运行事实类检查项标记为待运维确认。
+- 2026-08-13：完成 virtono-jp 只读生产审计。确认 14 个业务进程拓扑、四个 shared client 的 loopback 监听和单 Gunicorn worker；所有 master 与共享 i18n 仓库均干净且无未推送提交。EN 两进程虽有较高累计重启数，但当前稳定且无 unstable restart，阶段 0 关闭。
 
 ## 阶段 1：测试基线与 CI
 
@@ -116,7 +118,8 @@ uv run --extra dev pytest tests/
 
 - [x] PR 自动执行 lint、类型检查和测试。
 - [x] 关键失败路径具备回归测试（登录缓存、bootstrap fail-fast、队列满、push 失败返回）。
-- [ ] CI 失败能阻止合并（工作流任一步失败会令检查失败；是否强制阻止合并仍需在仓库设置中确认 `transform-python` 分支保护与 required status check）。
+- [ ] CI 失败能阻止合并。
+  - 状态：`[!]` 2026-08-13 已配置目标为 `main`、required check 为 `CI / Lint, type-check and test` 的 ruleset，但规则不是 Active，GitHub 要求为当前私有仓库升级套餐后才能生效。Bypass list 为组织管理员和仓库管理员。当前仍不能强制阻止未通过 CI 的合并；需选择升级套餐、公开仓库，或明确接受该残余风险。
 
 ### 验收证据
 
@@ -462,6 +465,45 @@ UNINITIALIZED
 - 数据发布改动先在临时仓库验证。
 - 登录和写接口改动先在单一区域灰度。
 - 阶段 5-7 上线后重点观察错误率、队列等待、任务耗时、区域 readiness 和 outbox 积压。
+
+## Current Repository Audit (2026-08-13)
+
+This audit reflects the current `main` working tree. Historical branch, commit,
+and test-count records above are retained as execution history.
+
+- Phases 2 and 4 are implemented with repository tests and remain complete.
+- Phase 0 is complete: topology, loopback binding, worker count, and all master
+  and i18n repository states were confirmed in production. High historical EN
+  restart counters remain a non-blocking observation; both processes are
+  currently stable with zero unstable restarts.
+- Phase 1 CI targets `main`. A ruleset requiring
+  `CI / Lint, type-check and test` was configured for `main` on 2026-08-13, with
+  organization and repository administrators in the bypass list, but GitHub
+  will not activate it for this private repository without a plan upgrade.
+  Phase 1 is externally blocked until the plan/visibility changes or the
+  unenforced-gate risk is explicitly accepted.
+- Phase 3 code is present on `main`; desktop/mobile browser and real PM2 restart
+  acceptance evidence is still missing.
+- Phase 5 lifecycle and readiness code is present on `main`; the older
+  "uncommitted" wording above is stale. PM2/Gunicorn validation, a regional
+  canary, public endpoint verification, and monitoring evidence are still
+  missing.
+- Phase 6 is incomplete. Only the cooperative `check_update` cycle deadline is
+  implemented; end-to-end RPC deadlines, cancellation, idempotency-aware
+  retries, `Retry-After`/jitter handling, and queue metrics remain open.
+- Phase 7 is not implemented. The existing Strapi ID outbox belongs to the
+  update publisher and does not satisfy the event-ranking outbox requirement.
+  `event_tracker` still removes and recreates a slow scheduler job, and explicit
+  upstream response models remain absent.
+- [architecture-decoupling-roadmap.md](architecture-decoupling-roadmap.md) tracks
+  the subsequent modularization and account-service extraction. Its remote
+  provider rollout depends on the unfinished Phase 6 reliability work.
+- Follow the roadmap's
+  [Recommended Execution Order](architecture-decoupling-roadmap.md#recommended-execution-order):
+  finish the Phase 0/1 confirmations first, then the critical Phase 6 work;
+  local account-provider refactoring may begin before unrelated remediation
+  items are complete, while remote rollout requires Phase 5 production
+  acceptance.
 
 ## 进度日志
 

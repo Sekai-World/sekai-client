@@ -9,6 +9,8 @@
 
 - [remediation-roadmap.md](remediation-roadmap.md)
   - Phased remediation plan with task checklists, dependencies, acceptance criteria, and progress tracking.
+- [architecture-decoupling-roadmap.md](architecture-decoupling-roadmap.md)
+  - Plan for modularizing this repository and extracting account registration and leasing into a separate service.
 
 ## Development Workflow
 
