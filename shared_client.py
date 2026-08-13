@@ -38,6 +38,7 @@ from accounts import (
     AccountLease,
     AccountProvider,
     AccountRegion,
+    AccountRegistrationAdapter,
     LocalAccountProvider,
     credential_to_account_info,
 )
@@ -592,7 +593,9 @@ def get_account_info() -> dict[str, Any]:
     if _account_provider is None:
         _account_provider = LocalAccountProvider(
             dirname,
-            register_account=lambda: require_api_client().register_new_account(),
+            register_account=lambda target_region: AccountRegistrationAdapter(
+                require_api_client()
+            ).register(target_region),
         )
     lease = _account_provider.acquire(
         region,

@@ -11,7 +11,6 @@ from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
-import jwt
 import yaml
 
 from accounts.models import (
@@ -25,7 +24,7 @@ from accounts.provider import AccountUnavailableError, InvalidLeaseError
 
 logger = logging.getLogger(__name__)
 
-RegistrationCallback = Callable[[], dict[str, object]]
+RegistrationCallback = Callable[[AccountRegion], JpEnCredential]
 
 
 def credential_to_account_info(
@@ -132,7 +131,12 @@ class LocalAccountProvider:
             if self._register_account is None:
                 raise ValueError(f"No local account available for {region.value}")
             logger.warning("no %s account found, registering a new one", region.value)
-            account_info = _registered_account_info(self._register_account())
+            registered = self._register_account(region)
+            if registered.region is not region:
+                raise ValueError(
+                    "Registration returned a credential for another region"
+                )
+            account_info = credential_to_account_info(registered)
             _write_account_yaml_atomic(account_path, account_info)
 
         try:
@@ -159,21 +163,6 @@ class LocalAccountProvider:
             sdk_open_id=sdk_open_id,
             access_token=access_token,
         )
-
-
-def _registered_account_info(register_info: dict[str, object]) -> dict[str, object]:
-    try:
-        credential = str(register_info["credential"])
-        registration = register_info["userRegistration"]
-        if not isinstance(registration, dict):
-            raise TypeError
-        signature = str(registration["signature"])
-        user_id = str(
-            jwt.decode(credential, options={"verify_signature": False})["userId"]
-        )
-    except (KeyError, TypeError, ValueError) as error:
-        raise ValueError("Invalid account registration response") from error
-    return {"signature": signature, "credential": credential, "userId": user_id}
 
 
 def _enforce_private_permissions(account_path: Path) -> None:

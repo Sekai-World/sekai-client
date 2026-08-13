@@ -137,10 +137,10 @@ Acceptance criteria:
 
 - [ ] Split `APIClient` into protocol transport, authentication/session, and game
   API services.
-- [ ] Make request retry policy explicit and idempotency-aware.
-- [ ] Extract a minimal registration adapter without tutorial completion or
+- [x] Make request retry policy explicit and idempotency-aware.
+- [x] Extract a minimal registration adapter without tutorial completion or
   post-login refresh side effects.
-- [ ] Add protocol contract tests for registration and credential validation.
+- [x] Add protocol contract tests for registration and credential validation.
 
 Acceptance criteria:
 

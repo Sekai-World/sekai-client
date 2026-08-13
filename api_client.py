@@ -25,6 +25,7 @@ from uuid import uuid4
 
 import requests
 
+from accounts import AccountRegion, AccountRegistrationAdapter
 from config import Config
 from utils.constants import (
     app_id_regions,
@@ -767,18 +768,7 @@ class APIClient:
         Returns:
             Account registration response including credential and signature
         """
-        return self._require_dict_response(
-            self.call_pjsk_api(
-                "/user",
-                "post",
-                {
-                    "platform": "iOS",
-                    "deviceModel": "iPad13,16",
-                    "operatingSystem": "iPadOS 17.4",
-                },
-            ),
-            "/user",
-        )
+        return AccountRegistrationAdapter(self).register_raw(AccountRegion(self.region))
 
     def login(self) -> dict[str, Any]:
         """

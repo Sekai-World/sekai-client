@@ -15,18 +15,28 @@ from accounts.provider import (
     AccountUnavailableError,
     InvalidLeaseError,
 )
+from accounts.registration import (
+    AccountCredentialValidator,
+    AccountRegistrationAdapter,
+    RegistrationTransport,
+    parse_registration_response,
+)
 
 __all__ = [
     "AccountCredential",
+    "AccountCredentialValidator",
     "AccountLease",
     "AccountProvider",
     "AccountProviderError",
+    "AccountRegistrationAdapter",
     "AccountRegion",
     "AccountUnavailableError",
     "InvalidAccountReason",
     "InvalidLeaseError",
     "JpEnCredential",
     "LocalAccountProvider",
+    "RegistrationTransport",
     "TwKrCredential",
     "credential_to_account_info",
+    "parse_registration_response",
 ]
