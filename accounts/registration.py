@@ -7,6 +7,7 @@ from typing import Any, Protocol
 import jwt
 
 from accounts.models import AccountCredential, AccountRegion, JpEnCredential
+from game_auth import GameAuthenticationService
 
 REGISTRATION_PAYLOAD = {
     "platform": "iOS",
@@ -54,20 +55,7 @@ class AccountCredentialValidator:
         self._transport = transport
 
     def validate(self, credential: AccountCredential) -> bool:
-        if isinstance(credential, JpEnCredential):
-            response = self._transport.call_pjsk_api(
-                f"/user/{credential.user_id}/auth?refreshUpdatedResources=False",
-                "put",
-                {"credential": credential.credential},
-            )
-        else:
-            response = self._transport.call_pjsk_api(
-                "/user/auth",
-                "post",
-                {"userID": 0, "accessToken": credential.access_token},
-            )
-        if not isinstance(response, dict) or not response.get("sessionToken"):
-            raise ValueError("Invalid credential validation response")
+        GameAuthenticationService(self._transport).authenticate(credential)
         return True
 
 
