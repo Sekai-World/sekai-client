@@ -5,11 +5,14 @@ Tests job enqueueing, worker execution, and timeout handling.
 """
 
 import queue
+from unittest.mock import Mock
 
 import pytest
 
 from config import Config
-from utils.task_queue import start_worker
+from utils import deadline as deadline_module
+from utils.deadline import Deadline, DeadlineExceeded
+from utils.task_queue import QueuedJob, _run_queued_job, metrics_snapshot, start_worker
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -105,3 +108,38 @@ class TestQueueTimeout:
         assert Config.JOB_QUEUE_TIMEOUT > 0
         assert Config.ANSWER_QUEUE_TIMEOUT > 0
         assert Config.REQUEST_TIMEOUT > 0
+
+
+def test_expired_job_is_dropped_before_execution(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(deadline_module, "monotonic", lambda: now)
+    deadline = Deadline.after(1.0)
+    now = 102.0
+    job = Mock()
+    before = metrics_snapshot()
+
+    with pytest.raises(DeadlineExceeded, match="deadline exceeded"):
+        _run_queued_job(QueuedJob(job, queue.Queue(), deadline, 100.0))
+
+    job.assert_not_called()
+    after = metrics_snapshot()
+    assert after["expired_before_start_total"] == (
+        before["expired_before_start_total"] + 1
+    )
+
+
+def test_queue_metrics_snapshot_has_stable_shape():
+    snapshot = metrics_snapshot()
+
+    assert set(snapshot) == {
+        "depth",
+        "capacity",
+        "accepted_total",
+        "rejected_total",
+        "timed_out_total",
+        "expired_before_start_total",
+        "completed_total",
+        "queue_wait_seconds_total",
+        "execution_seconds_total",
+    }
+    assert snapshot["capacity"] == 1

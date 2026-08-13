@@ -49,7 +49,15 @@ from utils.deadline import (
 )
 from utils.jsonrpc_client import INTERNAL_RPC_TIMEOUT_HEADER, INTERNAL_RPC_TOKEN_HEADER
 from utils.redaction import redact_structure, redact_text
-from utils.task_queue import job_queue, start_worker
+from utils.task_queue import (
+    QueuedJob,
+    job_queue,
+    metrics_snapshot,
+    record_accepted,
+    record_rejected,
+    record_timed_out,
+    start_worker,
+)
 from utils.ujsonrpcapi import api
 
 enable_log_redaction()
@@ -217,15 +225,28 @@ def enqueue_job(
     response_queue: queue.Queue[Any] = queue.Queue(maxsize=1)
     deadline = current_deadline()
     timeout = Config.JOB_QUEUE_TIMEOUT
-    if deadline is not None:
+    if deadline is None:
+        deadline = Deadline.after(Config.ANSWER_QUEUE_TIMEOUT)
+    else:
         try:
             timeout = min(timeout, deadline.require_remaining())
         except DeadlineExceeded:
+            record_timed_out()
             return None, JSONRPCInternalError(data="Request deadline exceeded")
     try:
-        job_queue.put((job, response_queue), timeout=timeout)
+        job_queue.put(
+            QueuedJob(job, response_queue, deadline, monotonic()), timeout=timeout
+        )
     except queue.Full:
-        return None, JSONRPCInternalError(data="Job queue is full, please retry later")
+        record_rejected()
+        return None, JSONRPCInternalError(
+            data={
+                "code": "queue_full",
+                "retryable": True,
+                "retry_after": 1,
+            }
+        )
+    record_accepted()
     return response_queue, None
 
 
@@ -246,8 +267,10 @@ def get_answer(response_queue: queue.Queue[Any]) -> Any | JSONRPCInternalError:
             timeout = min(timeout, deadline.require_remaining())
         res: Any = response_queue.get(timeout=timeout)
     except queue.Empty:
+        record_timed_out()
         return JSONRPCInternalError(data="Request deadline exceeded")
     except DeadlineExceeded:
+        record_timed_out()
         return JSONRPCInternalError(data="Request deadline exceeded")
 
     if isinstance(res, RuntimeError):
@@ -791,13 +814,13 @@ def is_login() -> bool:
 @api.dispatcher.add_method
 def lifecycle_status() -> dict[str, Any]:
     """Return structured, secret-free lifecycle information."""
-    return _lifecycle.status()
+    return {**_lifecycle.status(), "queue": metrics_snapshot()}
 
 
 @api.dispatcher.add_method
 def readiness() -> dict[str, Any]:
     """Return the readiness snapshot without performing I/O."""
-    return _lifecycle.status()
+    return {**_lifecycle.status(), "queue": metrics_snapshot()}
 
 
 @api.dispatcher.add_method

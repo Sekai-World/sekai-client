@@ -271,7 +271,11 @@ def test_enqueue_job_rejects_with_error_when_queue_full(monkeypatch):
 
     assert response_queue is None
     assert isinstance(error, JSONRPCInternalError)
-    assert "Job queue is full" in error.data
+    assert error.data == {
+        "code": "queue_full",
+        "retryable": True,
+        "retry_after": 1,
+    }
 
 
 def test_write_account_yaml_atomic_mode_0600_and_cleanup_on_failure(
@@ -708,6 +712,15 @@ def test_expired_hidden_auth_callback_cannot_publish(monkeypatch, logged_in_clie
         assert shared_client._lifecycle.auth_generation == 0
         assert shared_client._lifecycle.user == {"name": "current-user"}
         assert shared_client._lifecycle.state is shared_client.LifecycleState.READY
+
+
+def test_readiness_exposes_secret_free_queue_metrics(reset_lifecycle):
+    status = shared_client.readiness()
+
+    assert status["queue"]["capacity"] == 1
+    assert isinstance(status["queue"]["depth"], int)
+    assert "accepted_total" in status["queue"]
+    assert "execution_seconds_total" in status["queue"]
 
 
 @pytest.mark.parametrize("configured", ["", "not-a-region"])
