@@ -40,6 +40,7 @@ from accounts import (
     AccountRegion,
     AccountRegistrationAdapter,
     LocalAccountProvider,
+    RemoteAccountProvider,
     credential_to_account_info,
 )
 from api_client import APIClient, AuthTransition, AuthTransitionKind
@@ -586,17 +587,12 @@ def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
 
 
 def get_account_info() -> dict[str, Any]:
-    """Acquire a local lease and adapt it to the current game client payload."""
+    """Acquire a lease and adapt it to the current game client payload."""
     global _account_provider, _active_account_lease
 
     region = AccountRegion(_lifecycle.region)
     if _account_provider is None:
-        _account_provider = LocalAccountProvider(
-            dirname,
-            register_account=lambda target_region: AccountRegistrationAdapter(
-                require_api_client()
-            ).register(target_region),
-        )
+        _account_provider = _build_account_provider()
     lease = _account_provider.acquire(
         region,
         f"shared-client-{region.value}",
@@ -605,6 +601,37 @@ def get_account_info() -> dict[str, Any]:
     )
     _active_account_lease = lease
     return credential_to_account_info(lease.credential)
+
+
+def _build_account_provider() -> AccountProvider:
+    provider_kind = getenv("SEKAI_ACCOUNT_PROVIDER", "local").strip().lower()
+    if provider_kind == "local":
+        return LocalAccountProvider(
+            dirname,
+            register_account=lambda target_region: AccountRegistrationAdapter(
+                require_api_client()
+            ).register(target_region),
+        )
+    if provider_kind == "remote":
+        try:
+            timeout = float(getenv("SEKAI_ACCOUNT_SERVICE_TIMEOUT", "10"))
+            max_attempts = int(getenv("SEKAI_ACCOUNT_SERVICE_MAX_ATTEMPTS", "3"))
+        except ValueError:
+            raise RuntimeError(
+                "Invalid remote account provider configuration"
+            ) from None
+        try:
+            return RemoteAccountProvider(
+                getenv("SEKAI_ACCOUNT_SERVICE_URL", "").strip(),
+                getenv("SEKAI_ACCOUNT_SERVICE_TOKEN", "").strip(),
+                timeout=timeout,
+                max_attempts=max_attempts,
+            )
+        except ValueError:
+            raise RuntimeError(
+                "Invalid remote account provider configuration"
+            ) from None
+    raise RuntimeError("Unsupported account provider configuration")
 
 
 def login_account(forced: bool = False) -> dict[str, Any]:

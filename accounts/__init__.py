@@ -21,6 +21,7 @@ from accounts.registration import (
     RegistrationTransport,
     parse_registration_response,
 )
+from accounts.remote import RemoteAccountProvider
 
 __all__ = [
     "AccountCredential",
@@ -35,6 +36,7 @@ __all__ = [
     "InvalidLeaseError",
     "JpEnCredential",
     "LocalAccountProvider",
+    "RemoteAccountProvider",
     "RegistrationTransport",
     "TwKrCredential",
     "credential_to_account_info",
