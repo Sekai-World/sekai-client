@@ -11,6 +11,8 @@
   - Phased remediation plan with task checklists, dependencies, acceptance criteria, and progress tracking.
 - [architecture-decoupling-roadmap.md](architecture-decoupling-roadmap.md)
   - Plan for modularizing this repository and extracting account registration and leasing into a separate service.
+- [account-service-tw-canary.md](account-service-tw-canary.md)
+  - Preconditions, observation gates, and rollback procedure for the first remote-provider canary.
 
 ## Development Workflow
 
