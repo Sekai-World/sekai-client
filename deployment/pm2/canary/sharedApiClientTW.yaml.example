@@ -1,0 +1,19 @@
+# Remote account-provider canary for the existing TW shared-client process.
+# Generate outside the repository with envsubst and protect the rendered file
+# as 0600 because it contains service and RPC tokens.
+apps:
+  - name: sharedApiClient-tw
+    script: uv run gunicorn --worker-class gevent --workers 1 --timeout 0 --bind 127.0.0.1:39391 shared_client:app
+    cwd: /root/sekai-client
+    env:
+      SEKAI_REGION: tw
+      AES_IV: 6d737833495630693958453575595a31
+      AES_KEY: ${AES_KEY}
+      APP_VER: 2.8.0
+      LOGLEVEL: DEBUG
+      INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}
+      SEKAI_ACCOUNT_PROVIDER: remote
+      SEKAI_ACCOUNT_SERVICE_URL: ${SEKAI_ACCOUNT_SERVICE_URL}
+      SEKAI_ACCOUNT_SERVICE_TOKEN: ${SEKAI_ACCOUNT_SERVICE_TOKEN}
+      SEKAI_ACCOUNT_SERVICE_TIMEOUT: "10"
+      SEKAI_ACCOUNT_SERVICE_MAX_ATTEMPTS: "3"

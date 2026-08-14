@@ -215,6 +215,10 @@ Acceptance criteria:
 
 ### Phase 5: Rollout and Remove Local Registration
 
+The repository contains a dedicated TW remote-provider PM2 template and
+[canary runbook](account-service-tw-canary.md). This is preparation only; the
+production canary remains unchecked until its evidence is recorded.
+
 - [ ] Deploy the account service before enabling remote acquisition in clients.
 - [ ] Canary one region and one consumer, then expand by region.
 - [ ] Monitor lease conflicts, acquisition latency, authentication failures,
