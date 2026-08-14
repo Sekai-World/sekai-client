@@ -14,6 +14,7 @@ Regional Ports (configurable via environment):
 - China (cn): 39394 (CN_PORT)
 """
 
+import atexit
 import logging
 import queue
 from collections.abc import Callable
@@ -72,13 +73,15 @@ logger = logging.getLogger(__name__)
 dirname = path.dirname(__file__)
 _account_provider: AccountProvider | None = None
 _active_account_lease: AccountLease | None = None
+_account_lease_lock = Lock()
 
 
 def configure_account_provider(provider: AccountProvider | None) -> None:
     """Inject an account provider; `None` restores the local default."""
     global _account_provider, _active_account_lease
-    _account_provider = provider
-    _active_account_lease = None
+    with _account_lease_lock:
+        _account_provider = provider
+        _active_account_lease = None
 
 
 # Header used to authenticate internal JSON-RPC calls between the
@@ -591,16 +594,41 @@ def get_account_info() -> dict[str, Any]:
     global _account_provider, _active_account_lease
 
     region = AccountRegion(_lifecycle.region)
-    if _account_provider is None:
-        _account_provider = _build_account_provider()
-    lease = _account_provider.acquire(
-        region,
-        f"shared-client-{region.value}",
-        ttl_seconds=24 * 60 * 60,
-        idempotency_key=f"login-{uuid4()}",
-    )
-    _active_account_lease = lease
-    return credential_to_account_info(lease.credential)
+    with _account_lease_lock:
+        if (
+            _active_account_lease is not None
+            and _active_account_lease.region is region
+            and not _active_account_lease.is_expired()
+        ):
+            return credential_to_account_info(_active_account_lease.credential)
+        if _account_provider is None:
+            _account_provider = _build_account_provider()
+        lease = _account_provider.acquire(
+            region,
+            f"shared-client-{region.value}",
+            ttl_seconds=24 * 60 * 60,
+            idempotency_key=f"login-{uuid4()}",
+        )
+        _active_account_lease = lease
+        return credential_to_account_info(lease.credential)
+
+
+def release_active_account_lease() -> None:
+    """Best-effort idempotent release for graceful worker shutdown."""
+    global _active_account_lease
+    with _account_lease_lock:
+        lease = _active_account_lease
+        provider = _account_provider
+        _active_account_lease = None
+    if lease is None or provider is None:
+        return
+    try:
+        provider.release(lease.lease_id)
+    except Exception:
+        logger.warning("Failed to release account lease during shutdown")
+
+
+atexit.register(release_active_account_lease)
 
 
 def _build_account_provider() -> AccountProvider:

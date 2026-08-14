@@ -157,6 +157,87 @@ def test_injected_provider_lease_is_released_when_login_fails(
     assert shared_client._active_account_lease is None
 
 
+def test_get_account_info_reuses_live_lease(monkeypatch, reset_lifecycle):
+    lease = AccountLease(
+        "lease-live",
+        "shared-client-jp",
+        datetime.now(UTC) + timedelta(minutes=5),
+        JpEnCredential(AccountRegion.JP, "user", "credential", "signature"),
+    )
+    provider = Mock()
+    monkeypatch.setattr(shared_client._lifecycle, "region", "jp")
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_active_account_lease", lease)
+
+    first = shared_client.get_account_info()
+    second = shared_client.get_account_info()
+
+    assert first == second
+    assert first["userId"] == "user"
+    provider.acquire.assert_not_called()
+
+
+def test_get_account_info_reacquires_expired_lease(monkeypatch, reset_lifecycle):
+    expired = AccountLease(
+        "lease-expired",
+        "shared-client-jp",
+        datetime.now(UTC) - timedelta(seconds=1),
+        JpEnCredential(AccountRegion.JP, "old", "old-credential", "old-signature"),
+    )
+    replacement = AccountLease(
+        "lease-new",
+        "shared-client-jp",
+        datetime.now(UTC) + timedelta(hours=24),
+        JpEnCredential(AccountRegion.JP, "new", "credential", "signature"),
+    )
+    provider = Mock()
+    provider.acquire.return_value = replacement
+    monkeypatch.setattr(shared_client._lifecycle, "region", "jp")
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_active_account_lease", expired)
+
+    account_info = shared_client.get_account_info()
+
+    assert account_info["userId"] == "new"
+    assert shared_client._active_account_lease is replacement
+    provider.acquire.assert_called_once()
+
+
+def test_graceful_shutdown_release_is_best_effort_and_idempotent(monkeypatch):
+    lease = AccountLease(
+        "lease-active",
+        "shared-client-jp",
+        datetime.now(UTC) + timedelta(minutes=5),
+        JpEnCredential(AccountRegion.JP, "user", "credential", "signature"),
+    )
+    provider = Mock()
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_active_account_lease", lease)
+
+    shared_client.release_active_account_lease()
+    shared_client.release_active_account_lease()
+
+    provider.release.assert_called_once_with("lease-active")
+    assert shared_client._active_account_lease is None
+
+
+def test_graceful_shutdown_release_failure_does_not_escape(monkeypatch, caplog):
+    lease = AccountLease(
+        "lease-active",
+        "shared-client-jp",
+        datetime.now(UTC) + timedelta(minutes=5),
+        JpEnCredential(AccountRegion.JP, "user", "credential", "signature"),
+    )
+    provider = Mock()
+    provider.release.side_effect = RuntimeError("sensitive upstream response")
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_active_account_lease", lease)
+
+    shared_client.release_active_account_lease()
+
+    assert "sensitive upstream response" not in caplog.text
+
+
 def test_nested_hidden_auth_success_survives_outer_login_error(
     monkeypatch, reset_lifecycle
 ):
