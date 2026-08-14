@@ -336,6 +336,10 @@ UNINITIALIZED
 
 - 2026-07-23：提交 `<commit-id>`（`feat: add fixed-region client lifecycle`）实现每进程固定区域、区域生命周期状态、序列化生命周期变更与兼容 RPC、纯 readiness/liveness 状态接口及独立退避；提交 `<commit-id>`（`feat: expose regional lifecycle readiness`）实现公共 API 目标区域 `ensure_ready`、脱敏 503/`Retry-After`、`/health/live`、`/health/ready` 和 legacy `/health` 兼容，并将 Dashboard 探针改为 readiness、PM2 正式区域模板显式 `--workers 1`。两提交目前为 `transform-python` 上未推送的阶段 5 工作；无 PR/合并状态可记录。
 - 本次代码验收：Oracle Gate 1/2 均 **APPROVE**；全套 `pytest` 414 passed，Ruff、Mypy、`git diff --check` clean。生产 PM2/Gunicorn、canary/rollout、公共部署和监控验收仍待完成。
+- 2026-08-14: Added a separate TW remote-account-provider PM2 canary template,
+  configuration contract test, and backup/observation/rollback runbook. This is
+  preparation only; no production process was changed and canary acceptance
+  remains pending.
 
 ## 阶段 6：Deadline、重试与队列生命周期
 
