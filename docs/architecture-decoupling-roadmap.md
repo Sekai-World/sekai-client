@@ -62,9 +62,9 @@ apps -> game services -> auth/session -> protocol
 
 Use leases instead of returning an uncoordinated account. The minimum API is:
 
-- `POST /v1/account-leases`: acquire an account by region and consumer.
-- `DELETE /v1/account-leases/{lease_id}`: release an account.
-- `POST /v1/account-leases/{lease_id}/report`: report invalid credentials or
+- `POST /v1/leases`: acquire an account by region and consumer.
+- `DELETE /v1/leases/{lease_id}`: release an account.
+- `POST /v1/leases/{lease_id}/invalid`: report invalid credentials or
   account failures.
 - Internal administrative operations: register, inspect, quarantine, restore,
   rotate, and revoke accounts.
@@ -151,14 +151,14 @@ Acceptance criteria:
 ### Phase 3: Build the Separate Account Service
 
 - [x] Create the account-service repository.
-- [ ] Add the account-service CI baseline.
-- [ ] Implement encrypted persistence, service-token authentication, scopes, and
+- [x] Add the account-service CI baseline.
+- [x] Implement encrypted persistence, service-token authentication, scopes, and
   audit events.
-- [ ] Implement transactional account acquisition with exclusive leases.
-- [ ] Implement expiry recovery, release, quarantine, and invalid-account reports.
+- [x] Implement transactional account acquisition with exclusive leases.
+- [x] Implement expiry recovery, release, quarantine, and invalid-account reports.
 - [ ] Run account registration asynchronously with bounded retries and rate
   limits.
-- [ ] Add migrations, backup/restore instructions, health checks, metrics, and
+- [x] Add migrations, backup/restore instructions, health checks, metrics, and
   deployment documentation.
 
 Acceptance criteria:
@@ -168,35 +168,41 @@ Acceptance criteria:
 - Registration failure cannot publish a partial account.
 - Restart, migration, token rotation, and backup recovery are tested.
 
-Current implementation audit (2026-08-13):
+Current implementation audit (2026-08-14):
 
-- The repository exists at `~/Projects/pjsk-account-service` and has tests,
-  container packaging, Keycloak/static-key authentication, Kubernetes manifests,
-  metrics, and a persistent JSON state store.
-- Its deployed contract is currently a GSDK login-token cache, not the account
-  lease service defined in this roadmap. It exposes `/v1/token` and
-  `/v1/accounts`; it has no acquire, release, renewal, or invalid-account API.
-- The checked-in protocol configuration is a single TW configuration
-  (`com.hermes.mk.asia`). TW/KR research covers obtaining a GSDK access token,
-  which, together with `sdk_open_id`, is the complete TW/KR account-provider
-  output expected by this client.
-- JP/EN registration is not implemented in that repository. Game authentication
-  is intentionally client-owned for every region.
-- JSON files are permission-restricted but credentials are not encrypted at
-  rest. There is no transactional database-backed lease coordinator.
-- Keep game authentication and all subsequent login behavior in `sekai-client`.
-  The account service should lease only the inputs required by `/user/auth`:
-  `user_id`, `credential`, and `signature` for JP/EN; `sdk_open_id` and the GSDK
-  access token for TW/KR.
+- `pjsk-account-service` implements four-region typed credentials, encrypted
+  SQLite/Postgres inventory, transactional leases, expiry recovery, quarantine,
+  scoped authentication, safe audit events, and bounded metrics.
+- JP/EN registration and TW/KR GSDK provisioning publish only complete auth
+  inputs. The service does not perform game authentication.
+- A backup-first migration retains and validates legacy TW/KR JSON state before
+  publishing it to inventory. `/v1/token` remains a temporary internal adapter.
+- This repository now implements the matching remote HTTP provider and keeps
+  `/user/auth`, session establishment, tutorial work, and game APIs client-owned.
 
 ### Phase 4: Integrate the Remote Provider
 
-- [ ] Add `RemoteAccountProvider` with HTTPS, bearer-token authentication,
+- [x] Add `RemoteAccountProvider` with HTTPS, bearer-token authentication,
   deadlines, bounded retries, and stable error mapping.
-- [ ] Keep local and remote providers selectable during migration.
+- [x] Keep local and remote providers selectable during migration.
 - [ ] Add lease renewal or reacquisition behavior for long-running processes.
 - [ ] Release leases on graceful shutdown and rely on expiry after crashes.
-- [ ] Add integration tests using a fake account-service server.
+- [x] Add integration tests using a fake account-service server.
+
+Provider selection is deployment controlled. Local remains the default. A
+remote canary sets:
+
+```text
+SEKAI_ACCOUNT_PROVIDER=remote
+SEKAI_ACCOUNT_SERVICE_URL=https://accounts.example.com
+SEKAI_ACCOUNT_SERVICE_TOKEN=<lease-scoped token>
+SEKAI_ACCOUNT_SERVICE_TIMEOUT=10
+SEKAI_ACCOUNT_SERVICE_MAX_ATTEMPTS=3
+```
+
+Plain HTTP is accepted only for loopback fake-service and local integration
+tests. Remote responses are converted into client-owned credential models;
+game authentication and session establishment remain in this repository.
 
 Acceptance criteria:
 
@@ -276,10 +282,10 @@ Phase 7 should be completed before broad production migration when practical so
 account-source migration and event-delivery reliability are not changed at the
 same time.
 
-The Phase 0 production audit and public-release gate are complete. The repository
-is public, PR CI uses GitHub-hosted runners with pinned actions, and the default
-branch ruleset is active. The immediate next action is the critical remediation
-Phase 6 reliability work.
+The Phase 0 production audit, public-release gate, and critical remediation
+Phase 6 reliability work are complete. The immediate next action is lease
+reacquisition and graceful shutdown handling, followed by one-region canary
+configuration without removing the local rollback path.
 
 ## Suggested Pull Requests
 
