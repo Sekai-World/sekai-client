@@ -185,8 +185,8 @@ Current implementation audit (2026-08-14):
 - [x] Add `RemoteAccountProvider` with HTTPS, bearer-token authentication,
   deadlines, bounded retries, and stable error mapping.
 - [x] Keep local and remote providers selectable during migration.
-- [ ] Add lease renewal or reacquisition behavior for long-running processes.
-- [ ] Release leases on graceful shutdown and rely on expiry after crashes.
+- [x] Add lease renewal or reacquisition behavior for long-running processes.
+- [x] Release leases on graceful shutdown and rely on expiry after crashes.
 - [x] Add integration tests using a fake account-service server.
 
 Provider selection is deployment controlled. Local remains the default. A
@@ -203,6 +203,9 @@ SEKAI_ACCOUNT_SERVICE_MAX_ATTEMPTS=3
 Plain HTTP is accepted only for loopback fake-service and local integration
 tests. Remote responses are converted into client-owned credential models;
 game authentication and session establishment remain in this repository.
+The shared client reuses its current live lease across relogins, reacquires only
+after expiry, and performs a credential-safe best-effort release during normal
+worker shutdown. Abrupt termination remains covered by server-side expiry.
 
 Acceptance criteria:
 
@@ -282,10 +285,10 @@ Phase 7 should be completed before broad production migration when practical so
 account-source migration and event-delivery reliability are not changed at the
 same time.
 
-The Phase 0 production audit, public-release gate, and critical remediation
-Phase 6 reliability work are complete. The immediate next action is lease
-reacquisition and graceful shutdown handling, followed by one-region canary
-configuration without removing the local rollback path.
+The Phase 0 production audit, public-release gate, critical remediation Phase 6
+reliability work, and remote-provider lifecycle handling are complete. The
+immediate next action is one-region canary configuration without removing the
+local rollback path.
 
 ## Suggested Pull Requests
 
