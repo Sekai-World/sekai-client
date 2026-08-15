@@ -45,8 +45,9 @@ they contain expanded credentials.
 - `STRAPI_TOKEN` belongs only to the JP check-update process.
 - Do not set `ALLOW_INSECURE_INTERNAL_RPC` or `ENABLE_UNSAFE_PJSK_RPC` in
   production.
-- Never embed a GitHub personal access token in `REMOTE_GIT_BASE_URL`; use an
-  SSH deploy key or a credential helper.
+- Never embed a GitHub personal access token in `REMOTE_GIT_BASE_URL`. Production
+  uses the repository-scoped GitHub App credential helper documented in
+  [GitHub App Authentication](../../docs/github-app-git-authentication.md).
 
 ## Why YAML is retained
 

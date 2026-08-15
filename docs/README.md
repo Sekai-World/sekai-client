@@ -18,3 +18,5 @@
 
 - [development-tooling-and-commands.md](development-tooling-and-commands.md)
   - Ruff-only tooling policy, local commands, and pre-PR checks.
+- [github-app-git-authentication.md](github-app-git-authentication.md)
+  - Repository-scoped GitHub App authentication for automated update pushes.
