@@ -198,6 +198,7 @@ SEKAI_ACCOUNT_SERVICE_URL=https://accounts.example.com
 SEKAI_ACCOUNT_SERVICE_TOKEN=<lease-scoped token>
 SEKAI_ACCOUNT_SERVICE_TIMEOUT=10
 SEKAI_ACCOUNT_SERVICE_MAX_ATTEMPTS=3
+SEKAI_ACCOUNT_LEASE_STATE_DIR=/root/sekai-client/.runtime/account-leases
 ```
 
 Plain HTTP is accepted only for loopback fake-service and local integration
@@ -206,6 +207,10 @@ game authentication and session establishment remain in this repository.
 The shared client reuses its current live lease across relogins, reacquires only
 after expiry, and performs a credential-safe best-effort release during normal
 worker shutdown. Abrupt termination remains covered by server-side expiry.
+Remote acquire and release intent is journaled with atomic `0600` writes. A
+restart reuses the same acquire idempotency key or completes an ambiguous
+release before requesting another account. Gunicorn's `worker_exit` hook runs
+the graceful release path without replacing Gunicorn's signal handlers.
 
 Acceptance criteria:
 

@@ -24,6 +24,8 @@ from accounts.provider import (
 
 
 class RemoteAccountProvider:
+    requires_durable_idempotency = True
+
     def __init__(
         self,
         base_url: str,

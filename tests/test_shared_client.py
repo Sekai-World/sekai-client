@@ -29,6 +29,7 @@ from utils.deadline import (
 
 @pytest.fixture
 def reset_lifecycle(monkeypatch):
+    monkeypatch.setattr(shared_client, "_active_lease_operation", None)
     runtime = shared_client._lifecycle
     with runtime.lock:
         old = (
@@ -155,6 +156,32 @@ def test_injected_provider_lease_is_released_when_login_fails(
     provider.acquire.assert_called_once()
     provider.release.assert_called_once_with("lease-new")
     assert shared_client._active_account_lease is None
+
+
+def test_release_failure_does_not_mask_login_failure(monkeypatch, logged_in_client):
+    lease = AccountLease(
+        "lease-new",
+        "shared-client-jp",
+        datetime.now(UTC) + timedelta(minutes=5),
+        JpEnCredential(AccountRegion.JP, "new-user", "credential", "signature"),
+    )
+    provider = Mock()
+    provider.release.side_effect = RuntimeError("release failed")
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_active_account_lease", None)
+    monkeypatch.setattr(shared_client, "day_change_job", Mock())
+
+    def acquire_account():
+        shared_client._active_account_lease = lease
+        return {"userId": "new-user"}
+
+    monkeypatch.setattr(shared_client, "get_account_info", acquire_account)
+    logged_in_client.login.side_effect = RuntimeError("login failed")
+
+    with pytest.raises(RuntimeError, match="login failed"):
+        shared_client.login_account(True)
+
+    provider.release.assert_called_once_with("lease-new")
 
 
 def test_get_account_info_reuses_live_lease(monkeypatch, reset_lifecycle):
