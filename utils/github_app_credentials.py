@@ -73,7 +73,7 @@ def requested_repository(fields: dict[str, str]) -> str:
     return repository
 
 
-def create_installation_token(config: AppConfig) -> str:
+def create_installation_token(config: AppConfig, repository: str) -> str:
     now = datetime.now(UTC)
     private_key = config.private_key_path.read_text(encoding="ascii")
     app_jwt = jwt.encode(
@@ -93,7 +93,7 @@ def create_installation_token(config: AppConfig) -> str:
                 "Authorization": f"Bearer {app_jwt}",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
-            json={"repositories": sorted(config.repositories)},
+            json={"repositories": [repository]},
             timeout=10,
         )
         response.raise_for_status()
@@ -110,7 +110,7 @@ def credential_get(config_path: Path, stdin: TextIO, stdout: TextIO) -> None:
     repository = requested_repository(parse_credential_request(stdin))
     if repository not in config.repositories:
         raise RuntimeError("repository is not allowed by GitHub App configuration")
-    token = create_installation_token(config)
+    token = create_installation_token(config, repository)
     stdout.write("username=x-access-token\n")
     stdout.write(f"password={token}\n\n")
 

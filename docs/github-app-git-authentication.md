@@ -12,8 +12,8 @@ repositories and has `Contents: write` plus `Metadata: read` permissions.
   repositories listed in `deployment/github-app/config.example.json`
 
 The credential helper checks the requested Git repository against this
-allowlist and requests an installation token scoped to the same list. It does
-not cache tokens or handle credentials for another host or repository.
+allowlist and requests an installation token scoped only to that repository. It
+does not cache tokens or handle credentials for another host or repository.
 
 ## Production installation
 

@@ -31,7 +31,9 @@ def _config(tmp_path: Path) -> Path:
 def test_get_returns_short_lived_credentials(tmp_path, monkeypatch):
     config = _config(tmp_path)
     monkeypatch.setattr(
-        credentials, "create_installation_token", lambda _: "installation-token"
+        credentials,
+        "create_installation_token",
+        lambda _, repository: "installation-token",
     )
     stdout = io.StringIO()
 
@@ -91,7 +93,12 @@ def test_token_request_is_repository_scoped(tmp_path, monkeypatch):
     post = Mock(return_value=response)
     monkeypatch.setattr(credentials.requests, "post", post)
 
-    assert credentials.create_installation_token(config) == "installation-token"
+    assert (
+        credentials.create_installation_token(
+            config, "Sekai-World/sekai-master-db-diff"
+        )
+        == "installation-token"
+    )
     response.raise_for_status.assert_called_once_with()
     assert post.call_args.kwargs["json"] == {
         "repositories": ["Sekai-World/sekai-master-db-diff"]
