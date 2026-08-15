@@ -1,6 +1,9 @@
 import json
 import stat
+import tempfile
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
@@ -51,3 +54,62 @@ def test_corrupt_journal_fails_closed(tmp_path):
 
     with pytest.raises(RuntimeError, match="journal is invalid"):
         journal.load_or_create("tw", "worker")
+
+
+def test_shared_temporary_directory_is_rejected_without_chmod():
+    directory = Path(tempfile.gettempdir())
+    original_mode = stat.S_IMODE(directory.stat().st_mode)
+
+    with pytest.raises(RuntimeError, match="shared temporary directory"):
+        LeaseJournal(directory).load_or_create("tw", "worker")
+
+    assert stat.S_IMODE(directory.stat().st_mode) == original_mode
+
+
+def test_existing_non_private_directory_is_rejected(tmp_path):
+    directory = tmp_path / "leases"
+    directory.mkdir(mode=0o755)
+
+    with pytest.raises(RuntimeError, match="must be private"):
+        LeaseJournal(directory).load_or_create("tw", "worker")
+
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o755
+
+
+def test_clear_cannot_delete_a_concurrent_replacement(tmp_path, monkeypatch):
+    clearing = LeaseJournal(tmp_path)
+    replacing = LeaseJournal(tmp_path)
+    pending = clearing.load_or_create("tw", "worker")
+    expired = clearing.mark_acquired(
+        pending, "lease-old", datetime.now(UTC) - timedelta(seconds=1)
+    )
+    loaded = Event()
+    continue_clear = Event()
+    replacement_finished = Event()
+    original_load = clearing._load
+
+    def paused_load(target, region, consumer):
+        operation = original_load(target, region, consumer)
+        loaded.set()
+        assert continue_clear.wait(timeout=2)
+        return operation
+
+    monkeypatch.setattr(clearing, "_load", paused_load)
+    clear_thread = Thread(target=clearing.clear, args=(expired,))
+    clear_thread.start()
+    assert loaded.wait(timeout=2)
+
+    def replace():
+        replacing.load_or_create("tw", "worker")
+        replacement_finished.set()
+
+    replace_thread = Thread(target=replace)
+    replace_thread.start()
+    assert not replacement_finished.wait(timeout=0.1)
+    continue_clear.set()
+    clear_thread.join(timeout=2)
+    replace_thread.join(timeout=2)
+
+    replacement = replacing.load("tw", "worker")
+    assert replacement is not None
+    assert replacement.idempotency_key != expired.idempotency_key

@@ -40,6 +40,7 @@ from accounts import (
     AccountProvider,
     AccountRegion,
     AccountRegistrationAdapter,
+    InvalidLeaseError,
     LocalAccountProvider,
     RemoteAccountProvider,
     credential_to_account_info,
@@ -612,7 +613,10 @@ def get_account_info() -> dict[str, Any]:
         if journal is not None:
             operation = journal.load_or_create(region.value, consumer)
             if operation.release_pending:
-                _account_provider.release(operation.lease_id or "")
+                try:
+                    _account_provider.release(operation.lease_id or "")
+                except InvalidLeaseError:
+                    pass
                 journal.clear(operation)
                 operation = journal.load_or_create(region.value, consumer)
         lease = _account_provider.acquire(

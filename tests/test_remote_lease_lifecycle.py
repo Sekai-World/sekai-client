@@ -5,7 +5,7 @@ import pytest
 import gunicorn_conf
 import shared_client
 from accounts import AccountLease, AccountRegion, TwKrCredential
-from accounts.provider import AccountProviderError
+from accounts.provider import AccountProviderError, InvalidLeaseError
 
 
 class DurableProvider:
@@ -106,6 +106,28 @@ def test_restart_completes_pending_release_before_new_acquire(tmp_path, monkeypa
 
     shared_client.get_account_info()
 
+    assert provider.release_calls == ["lease-old"]
+    assert provider.acquire_keys[0] != old.idempotency_key
+
+
+def test_restart_accepts_an_already_released_lease(tmp_path, monkeypatch):
+    provider = DurableProvider(_lease("lease-new"))
+    journal = shared_client.LeaseJournal(tmp_path)
+    old = journal.load_or_create("tw", "shared-client-tw")
+    old = journal.mark_acquired(
+        old, "lease-old", datetime.now(UTC) + timedelta(minutes=5)
+    )
+    journal.mark_release_pending(old)
+    provider.release_error = InvalidLeaseError()
+    monkeypatch.setenv("SEKAI_ACCOUNT_LEASE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(shared_client._lifecycle, "region", "tw")
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_active_account_lease", None)
+    monkeypatch.setattr(shared_client, "_active_lease_operation", None)
+
+    result = shared_client.get_account_info()
+
+    assert result["userId"] == "open-id"
     assert provider.release_calls == ["lease-old"]
     assert provider.acquire_keys[0] != old.idempotency_key
 

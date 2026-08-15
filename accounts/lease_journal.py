@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from fcntl import LOCK_EX, LOCK_UN, flock
 from hashlib import sha256
 from pathlib import Path
+from stat import S_IMODE
 from uuid import uuid4
 
 
@@ -29,18 +33,23 @@ class LeaseJournal:
         self.directory = Path(directory)
 
     def load_or_create(self, region: str, consumer: str) -> LeaseOperation:
-        current = self.load(region, consumer)
-        now = datetime.now(UTC)
-        if current is not None and (
-            current.expires_at is None or current.expires_at > now
-        ):
-            return current
-        operation = LeaseOperation(region, consumer, f"login-{uuid4()}")
-        self._write(operation)
-        return operation
+        target = self._path(region, consumer)
+        with self._locked(target):
+            current = self._load(target, region, consumer)
+            now = datetime.now(UTC)
+            if current is not None and (
+                current.expires_at is None or current.expires_at > now
+            ):
+                return current
+            operation = LeaseOperation(region, consumer, f"login-{uuid4()}")
+            self._write(operation)
+            return operation
 
     def load(self, region: str, consumer: str) -> LeaseOperation | None:
         target = self._path(region, consumer)
+        return self._load(target, region, consumer)
+
+    def _load(self, target: Path, region: str, consumer: str) -> LeaseOperation | None:
         try:
             payload = json.loads(target.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -83,7 +92,8 @@ class LeaseJournal:
             lease_id,
             expires_at.astimezone(UTC),
         )
-        self._write(acquired)
+        with self._locked(self._path(operation.region, operation.consumer)):
+            self._write(acquired)
         return acquired
 
     def mark_release_pending(self, operation: LeaseOperation) -> LeaseOperation:
@@ -97,23 +107,24 @@ class LeaseJournal:
         )
         if not pending.lease_id:
             raise RuntimeError("cannot release an unconfirmed lease")
-        self._write(pending)
+        with self._locked(self._path(operation.region, operation.consumer)):
+            self._write(pending)
         return pending
 
     def clear(self, operation: LeaseOperation) -> None:
-        current = self.load(operation.region, operation.consumer)
-        if current is None or current.idempotency_key != operation.idempotency_key:
-            return
-        self._path(operation.region, operation.consumer).unlink()
-        self._fsync_directory()
+        target = self._path(operation.region, operation.consumer)
+        with self._locked(target):
+            current = self._load(target, operation.region, operation.consumer)
+            if current is None or current.idempotency_key != operation.idempotency_key:
+                return
+            target.unlink()
+            self._fsync_directory()
 
     def _path(self, region: str, consumer: str) -> Path:
         identity = sha256(f"{region}:{consumer}".encode()).hexdigest()[:24]
         return self.directory / f"lease-{identity}.json"
 
     def _write(self, operation: LeaseOperation) -> None:
-        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.directory.chmod(0o700)
         payload = {
             "version": 1,
             "region": operation.region,
@@ -143,6 +154,36 @@ class LeaseJournal:
             except OSError:
                 pass
             raise
+
+    @contextmanager
+    def _locked(self, target: Path) -> Iterator[None]:
+        self._ensure_directory()
+        lock_path = target.with_suffix(".lock")
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            os.fchmod(descriptor, 0o600)
+            flock(descriptor, LOCK_EX)
+            yield
+        finally:
+            flock(descriptor, LOCK_UN)
+            os.close(descriptor)
+
+    def _ensure_directory(self) -> None:
+        resolved = self.directory.resolve()
+        temporary_root = Path(tempfile.gettempdir()).resolve()
+        if resolved == temporary_root:
+            raise RuntimeError(
+                "lease journal cannot use the shared temporary directory"
+            )
+        try:
+            metadata = resolved.stat()
+        except FileNotFoundError:
+            self.directory.mkdir(mode=0o700, parents=True)
+            metadata = resolved.stat()
+        if metadata.st_uid != os.geteuid() or S_IMODE(metadata.st_mode) & 0o077:
+            raise RuntimeError(
+                "lease journal directory must be private and owner-controlled"
+            )
 
     def _fsync_directory(self) -> None:
         descriptor = os.open(self.directory, os.O_RDONLY)
