@@ -117,9 +117,7 @@ def test_token_request_is_repository_scoped(tmp_path, monkeypatch):
         == "installation-token"
     )
     response.raise_for_status.assert_called_once_with()
-    assert post.call_args.kwargs["json"] == {
-        "repositories": ["Sekai-World/sekai-master-db-diff"]
-    }
+    assert post.call_args.kwargs["json"] == {"repositories": ["sekai-master-db-diff"]}
 
 
 def test_main_redacts_token_request_failure(tmp_path, monkeypatch, capsys):

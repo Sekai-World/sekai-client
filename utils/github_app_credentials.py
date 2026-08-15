@@ -79,6 +79,7 @@ def requested_repository(fields: dict[str, str]) -> str:
 
 def create_installation_token(config: AppConfig, repository: str) -> str:
     now = datetime.now(UTC)
+    repository_name = repository.split("/", 1)[1]
     private_key = config.private_key_path.read_text(encoding="ascii")
     app_jwt = jwt.encode(
         {
@@ -97,7 +98,7 @@ def create_installation_token(config: AppConfig, repository: str) -> str:
                 "Authorization": f"Bearer {app_jwt}",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
-            json={"repositories": [repository]},
+            json={"repositories": [repository_name]},
             timeout=10,
         )
         response.raise_for_status()
