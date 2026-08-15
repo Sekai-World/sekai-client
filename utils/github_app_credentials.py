@@ -26,6 +26,10 @@ class AppConfig:
     repositories: frozenset[str]
 
 
+class CredentialNotApplicable(RuntimeError):
+    """The Git credential request is outside this helper's repository scope."""
+
+
 def _require_private_file(path: Path, label: str) -> None:
     metadata = path.stat()
     if metadata.st_uid != os.geteuid() or S_IMODE(metadata.st_mode) & 0o077:
@@ -66,10 +70,10 @@ def parse_credential_request(stream: TextIO) -> dict[str, str]:
 
 def requested_repository(fields: dict[str, str]) -> str:
     if fields.get("protocol") != "https" or fields.get("host") != "github.com":
-        raise RuntimeError("credential request is not for github.com HTTPS")
+        raise CredentialNotApplicable
     repository = fields.get("path", "").removesuffix(".git").strip("/")
     if repository.count("/") != 1:
-        raise RuntimeError("credential request has no repository path")
+        raise CredentialNotApplicable
     return repository
 
 
@@ -109,7 +113,7 @@ def credential_get(config_path: Path, stdin: TextIO, stdout: TextIO) -> None:
     config = load_config(config_path)
     repository = requested_repository(parse_credential_request(stdin))
     if repository not in config.repositories:
-        raise RuntimeError("repository is not allowed by GitHub App configuration")
+        raise CredentialNotApplicable("repository is not allowed")
     token = create_installation_token(config, repository)
     stdout.write("username=x-access-token\n")
     stdout.write(f"password={token}\n\n")
@@ -125,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
     config_path = Path(os.environ.get("SEKAI_GITHUB_APP_CONFIG", str(DEFAULT_CONFIG)))
     try:
         credential_get(config_path, sys.stdin, sys.stdout)
+    except CredentialNotApplicable:
+        return 0
     except Exception:
         print("GitHub App credential helper failed", file=sys.stderr)
         return 1
