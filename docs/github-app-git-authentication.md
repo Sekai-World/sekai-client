@@ -11,9 +11,11 @@ repositories and has `Contents: write` plus `Metadata: read` permissions.
 - Repositories: `sekai-i18n` and the JP, EN, TW, KR, and CN master-db diff
   repositories listed in `deployment/github-app/config.example.json`
 
-The credential helper checks the requested Git repository against this
+The global credential helper checks the requested Git repository against this
 allowlist and requests an installation token scoped only to that repository. It
-does not cache tokens or handle credentials for another host or repository.
+returns no credential for another host or repository, allowing unrelated Git
+credential helpers to continue normally. It does not cache tokens. Global
+installation is required because regional repositories may be cloned on demand.
 
 ## Production installation
 
@@ -29,8 +31,9 @@ uv run python deployment/github-app/install.py \
 
 The installer copies the key to
 `<protected-app-config-path>`, writes the non-secret App
-configuration, replaces each subrepository remote with a credential-free HTTPS
-URL, and installs a repository-local Git credential helper. The configuration
+configuration, replaces each existing subrepository remote with a
+credential-free HTTPS URL, and installs the allowlist-aware global Git
+credential helper so future regional clones also authenticate. The configuration
 directory is `0700`; its key and configuration files are `0600`.
 
 Delete the transferred source key after confirming the installed copy exists.

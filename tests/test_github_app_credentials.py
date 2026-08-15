@@ -68,6 +68,23 @@ def test_get_rejects_repository_outside_allowlist(tmp_path, monkeypatch):
     token_request.assert_not_called()
 
 
+def test_main_ignores_repository_outside_allowlist(tmp_path, monkeypatch, capsys):
+    config = _config(tmp_path)
+    monkeypatch.setenv("SEKAI_GITHUB_APP_CONFIG", str(config))
+    monkeypatch.setattr(
+        credentials.sys,
+        "stdin",
+        io.StringIO(
+            "protocol=https\nhost=github.com\npath=Sekai-World/sekai-client.git\n\n"
+        ),
+    )
+
+    assert credentials.main(["get"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
 def test_load_rejects_non_private_config(tmp_path):
     config = _config(tmp_path)
     config.chmod(0o644)
