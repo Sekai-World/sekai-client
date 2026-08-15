@@ -76,6 +76,14 @@ def test_existing_non_private_directory_is_rejected(tmp_path):
     assert stat.S_IMODE(directory.stat().st_mode) == 0o755
 
 
+def test_load_rejects_an_existing_non_private_directory(tmp_path):
+    directory = tmp_path / "leases"
+    directory.mkdir(mode=0o755)
+
+    with pytest.raises(RuntimeError, match="must be private"):
+        LeaseJournal(directory).load("tw", "worker")
+
+
 def test_clear_cannot_delete_a_concurrent_replacement(tmp_path, monkeypatch):
     clearing = LeaseJournal(tmp_path)
     replacing = LeaseJournal(tmp_path)

@@ -47,7 +47,8 @@ class LeaseJournal:
 
     def load(self, region: str, consumer: str) -> LeaseOperation | None:
         target = self._path(region, consumer)
-        return self._load(target, region, consumer)
+        with self._locked(target):
+            return self._load(target, region, consumer)
 
     def _load(self, target: Path, region: str, consumer: str) -> LeaseOperation | None:
         try:
