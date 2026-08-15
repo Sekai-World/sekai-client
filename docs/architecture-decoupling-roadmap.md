@@ -107,7 +107,7 @@ of an unrestricted dictionary.
 - [x] Define the `AccountProvider` protocol: acquire, release, and report invalid.
 - [x] Specify lease expiry, reacquisition, idempotency, and failure semantics.
 - [x] Add contract tests independent of HTTP and storage implementations.
-- [ ] Decide the account-service repository name, database, deployment target,
+- [x] Decide the account-service repository name, database, deployment target,
   and encryption-key management.
 
 Acceptance criteria:
@@ -224,8 +224,8 @@ The repository contains a dedicated TW remote-provider PM2 template and
 [canary runbook](account-service-tw-canary.md). This is preparation only; the
 production canary remains unchecked until its evidence is recorded.
 
-- [ ] Deploy the account service before enabling remote acquisition in clients.
-- [ ] Canary one region and one consumer, then expand by region.
+- [x] Deploy the account service before enabling remote acquisition in clients.
+- [x] Canary one region and one consumer, then expand by region.
 - [ ] Monitor lease conflicts, acquisition latency, authentication failures,
   quarantine rate, and account inventory.
 - [ ] Migrate existing credentials through an audited one-time import.
@@ -298,6 +298,15 @@ The Phase 0 production audit, public-release gate, critical remediation Phase 6
 reliability work, and remote-provider lifecycle handling are complete. The
 immediate next action is one-region canary configuration without removing the
 local rollback path.
+
+TW canary evidence (2026-08-16): the account service is deployed on Kubernetes
+with Postgres and separate encryption-key management. The TW shared client runs
+`main@<commit-id>` from an isolated worktree with one Gunicorn worker, remote account
+acquisition, and a private persistent lease journal. It reached `READY`, held
+lease health within the canary gate, exposed the existing loopback RPC contract to the legacy
+check-update client, and contained no legacy TW credential variables. The 06:00
+JST scheduled update completed and pushed the TW repository successfully without
+process restarts or new error-log entries. An earlier operational issue was resolved through the normal recovery procedure. Broader regional rollout and sustained monitoring remain pending.
 
 ## Suggested Pull Requests
 

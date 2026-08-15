@@ -20,13 +20,18 @@ throughout the canary.
 - The lease journal directory is persistent, writable only by the service user,
   and is not placed under `/tmp`.
 
-Verify service health and inspect aggregate inventory metrics without requesting
-a lease:
+The public ingress intentionally routes only `/v1` to the service; `/healthz`,
+`/readyz`, and `/metrics` are cluster-only. Verify them from an authorized
+Kubernetes operator context without requesting a lease:
 
 ```bash
-curl --fail --silent --show-error "$SEKAI_ACCOUNT_SERVICE_URL/healthz"
-curl --fail --silent --show-error "$SEKAI_ACCOUNT_SERVICE_URL/metrics" \
-  | grep -E 'pjsk_account_(inventory_accounts|active_leases)'
+kubectl -n pjsk-account exec deployment/pjsk-account-service -- \
+  python -c "import urllib.request; print(urllib.request.urlopen( \
+  'http://loopback-service-endpoint/healthz').read().decode())"
+kubectl -n pjsk-account exec deployment/pjsk-account-service -- \
+  python -c "import urllib.request; print(urllib.request.urlopen( \
+  'http://loopback-service-endpoint/metrics').read().decode())" \
+  | grep -E '^pjsk_account_(inventory_accounts|active_leases)'
 ```
 
 Do not use the acquire endpoint as a connectivity probe because it changes
@@ -55,9 +60,12 @@ present so graceful release and crash-boundary recovery remain enabled.
 ## Controlled Activation
 
 During an announced window, replace only `sharedApiClient-tw` using the rendered
-canary file. Do not restart check-update, event-tracker, or other regions. Record
-the activation timestamp, previous PM2 restart count, deployed revisions, and
-the account-service inventory counts.
+canary file. When the cwd or credential set changes, PM2 reload retains stale
+process metadata and environment values; use `pm2 delete sharedApiClient-tw`
+followed by `pm2 start <canary-file> --only sharedApiClient-tw`. Do not restart
+check-update, event-tracker, or other regions. Record the activation timestamp,
+previous PM2 restart count, deployed revisions, and account-service inventory
+counts.
 
 Immediately verify:
 
@@ -79,8 +87,8 @@ Rollback triggers include failure to become ready, repeated account-service
 errors, unexpected lease churn, authentication failure, quarantine, new process
 restarts, or downstream update/event failures.
 
-Restore the protected original local-provider PM2 file and reload only
-`sharedApiClient-tw`. Confirm readiness using the local credential path. The
+Restore the protected original local-provider PM2 file by deleting and starting
+only `sharedApiClient-tw`. Confirm readiness using the local credential path. The
 remote lease should be released during graceful worker exit; if it remains,
 wait for its server-side expiry or release it through an authorized operator
 workflow. Do not edit Postgres lease rows manually.
