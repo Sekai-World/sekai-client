@@ -506,6 +506,11 @@ and test-count records above are retained as execution history.
   update publisher and does not satisfy the event-ranking outbox requirement.
   `event_tracker` still removes and recreates a slow scheduler job, and explicit
   upstream response models remain absent.
+- Production Git authentication migration is prepared in-repository: the
+  `repository-scoped-github-app` GitHub App is restricted to the six generated-data
+  repositories, and the credential helper replaces long-lived PATs with
+  repository-scoped installation tokens. Production installation, old-token
+  revocation, and update-cycle verification remain operational steps.
 - [architecture-decoupling-roadmap.md](architecture-decoupling-roadmap.md) tracks
   the subsequent modularization and account-service extraction. Its remote
   provider rollout depends on the unfinished Phase 6 reliability work.
