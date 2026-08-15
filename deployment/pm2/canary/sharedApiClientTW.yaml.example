@@ -3,7 +3,7 @@
 # as 0600 because it contains service and RPC tokens.
 apps:
   - name: sharedApiClient-tw
-    script: uv run gunicorn --worker-class gevent --workers 1 --timeout 0 --bind 127.0.0.1:39391 shared_client:app
+    script: uv run gunicorn --config gunicorn_conf.py --worker-class gevent --workers 1 --timeout 0 --bind 127.0.0.1:39391 shared_client:app
     cwd: /root/sekai-client
     env:
       SEKAI_REGION: tw
@@ -17,3 +17,4 @@ apps:
       SEKAI_ACCOUNT_SERVICE_TOKEN: ${SEKAI_ACCOUNT_SERVICE_TOKEN}
       SEKAI_ACCOUNT_SERVICE_TIMEOUT: "10"
       SEKAI_ACCOUNT_SERVICE_MAX_ATTEMPTS: "3"
+      SEKAI_ACCOUNT_LEASE_STATE_DIR: /root/sekai-client/.runtime/account-leases
