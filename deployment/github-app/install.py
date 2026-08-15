@@ -19,12 +19,23 @@ REPOSITORIES = (
     "sekai-master-db-kr-diff",
     "sekai-master-db-tc-diff",
 )
+LEGACY_HELPER = "!/root/.config/sekai-client/github-app-credential.py"
 
 
 def _run_git(repository: Path, *arguments: str) -> None:
     subprocess.run(
         ["git", "-C", str(repository), *arguments],
         check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _run_global_git(*arguments: str, check: bool = True) -> None:
+    subprocess.run(
+        ["git", "config", "--global", *arguments],
+        check=check,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -55,11 +66,6 @@ def install(
     installation_id: int,
 ) -> None:
     repositories = [project_root / name for name in REPOSITORIES]
-    missing = [
-        repository.name for repository in repositories if not repository.is_dir()
-    ]
-    if missing:
-        raise RuntimeError("missing update repositories: " + ", ".join(missing))
     helper = project_root / "utils" / "github_app_credentials.py"
     python = project_root / ".venv" / "bin" / "python"
     if not helper.is_file() or not python.is_file() or not private_key_source.is_file():
@@ -89,7 +95,19 @@ def install(
     )
 
     helper_command = f"!{python} {helper}"
+    for obsolete in (LEGACY_HELPER, helper_command):
+        _run_global_git(
+            "--fixed-value",
+            "--unset-all",
+            "credential.helper",
+            obsolete,
+            check=False,
+        )
+    _run_global_git("--add", "credential.helper", helper_command)
+    _run_global_git("credential.https://github.com.useHttpPath", "true")
     for repository in repositories:
+        if not repository.is_dir():
+            continue
         _run_git(
             repository,
             "remote",
@@ -97,30 +115,6 @@ def install(
             "origin",
             f"https://github.com/Sekai-World/{repository.name}.git",
         )
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repository),
-                "config",
-                "--local",
-                "--unset-all",
-                "credential.helper",
-            ],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        _run_git(repository, "config", "--local", "--add", "credential.helper", "")
-        _run_git(
-            repository,
-            "config",
-            "--local",
-            "--add",
-            "credential.helper",
-            helper_command,
-        )
-        _run_git(repository, "config", "--local", "credential.useHttpPath", "true")
 
 
 def main() -> int:
