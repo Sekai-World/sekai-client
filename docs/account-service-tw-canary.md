@@ -17,6 +17,8 @@ throughout the canary.
 - The service URL is HTTPS and reachable from the shared-client host.
 - The current `<protected-ops-dir>/sharedApiClientTW.yaml` and PM2 process description have
   been copied to a protected rollback location.
+- The lease journal directory is persistent, writable only by the service user,
+  and is not placed under `/tmp`.
 
 Verify service health and inspect aggregate inventory metrics without requesting
 a lease:
@@ -47,6 +49,8 @@ Before applying it, confirm all placeholders were replaced, the bind remains
 `loopback-service-endpoint`, `--workers 1` remains present, and no
 `SEKAI_TW_ACCESS_TOKEN` or `SEKAI_TW_SDK_OPEN_ID` is present. Never print the
 rendered file into shared logs or CI output.
+Confirm `--config gunicorn_conf.py` and `SEKAI_ACCOUNT_LEASE_STATE_DIR` are
+present so graceful release and crash-boundary recovery remain enabled.
 
 ## Controlled Activation
 

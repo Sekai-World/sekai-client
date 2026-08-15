@@ -40,10 +40,12 @@ from accounts import (
     AccountProvider,
     AccountRegion,
     AccountRegistrationAdapter,
+    InvalidLeaseError,
     LocalAccountProvider,
     RemoteAccountProvider,
     credential_to_account_info,
 )
+from accounts.lease_journal import LeaseJournal, LeaseOperation
 from api_client import APIClient, AuthTransition, AuthTransitionKind
 from config import Config
 from logging_config import enable_log_redaction
@@ -73,15 +75,17 @@ logger = logging.getLogger(__name__)
 dirname = path.dirname(__file__)
 _account_provider: AccountProvider | None = None
 _active_account_lease: AccountLease | None = None
+_active_lease_operation: LeaseOperation | None = None
 _account_lease_lock = Lock()
 
 
 def configure_account_provider(provider: AccountProvider | None) -> None:
     """Inject an account provider; `None` restores the local default."""
-    global _account_provider, _active_account_lease
+    global _account_provider, _active_account_lease, _active_lease_operation
     with _account_lease_lock:
         _account_provider = provider
         _active_account_lease = None
+        _active_lease_operation = None
 
 
 # Header used to authenticate internal JSON-RPC calls between the
@@ -591,7 +595,7 @@ def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
 
 def get_account_info() -> dict[str, Any]:
     """Acquire a lease and adapt it to the current game client payload."""
-    global _account_provider, _active_account_lease
+    global _account_provider, _active_account_lease, _active_lease_operation
 
     region = AccountRegion(_lifecycle.region)
     with _account_lease_lock:
@@ -603,29 +607,85 @@ def get_account_info() -> dict[str, Any]:
             return credential_to_account_info(_active_account_lease.credential)
         if _account_provider is None:
             _account_provider = _build_account_provider()
+        consumer = f"shared-client-{region.value}"
+        journal = _remote_lease_journal(_account_provider)
+        operation = None
+        if journal is not None:
+            operation = journal.load_or_create(region.value, consumer)
+            if operation.release_pending:
+                try:
+                    _account_provider.release(operation.lease_id or "")
+                except InvalidLeaseError:
+                    pass
+                journal.clear(operation)
+                operation = journal.load_or_create(region.value, consumer)
         lease = _account_provider.acquire(
             region,
-            f"shared-client-{region.value}",
+            consumer,
             ttl_seconds=24 * 60 * 60,
-            idempotency_key=f"login-{uuid4()}",
+            idempotency_key=(
+                operation.idempotency_key if operation else f"login-{uuid4()}"
+            ),
         )
+        if journal is not None and operation is not None:
+            operation = journal.mark_acquired(
+                operation, lease.lease_id, lease.expires_at
+            )
         _active_account_lease = lease
+        _active_lease_operation = operation
         return credential_to_account_info(lease.credential)
+
+
+def _remote_lease_journal(provider: AccountProvider) -> LeaseJournal | None:
+    if getattr(provider, "requires_durable_idempotency", False) is not True:
+        return None
+    directory = getenv(
+        "SEKAI_ACCOUNT_LEASE_STATE_DIR",
+        path.join(dirname, ".runtime", "account-leases"),
+    )
+    return LeaseJournal(directory)
+
+
+def _release_account_lease(
+    provider: AccountProvider,
+    lease: AccountLease,
+    operation: LeaseOperation | None,
+) -> None:
+    journal = _remote_lease_journal(provider)
+    if journal is not None and operation is not None:
+        current = journal.load(operation.region, operation.consumer)
+        if current is not None and current.idempotency_key == operation.idempotency_key:
+            operation = journal.mark_release_pending(operation)
+        else:
+            operation = None
+    provider.release(lease.lease_id)
+    if journal is not None and operation is not None:
+        journal.clear(operation)
+
+
+def _best_effort_release(
+    provider: AccountProvider,
+    lease: AccountLease,
+    operation: LeaseOperation | None,
+) -> None:
+    try:
+        _release_account_lease(provider, lease, operation)
+    except Exception:
+        logger.warning("Failed to release account lease")
 
 
 def release_active_account_lease() -> None:
     """Best-effort idempotent release for graceful worker shutdown."""
-    global _active_account_lease
+    global _active_account_lease, _active_lease_operation
     with _account_lease_lock:
         lease = _active_account_lease
+        operation = _active_lease_operation
         provider = _account_provider
         _active_account_lease = None
+        _active_lease_operation = None
     if lease is None or provider is None:
         return
-    try:
-        provider.release(lease.lease_id)
-    except Exception:
-        logger.warning("Failed to release account lease during shutdown")
+    _best_effort_release(provider, lease, operation)
 
 
 atexit.register(release_active_account_lease)
@@ -683,12 +743,13 @@ def login_account(forced: bool = False) -> dict[str, Any]:
             raise RuntimeError("Logged in client has no user info")
         return cached_user
 
-    global _active_account_lease
+    global _active_account_lease, _active_lease_operation
 
     client = require_api_client()
     was_authenticated = _is_logged_in()
     previous_state = _snapshot_client_state(client)
     previous_account_lease = _active_account_lease
+    previous_lease_operation = _active_lease_operation
     with _lifecycle.lock:
         previous_auth_generation = _lifecycle.auth_generation
 
@@ -707,7 +768,11 @@ def login_account(forced: bool = False) -> dict[str, Any]:
             and previous_account_lease is not _active_account_lease
             and _account_provider is not None
         ):
-            _account_provider.release(previous_account_lease.lease_id)
+            _best_effort_release(
+                _account_provider,
+                previous_account_lease,
+                previous_lease_operation,
+            )
         with _lifecycle.lock:
             _lifecycle.user = deepcopy(candidate_user)
             _lifecycle.authenticated = True
@@ -718,13 +783,19 @@ def login_account(forced: bool = False) -> dict[str, Any]:
         return candidate_user
     except Exception as error:
         failed_lease = _active_account_lease
+        failed_lease_operation = _active_lease_operation
         if (
             failed_lease is not None
             and failed_lease is not previous_account_lease
             and _account_provider is not None
         ):
-            _account_provider.release(failed_lease.lease_id)
+            _best_effort_release(
+                _account_provider,
+                failed_lease,
+                failed_lease_operation,
+            )
         _active_account_lease = previous_account_lease
+        _active_lease_operation = previous_lease_operation
         with _lifecycle.lock:
             auth_committed = (
                 _lifecycle.auth_generation != previous_auth_generation

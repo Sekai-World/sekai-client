@@ -33,6 +33,7 @@ def test_formal_shared_client_templates_match_region_contract():
 
     for template in templates:
         name, region, port, host = _template_config(template)
+        assert "--config gunicorn_conf.py" in template.read_text()
         assert name == region
         assert region in FORMAL_REGIONS
         assert port == EXPECTED_PORTS[region]
@@ -53,11 +54,13 @@ def test_tw_remote_canary_preserves_runtime_and_rollback_boundaries():
 
     assert "name: sharedApiClient-tw" in content
     assert "--workers 1" in content
+    assert "--config gunicorn_conf.py" in content
     assert "--bind 127.0.0.1:39391" in content
     assert "SEKAI_REGION: tw" in content
     assert "SEKAI_ACCOUNT_PROVIDER: remote" in content
     assert "SEKAI_ACCOUNT_SERVICE_URL: ${SEKAI_ACCOUNT_SERVICE_URL}" in content
     assert "SEKAI_ACCOUNT_SERVICE_TOKEN: ${SEKAI_ACCOUNT_SERVICE_TOKEN}" in content
+    assert "SEKAI_ACCOUNT_LEASE_STATE_DIR:" in content
     assert "SEKAI_TW_ACCESS_TOKEN" not in content
     assert "SEKAI_TW_SDK_OPEN_ID" not in content
 
