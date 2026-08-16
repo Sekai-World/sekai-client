@@ -13,6 +13,8 @@
   - Plan for modularizing this repository and extracting account registration and leasing into a separate service.
 - [account-service-tw-canary.md](account-service-tw-canary.md)
   - Preconditions, observation gates, and rollback procedure for the first remote-provider canary.
+- [event-tracker-performance-roadmap.md](event-tracker-performance-roadmap.md)
+  - Measurement, reliability, and optimization plan for reducing ranking delivery latency.
 
 ## Development Workflow
 
