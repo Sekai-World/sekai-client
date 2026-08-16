@@ -40,6 +40,7 @@ from accounts import (
     AccountProvider,
     AccountRegion,
     AccountRegistrationAdapter,
+    InvalidAccountReason,
     InvalidLeaseError,
     LocalAccountProvider,
     RemoteAccountProvider,
@@ -674,6 +675,32 @@ def _best_effort_release(
         logger.warning("Failed to release account lease")
 
 
+def _best_effort_report_authentication_failure(
+    provider: AccountProvider,
+    lease: AccountLease,
+    operation: LeaseOperation | None,
+) -> bool:
+    try:
+        provider.report_invalid(
+            lease.lease_id, InvalidAccountReason.AUTHENTICATION_FAILED
+        )
+    except Exception:
+        logger.warning("Failed to report invalid account lease")
+        return False
+    journal = _remote_lease_journal(provider)
+    if journal is not None and operation is not None:
+        try:
+            journal.clear(operation)
+        except Exception:
+            logger.warning("Failed to clear invalid account lease journal")
+    return True
+
+
+def _is_explicit_authentication_rejection(error: Exception) -> bool:
+    message = str(error).lower()
+    return "http 401" in message or "http 403" in message
+
+
 def release_active_account_lease() -> None:
     """Best-effort idempotent release for graceful worker shutdown."""
     global _active_account_lease, _active_lease_operation
@@ -784,8 +811,19 @@ def login_account(forced: bool = False) -> dict[str, Any]:
     except Exception as error:
         failed_lease = _active_account_lease
         failed_lease_operation = _active_lease_operation
+        invalid_reported = False
         if (
             failed_lease is not None
+            and failed_lease.region in (AccountRegion.TW, AccountRegion.KR)
+            and _account_provider is not None
+            and _is_explicit_authentication_rejection(error)
+        ):
+            invalid_reported = _best_effort_report_authentication_failure(
+                _account_provider, failed_lease, failed_lease_operation
+            )
+        if (
+            not invalid_reported
+            and failed_lease is not None
             and failed_lease is not previous_account_lease
             and _account_provider is not None
         ):
@@ -794,8 +832,16 @@ def login_account(forced: bool = False) -> dict[str, Any]:
                 failed_lease,
                 failed_lease_operation,
             )
-        _active_account_lease = previous_account_lease
-        _active_lease_operation = previous_lease_operation
+        _active_account_lease = (
+            None
+            if invalid_reported and failed_lease is previous_account_lease
+            else previous_account_lease
+        )
+        _active_lease_operation = (
+            None
+            if invalid_reported and failed_lease is previous_account_lease
+            else previous_lease_operation
+        )
         with _lifecycle.lock:
             auth_committed = (
                 _lifecycle.auth_generation != previous_auth_generation
