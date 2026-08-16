@@ -29,8 +29,9 @@ def test_ranking_is_persisted_before_delivery(monkeypatch):
 
 def test_delivery_sends_idempotency_key(monkeypatch):
     response = Mock()
+    response.status_code = 200
     post = Mock(return_value=response)
-    monkeypatch.setattr(event_tracker.requests, "post", post)
+    monkeypatch.setattr(event_tracker._external_session, "post", post)
 
     event_tracker._deliver_ranking(
         "https://api.example.test/rankings", {"time": 1}, "tw:2:1:ranking"
@@ -46,6 +47,28 @@ def test_delivery_sends_idempotency_key(monkeypatch):
         params={"region": event_tracker.pjsk_region},
         timeout=15.0,
     )
+    response.raise_for_status.assert_called_once_with()
+
+
+def test_world_bloom_metadata_is_cached(monkeypatch):
+    response = Mock()
+    response.json.return_value = [
+        {
+            "eventId": 12,
+            "chapterStartAt": 1,
+            "chapterEndAt": 50,
+            "aggregateAt": 100,
+            "gameCharacterId": 7,
+        }
+    ]
+    get = Mock(return_value=response)
+    monkeypatch.setattr(event_tracker._external_session, "get", get)
+    monkeypatch.setattr(event_tracker, "_world_blooms_cache", None)
+
+    assert event_tracker.get_current_world_link_character(12, 25) == (7, -1)
+    assert event_tracker.get_current_world_link_character(12, 25) == (7, -1)
+
+    get.assert_called_once()
     response.raise_for_status.assert_called_once_with()
 
 
@@ -77,4 +100,41 @@ def test_maintenance_path_drains_pending_outbox(monkeypatch):
 
     event_tracker.track_event_func()
 
-    drain.assert_called_once_with()
+    assert drain.call_count == 2
+
+
+def test_collection_uses_combined_snapshot_rpc(monkeypatch):
+    outbox = Mock()
+    monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)
+    monkeypatch.setattr(
+        event_tracker,
+        "event_data",
+        {
+            "id": 12,
+            "eventType": "marathon",
+            "startAt": 0,
+            "aggregateAt": 1_000_000,
+            "rankingAnnounceAt": 1_100_000,
+            "closedAt": 2_000_000,
+        },
+    )
+    request = Mock(
+        return_value={
+            "first100": {"isEventAggregate": False, "rankings": []},
+            "border": {"borderRankings": []},
+        }
+    )
+    monkeypatch.setattr(event_tracker.jsonrpc_client, "request", request)
+
+    event_tracker.track_event_scores(1_000)
+
+    request.assert_called_once_with("fetch_event_rank_snapshot", [12])
+    outbox.enqueue.assert_called_once()
+
+
+def test_http_sessions_use_bounded_connection_pools():
+    session = event_tracker._new_http_session()
+
+    adapter = session.get_adapter("https://")
+    assert adapter._pool_connections == 4
+    assert adapter._pool_maxsize == 4

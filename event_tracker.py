@@ -2,14 +2,17 @@ import logging
 import os
 import sys
 import time
+from collections import Counter
 from os import getenv
 from typing import Any
 
 import requests
-from apscheduler.schedulers.base import STATE_RUNNING
+from apscheduler.events import JobEvent
+from apscheduler.schedulers.base import EVENT_JOB_MAX_INSTANCES, STATE_RUNNING
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from pytz import timezone
+from requests.adapters import HTTPAdapter
 
 from logging_config import configure_logging
 from utils.constants import pjsk_region, sekai_api_key, strapi_base_url
@@ -20,7 +23,21 @@ LOGLEVEL = getenv("LOGLEVEL", "INFO").upper()
 configure_logging(level=LOGLEVEL)
 logger = logging.getLogger(__name__)
 
-jsonrpc_client = JSONRPCClient(f"http://localhost:{getenv('JSONRPC_PORT', '3939')}/")
+
+def _new_http_session() -> requests.Session:
+    session = requests.Session()
+    adapter = HTTPAdapter(pool_connections=4, pool_maxsize=4, max_retries=0)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+_rpc_session = _new_http_session()
+_external_session = _new_http_session()
+jsonrpc_client = JSONRPCClient(
+    f"http://localhost:{getenv('JSONRPC_PORT', '3939')}/",
+    transport=_rpc_session,
+)
 
 version_info: dict[str, Any] | None = None
 event_data: dict[str, Any] | None = None
@@ -38,6 +55,28 @@ _OUTBOX_PATH = getenv(
     ),
 )
 ranking_outbox: EventRankingOutbox | None = None
+_world_blooms_cache: tuple[float, list[dict[str, Any]]] | None = None
+_WORLD_BLOOMS_CACHE_SECONDS = 300.0
+_metric_counts: Counter[str] = Counter()
+_metric_duration_totals: dict[str, float] = {}
+
+
+def _record_stage(stage: str, started_at: float) -> None:
+    duration = max(0.0, time.monotonic() - started_at)
+    _metric_counts[f"stage.{stage}.observations"] += 1
+    _metric_duration_totals[stage] = _metric_duration_totals.get(stage, 0.0) + duration
+    logger.info(
+        "[event_tracker_metrics] stage=%s duration_seconds=%.3f",
+        stage,
+        duration,
+    )
+
+
+def _metrics_snapshot() -> dict[str, dict[str, int | float]]:
+    return {
+        "counts": dict(_metric_counts),
+        "duration_seconds_total": dict(_metric_duration_totals),
+    }
 
 
 def _ranking_outbox() -> EventRankingOutbox:
@@ -58,6 +97,7 @@ curr_event_url = (
 
 
 def get_current_world_link_character(event_id, curr_time):
+    global _world_blooms_cache
     json_url_base = (
         "https://sekai-world.github.io/sekai-master-db-diff"
         if pjsk_region == "jp"
@@ -66,7 +106,17 @@ def get_current_world_link_character(event_id, curr_time):
     if pjsk_region == "tw":
         json_url_base = "https://sekai-world.github.io/sekai-master-db-tc-diff"
     json_url = f"{json_url_base}/worldBlooms.json"
-    json_data = requests.get(json_url, timeout=60).json()
+    now = time.monotonic()
+    if _world_blooms_cache is None or _world_blooms_cache[0] <= now:
+        response = _external_session.get(json_url, timeout=60)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise RuntimeError("World Bloom metadata response must be a list")
+        _world_blooms_cache = (now + _WORLD_BLOOMS_CACHE_SECONDS, payload)
+    json_data = _world_blooms_cache[1]
 
     # find the current world link character by event_id and current time
     curr_id = -1
@@ -88,11 +138,11 @@ def get_current_world_link_character(event_id, curr_time):
     return curr_id, aggr_id
 
 
-def track_event_func():
-    started_at = time.monotonic()
+def _track_event_cycle():
     logger.info("Track event score triggered by cron job")
 
     ver_res = None
+    version_started = time.monotonic()
     try:
         logger.info("[track_event_func] Check game versions")
         ver_res = jsonrpc_client.request("check_versions", [version_info])
@@ -106,11 +156,12 @@ def track_event_func():
         )
         bootstrap()
         ver_res = jsonrpc_client.request("check_versions", [version_info])
+    finally:
+        _record_stage("version_check", version_started)
     logger.debug("[track_event_func] got ver_res")
 
     global is_in_maintenance
     if ver_res["maintenance"]:
-        _drain_ranking_outbox()
         logger.warning("PJSK server is in maintenance, skipping...")
         is_in_maintenance = True
         return
@@ -123,21 +174,29 @@ def track_event_func():
     curr_time = int(time.time() * 1000)
     logger.debug("[track_event_func] call track_event_scores now at %s", curr_time)
     try:
-        _drain_ranking_outbox()
         track_event_scores(curr_time)
     except Exception:
+        _metric_counts["collection.failed"] += 1
         logger.exception("[track_event_func] Failed to track event scores")
         logger.warning(
             "[W] Failed to track event scores, refresh version info and retrying..."
         )
         refresh_version()
         track_event_scores(curr_time)
+
+
+def track_event_func():
+    started_at = time.monotonic()
+    try:
+        _drain_ranking_outbox()
+        _track_event_cycle()
     finally:
         _drain_ranking_outbox()
         logger.info(
             "[track_event_func] execution_seconds=%.3f",
             time.monotonic() - started_at,
         )
+        logger.info("[event_tracker_metrics] snapshot=%s", _metrics_snapshot())
 
 
 scheduler = BlockingScheduler(timezone=timezone("Asia/Tokyo"))
@@ -151,11 +210,30 @@ track_event_job = scheduler.add_job(
 )
 
 
+def _scheduler_listener(event: JobEvent) -> None:
+    if event.code == EVENT_JOB_MAX_INSTANCES:
+        _metric_counts["scheduler.skipped"] += 1
+
+
+scheduler.add_listener(_scheduler_listener, EVENT_JOB_MAX_INSTANCES)
+
+
 def refresh_version():
     logger.info("Refresh version info")
 
     global event_data
-    event_data = requests.get(curr_event_url, timeout=60).json()["eventJson"]
+    response = _external_session.get(curr_event_url, timeout=60)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or "eventJson" not in payload:
+        raise RuntimeError("Current event response has an invalid shape")
+    current_event = payload["eventJson"]
+    if current_event is not None and not isinstance(current_event, dict):
+        raise RuntimeError("Current event payload must be an object or null")
+    event_data = current_event
+
+    global _world_blooms_cache
+    _world_blooms_cache = None
 
     global version_info
     version_info = jsonrpc_client.request("version_info")
@@ -184,14 +262,24 @@ def _should_skip_event_tracking(curr_time: int) -> bool:
 
 
 def _deliver_ranking(endpoint: str, payload: dict[str, Any], key: str) -> None:
-    response = requests.post(
-        endpoint,
-        json=payload,
-        headers={"X-API-Key": sekai_api_key, "Idempotency-Key": key},
-        params={"region": pjsk_region},
-        timeout=_DELIVERY_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
+    started_at = time.monotonic()
+    try:
+        response = _external_session.post(
+            endpoint,
+            json=payload,
+            headers={"X-API-Key": sekai_api_key, "Idempotency-Key": key},
+            params={"region": pjsk_region},
+            timeout=_DELIVERY_TIMEOUT_SECONDS,
+        )
+        _metric_counts[f"delivery.http_{response.status_code // 100}xx"] += 1
+        response.raise_for_status()
+    except Exception:
+        _metric_counts["delivery.failed"] += 1
+        raise
+    else:
+        _metric_counts["delivery.succeeded"] += 1
+    finally:
+        _record_stage("delivery", started_at)
 
 
 def _drain_ranking_outbox() -> None:
@@ -199,6 +287,9 @@ def _drain_ranking_outbox() -> None:
         _deliver_ranking,
         max_duration_seconds=_DRAIN_MAX_DURATION_SECONDS,
     )
+    _metric_counts["outbox.sent"] += result["sent"]
+    _metric_counts["outbox.failed"] += result["failed"]
+    _metric_counts["outbox.retained"] += result["retained"]
     metrics = _ranking_outbox().metrics()
     logger.info(
         "[ranking_outbox] sent=%s failed=%s retained=%s pending=%s sending=%s "
@@ -214,14 +305,18 @@ def _drain_ranking_outbox() -> None:
 
 
 def _enqueue_event_ranking(event_id: int, curr_time: int, ranking_data: dict) -> None:
-    _ranking_outbox().enqueue(
-        region=pjsk_region,
-        event_id=event_id,
-        collected_at=curr_time,
-        data_type="ranking",
-        endpoint=f"https://api.sekai.best/event/{event_id}/rankings",
-        payload=ranking_data,
-    )
+    started_at = time.monotonic()
+    try:
+        _ranking_outbox().enqueue(
+            region=pjsk_region,
+            event_id=event_id,
+            collected_at=curr_time,
+            data_type="ranking",
+            endpoint=f"https://api.sekai.best/event/{event_id}/rankings",
+            payload=ranking_data,
+        )
+    finally:
+        _record_stage("durable_enqueue", started_at)
 
 
 def _build_chapter_ranking_data(
@@ -251,14 +346,18 @@ def _build_chapter_ranking_data(
 def _enqueue_world_bloom_chapter_ranking(
     event_id: int, curr_time: int, character_id: int, chapter_ranking_data: dict
 ) -> None:
-    _ranking_outbox().enqueue(
-        region=pjsk_region,
-        event_id=event_id,
-        collected_at=curr_time,
-        data_type=f"chapter:{character_id}",
-        endpoint=f"https://api.sekai.best/event/{event_id}/chapter_rankings",
-        payload=chapter_ranking_data,
-    )
+    started_at = time.monotonic()
+    try:
+        _ranking_outbox().enqueue(
+            region=pjsk_region,
+            event_id=event_id,
+            collected_at=curr_time,
+            data_type=f"chapter:{character_id}",
+            endpoint=f"https://api.sekai.best/event/{event_id}/chapter_rankings",
+            payload=chapter_ranking_data,
+        )
+    finally:
+        _record_stage("durable_enqueue", started_at)
 
 
 def _track_world_bloom_chapters(
@@ -317,23 +416,22 @@ def track_event_scores(curr_time):
         logger.warning("Current event will expire soon")
         raise RuntimeError("Current event will expire soon")
 
-    user_id = jsonrpc_client.request("account_info")["userId"]
-    logger.debug("[track_event_scores] got user id %s", user_id)
-
     ranking_data = {"time": curr_time}
     event_id = event_data["id"]
 
-    # first 100
-    logger.debug("[track_event_scores] fetching first 100 ranked players")
-    first100_data = jsonrpc_client.request("fetch_event_rank_first_100", [event_id])
+    collection_started = time.monotonic()
+    snapshot = jsonrpc_client.request("fetch_event_rank_snapshot", [event_id])
+    if not isinstance(snapshot, dict):
+        raise RuntimeError("Event ranking snapshot response must be an object")
+    first100_data = snapshot.get("first100")
+    border_data = snapshot.get("border")
+    if not isinstance(first100_data, dict) or not isinstance(border_data, dict):
+        raise RuntimeError("Event ranking snapshot is incomplete")
+    _record_stage("game_snapshot", collection_started)
     if first100_data["isEventAggregate"]:
         logger.debug("[track_event_scores] event is aggregating, skipping...")
         return
     ranking_data["first100"] = first100_data["rankings"]
-    logger.debug("[track_event_scores] fetched first 100 ranked players")
-
-    logger.debug("[track_event_scores] fetching border cutoffs")
-    border_data = jsonrpc_client.request("fetch_event_rank_border", [event_id])
     ranking_data["border"] = [
         x for x in border_data["borderRankings"] if x["rank"] > 100
     ]

@@ -1149,6 +1149,23 @@ def fetch_event_rank_border(event_id: int) -> Any:
 
 
 @api.dispatcher.add_method
+def fetch_event_rank_snapshot(event_id: int) -> dict[str, Any]:
+    """Fetch top rankings and borders in one serialized client job."""
+    if not _is_logged_in():
+        raise RuntimeError("Login before calling this method")
+
+    client = require_api_client()
+
+    def fetch() -> dict[str, Any]:
+        return {
+            "first100": client.fetch_event_rank_first_100(event_id),
+            "border": client.fetch_event_rank_border(event_id),
+        }
+
+    return dict(_client_job(fetch))
+
+
+@api.dispatcher.add_method
 def call_pjsk_api(endpoint: str, method: str = "get", body: str | dict = "") -> Any:
     """
     Make a direct API call to game server.
