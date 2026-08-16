@@ -17,3 +17,4 @@ apps:
       SEKAI_API_KEY: ${SEKAI_API_KEY}
       STRAPI_BASE_URL: ${STRAPI_BASE_URL}
       INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}
+      EVENT_TRACKER_OUTBOX_PATH: /root/sekai-client/.runtime/event-tracker-tw.sqlite3
