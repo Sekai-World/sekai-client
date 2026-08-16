@@ -125,6 +125,7 @@ class EventRankingOutbox:
     ) -> dict[str, int]:
         if max_duration_seconds <= 0:
             raise ValueError("max_duration_seconds must be positive")
+        self.prune_terminal()
         result = {"sent": 0, "failed": 0, "retained": 0}
         deadline = time.monotonic() + max_duration_seconds
         for _ in range(limit):
@@ -148,7 +149,8 @@ class EventRankingOutbox:
 
     def prune_terminal(self) -> int:
         """Remove terminal records older than the configured retention window."""
-        cutoff = time.time() - self.retention_seconds
+        # collected_at is the event timestamp in milliseconds since epoch.
+        cutoff = (time.time() - self.retention_seconds) * 1000
         with self._connect() as connection:
             cursor = connection.execute(
                 "DELETE FROM event_ranking_outbox WHERE status IN ('sent','failed') "
