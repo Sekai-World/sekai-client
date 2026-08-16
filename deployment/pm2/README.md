@@ -39,7 +39,10 @@ Event tracker templates persist their SQLite delivery outboxes under
 `/root/sekai-client/.runtime`. Create that directory with mode `0700` before
 activation, keep each database at mode `0600`, and include the database plus
 its WAL files in backup and disk-usage monitoring. Do not place an outbox under
-`/tmp`; a process restart must not discard pending ranking snapshots.
+`/tmp`; a process restart must not discard pending ranking snapshots. The
+default terminal-record retention is 24 hours, the per-run drain budget is 30
+seconds, and the individual delivery timeout is 15 seconds; tune these only
+with measured scheduler and upstream latency evidence.
 
 ## Security requirements
 

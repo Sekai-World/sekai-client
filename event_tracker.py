@@ -25,6 +25,9 @@ jsonrpc_client = JSONRPCClient(f"http://localhost:{getenv('JSONRPC_PORT', '3939'
 version_info: dict[str, Any] | None = None
 event_data: dict[str, Any] | None = None
 is_in_maintenance = False
+_DELIVERY_TIMEOUT_SECONDS = float(getenv("EVENT_TRACKER_DELIVERY_TIMEOUT", "15"))
+_DRAIN_MAX_DURATION_SECONDS = float(getenv("EVENT_TRACKER_DRAIN_MAX_DURATION", "30"))
+_OUTBOX_RETENTION_SECONDS = float(getenv("EVENT_TRACKER_OUTBOX_RETENTION", "86400"))
 
 _OUTBOX_PATH = getenv(
     "EVENT_TRACKER_OUTBOX_PATH",
@@ -40,7 +43,10 @@ ranking_outbox: EventRankingOutbox | None = None
 def _ranking_outbox() -> EventRankingOutbox:
     global ranking_outbox
     if ranking_outbox is None:
-        ranking_outbox = EventRankingOutbox(_OUTBOX_PATH)
+        ranking_outbox = EventRankingOutbox(
+            _OUTBOX_PATH,
+            retention_seconds=_OUTBOX_RETENTION_SECONDS,
+        )
     return ranking_outbox
 
 
@@ -104,6 +110,7 @@ def track_event_func():
 
     global is_in_maintenance
     if ver_res["maintenance"]:
+        _drain_ranking_outbox()
         logger.warning("PJSK server is in maintenance, skipping...")
         is_in_maintenance = True
         return
@@ -182,13 +189,16 @@ def _deliver_ranking(endpoint: str, payload: dict[str, Any], key: str) -> None:
         json=payload,
         headers={"X-API-Key": sekai_api_key, "Idempotency-Key": key},
         params={"region": pjsk_region},
-        timeout=60,
+        timeout=_DELIVERY_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
 
 
 def _drain_ranking_outbox() -> None:
-    result = _ranking_outbox().drain(_deliver_ranking)
+    result = _ranking_outbox().drain(
+        _deliver_ranking,
+        max_duration_seconds=_DRAIN_MAX_DURATION_SECONDS,
+    )
     metrics = _ranking_outbox().metrics()
     logger.info(
         "[ranking_outbox] sent=%s failed=%s retained=%s pending=%s sending=%s "

@@ -66,9 +66,13 @@ This phase shares the Event Tracker outbox scope in
 - [x] Use an idempotency key based on region, event, collection timestamp, and
   data type.
 - [x] Deliver independently with bounded retries and exponential backoff.
+- [x] Bound each scheduler drain to 30 seconds and each delivery request to 15
+  seconds so a slow remote API cannot monopolize the three-minute schedule.
 - [x] Mark local delivery complete only after the receiving API confirms HTTP
   success; receiver-side idempotency enforcement remains pending.
 - [x] Resume pending deliveries after process restart.
+- [x] Prune terminal `sent` and `failed` rows after the configurable 24-hour
+  retention window while preserving pending and sending records.
 - [x] Publish outbox depth, oldest-item age, and delivery-attempt state in logs;
   metrics endpoint integration remains part of Phase 0.
 

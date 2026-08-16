@@ -106,3 +106,50 @@ def test_distinct_chapters_have_distinct_idempotency_keys(tmp_path):
 
     assert first != second
     assert outbox.metrics().pending == 2
+
+
+def test_retention_removes_old_terminal_rows_but_keeps_pending(tmp_path):
+    outbox = EventRankingOutbox(str(tmp_path / "outbox.sqlite3"), retention_seconds=60)
+    sent = _enqueue(outbox)
+    outbox.drain(lambda *_: None)
+    pending = outbox.enqueue(
+        region="tw",
+        event_id=123,
+        collected_at=456,
+        data_type="chapter:7",
+        endpoint="https://api.example.test/chapters",
+        payload={"time": 456},
+    )
+    with sqlite3.connect(outbox.path) as connection:
+        connection.execute(
+            "UPDATE event_ranking_outbox SET collected_at=0 WHERE idempotency_key=?",
+            (sent,),
+        )
+
+    assert outbox.prune_terminal() == 1
+    with sqlite3.connect(outbox.path) as connection:
+        rows = connection.execute(
+            "SELECT idempotency_key,status FROM event_ranking_outbox"
+        ).fetchall()
+    assert rows == [(pending, "pending")]
+
+
+def test_drain_duration_budget_stops_before_claiming_more_rows(tmp_path):
+    outbox = EventRankingOutbox(str(tmp_path / "outbox.sqlite3"))
+    _enqueue(outbox)
+    outbox.enqueue(
+        region="tw",
+        event_id=124,
+        collected_at=457,
+        data_type="ranking",
+        endpoint="https://api.example.test/rankings",
+        payload={"time": 457},
+    )
+
+    def slow_delivery(*_):
+        time.sleep(0.01)
+
+    result = outbox.drain(slow_delivery, max_duration_seconds=0.001)
+
+    assert result == {"sent": 1, "failed": 0, "retained": 0}
+    assert outbox.metrics().pending == 1

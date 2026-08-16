@@ -23,11 +23,20 @@ class OutboxMetrics:
 class EventRankingOutbox:
     """Persist, claim, and acknowledge idempotent ranking deliveries."""
 
-    def __init__(self, path: str, *, retry_base_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        path: str,
+        *,
+        retry_base_seconds: float = 5.0,
+        retention_seconds: float = 86400.0,
+    ) -> None:
         if retry_base_seconds <= 0:
             raise ValueError("retry_base_seconds must be positive")
+        if retention_seconds <= 0:
+            raise ValueError("retention_seconds must be positive")
         self.path = Path(path)
         self.retry_base_seconds = retry_base_seconds
+        self.retention_seconds = retention_seconds
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._initialize()
 
@@ -69,6 +78,7 @@ class EventRankingOutbox:
                 "ON event_ranking_outbox(status, next_attempt_at)"
             )
         self.path.chmod(0o600)
+        self.prune_terminal()
 
     def enqueue(
         self,
@@ -111,9 +121,15 @@ class EventRankingOutbox:
         limit: int = 20,
         lease_seconds: float = 120.0,
         max_attempts: int = 10,
+        max_duration_seconds: float = 30.0,
     ) -> dict[str, int]:
+        if max_duration_seconds <= 0:
+            raise ValueError("max_duration_seconds must be positive")
         result = {"sent": 0, "failed": 0, "retained": 0}
+        deadline = time.monotonic() + max_duration_seconds
         for _ in range(limit):
+            if time.monotonic() >= deadline:
+                break
             claimed = self._claim(lease_seconds)
             if claimed is None:
                 break
@@ -129,6 +145,17 @@ class EventRankingOutbox:
                 self._ack(key, claim_id)
                 result["sent"] += 1
         return result
+
+    def prune_terminal(self) -> int:
+        """Remove terminal records older than the configured retention window."""
+        cutoff = time.time() - self.retention_seconds
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM event_ranking_outbox WHERE status IN ('sent','failed') "
+                "AND collected_at <= ?",
+                (cutoff,),
+            )
+            return cursor.rowcount
 
     def _claim(
         self, lease_seconds: float

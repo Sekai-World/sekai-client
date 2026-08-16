@@ -44,7 +44,7 @@ def test_delivery_sends_idempotency_key(monkeypatch):
             "Idempotency-Key": "tw:2:1:ranking",
         },
         params={"region": event_tracker.pjsk_region},
-        timeout=60,
+        timeout=15.0,
     )
     response.raise_for_status.assert_called_once_with()
 
@@ -60,3 +60,21 @@ def test_drain_reports_distinct_delivery_state(monkeypatch, caplog):
     event_tracker._drain_ranking_outbox()
 
     assert "sent=0 failed=0 retained=1 pending=1" in caplog.text
+    outbox.drain.assert_called_once_with(
+        event_tracker._deliver_ranking,
+        max_duration_seconds=event_tracker._DRAIN_MAX_DURATION_SECONDS,
+    )
+
+
+def test_maintenance_path_drains_pending_outbox(monkeypatch):
+    drain = Mock()
+    monkeypatch.setattr(event_tracker, "_drain_ranking_outbox", drain)
+    monkeypatch.setattr(
+        event_tracker.jsonrpc_client,
+        "request",
+        Mock(return_value={"maintenance": True, "new_version": False}),
+    )
+
+    event_tracker.track_event_func()
+
+    drain.assert_called_once_with()
