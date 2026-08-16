@@ -134,6 +134,26 @@ def test_retention_removes_old_terminal_rows_but_keeps_pending(tmp_path):
     assert rows == [(pending, "pending")]
 
 
+def test_retention_keeps_recent_terminal_rows(tmp_path):
+    outbox = EventRankingOutbox(str(tmp_path / "outbox.sqlite3"), retention_seconds=60)
+    key = outbox.enqueue(
+        region="tw",
+        event_id=123,
+        collected_at=int(time.time() * 1000),
+        data_type="ranking",
+        endpoint="https://api.example.test/rankings",
+        payload={"time": 456},
+    )
+    outbox.drain(lambda *_: None)
+
+    assert outbox.prune_terminal() == 0
+    with sqlite3.connect(outbox.path) as connection:
+        assert connection.execute(
+            "SELECT status FROM event_ranking_outbox WHERE idempotency_key=?",
+            (key,),
+        ).fetchone() == ("sent",)
+
+
 def test_drain_duration_budget_stops_before_claiming_more_rows(tmp_path):
     outbox = EventRankingOutbox(str(tmp_path / "outbox.sqlite3"))
     _enqueue(outbox)
