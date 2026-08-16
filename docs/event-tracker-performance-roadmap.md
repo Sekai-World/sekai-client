@@ -60,13 +60,15 @@ account, ranking, or authentication data.
 This phase shares the Event Tracker outbox scope in
 [remediation-roadmap.md](remediation-roadmap.md).
 
-- [ ] Persist each snapshot to a local SQLite outbox before delivery.
-- [ ] Use an idempotency key based on region, event, collection timestamp, and
+- [x] Persist each snapshot to a local SQLite outbox before delivery.
+- [x] Use an idempotency key based on region, event, collection timestamp, and
   data type.
-- [ ] Deliver independently with bounded retries and exponential backoff.
-- [ ] Mark delivery complete only after the receiving API confirms success.
-- [ ] Resume pending deliveries after process restart.
-- [ ] Publish outbox depth, oldest-item age, and delivery-attempt metrics.
+- [x] Deliver independently with bounded retries and exponential backoff.
+- [x] Mark local delivery complete only after the receiving API confirms HTTP
+  success; receiver-side idempotency enforcement remains pending.
+- [x] Resume pending deliveries after process restart.
+- [x] Publish outbox depth, oldest-item age, and delivery-attempt state in logs;
+  metrics endpoint integration remains part of Phase 0.
 
 Acceptance: scheduler completion, snapshot durability, and remote delivery have
 distinct states; a transient API failure cannot lose a snapshot.
