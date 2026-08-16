@@ -16,7 +16,13 @@ import pytest
 from jsonrpc.exceptions import JSONRPCDispatchException, JSONRPCInternalError
 
 import shared_client
-from accounts import AccountLease, AccountRegion, JpEnCredential
+from accounts import (
+    AccountLease,
+    AccountRegion,
+    InvalidAccountReason,
+    JpEnCredential,
+    TwKrCredential,
+)
 from api_client import AuthTransition, AuthTransitionKind
 from utils import deadline as deadline_module
 from utils.deadline import (
@@ -527,6 +533,30 @@ def test_authentication_failure_degrades_and_sets_retry_gate(
     status = shared_client.lifecycle_status()
     assert status["state"] == shared_client.LifecycleState.DEGRADED
     assert status["next_retry_at"] is not None
+
+
+def test_tw_auth_rejection_reports_and_discards_lease(
+    monkeypatch, logged_in_client
+):
+    lease = AccountLease(
+        "lease-tw", "shared-client-tw", datetime.now(UTC) + timedelta(hours=1),
+        TwKrCredential(AccountRegion.TW, "open-id", "token"),
+    )
+    provider = Mock()
+    monkeypatch.setattr(shared_client, "_active_account_lease", lease)
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "day_change_job", Mock())
+    logged_in_client.login.side_effect = RuntimeError(
+        "PJSK API request failed (HTTP 403)"
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 403"):
+        shared_client.login_account(True)
+
+    provider.report_invalid.assert_called_once_with(
+        "lease-tw", InvalidAccountReason.AUTHENTICATION_FAILED
+    )
+    assert shared_client._active_account_lease is None
 
 
 def test_fetch_master_split_allowlisted_calls_client(monkeypatch, reset_lifecycle):
