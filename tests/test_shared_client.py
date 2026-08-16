@@ -535,11 +535,11 @@ def test_authentication_failure_degrades_and_sets_retry_gate(
     assert status["next_retry_at"] is not None
 
 
-def test_tw_auth_rejection_reports_and_discards_lease(
-    monkeypatch, logged_in_client
-):
+def test_tw_auth_rejection_reports_and_discards_lease(monkeypatch, logged_in_client):
     lease = AccountLease(
-        "lease-tw", "shared-client-tw", datetime.now(UTC) + timedelta(hours=1),
+        "lease-tw",
+        "shared-client-tw",
+        datetime.now(UTC) + timedelta(hours=1),
         TwKrCredential(AccountRegion.TW, "open-id", "token"),
     )
     provider = Mock()
@@ -557,6 +557,39 @@ def test_tw_auth_rejection_reports_and_discards_lease(
         "lease-tw", InvalidAccountReason.AUTHENTICATION_FAILED
     )
     assert shared_client._active_account_lease is None
+
+
+def test_tw_auth_rejection_discards_lease_when_journal_cleanup_fails(
+    monkeypatch, logged_in_client
+):
+    lease = AccountLease(
+        "lease-tw",
+        "shared-client-tw",
+        datetime.now(UTC) + timedelta(hours=1),
+        TwKrCredential(AccountRegion.TW, "open-id", "token"),
+    )
+    operation = Mock()
+    journal = Mock()
+    journal.clear.side_effect = OSError("journal unavailable")
+    provider = Mock(requires_durable_idempotency=True)
+    monkeypatch.setattr(shared_client, "_active_account_lease", lease)
+    monkeypatch.setattr(shared_client, "_active_lease_operation", operation)
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_remote_lease_journal", lambda _: journal)
+    monkeypatch.setattr(shared_client, "day_change_job", Mock())
+    logged_in_client.login.side_effect = RuntimeError(
+        "PJSK API request failed (HTTP 403)"
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 403"):
+        shared_client.login_account(True)
+
+    provider.report_invalid.assert_called_once_with(
+        "lease-tw", InvalidAccountReason.AUTHENTICATION_FAILED
+    )
+    journal.clear.assert_called_once_with(operation)
+    assert shared_client._active_account_lease is None
+    assert shared_client._active_lease_operation is None
 
 
 def test_fetch_master_split_allowlisted_calls_client(monkeypatch, reset_lifecycle):

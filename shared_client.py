@@ -684,13 +684,16 @@ def _best_effort_report_authentication_failure(
         provider.report_invalid(
             lease.lease_id, InvalidAccountReason.AUTHENTICATION_FAILED
         )
-        journal = _remote_lease_journal(provider)
-        if journal is not None and operation is not None:
-            journal.clear(operation)
-        return True
     except Exception:
         logger.warning("Failed to report invalid account lease")
         return False
+    journal = _remote_lease_journal(provider)
+    if journal is not None and operation is not None:
+        try:
+            journal.clear(operation)
+        except Exception:
+            logger.warning("Failed to clear invalid account lease journal")
+    return True
 
 
 def _is_explicit_authentication_rejection(error: Exception) -> bool:
@@ -830,11 +833,13 @@ def login_account(forced: bool = False) -> dict[str, Any]:
                 failed_lease_operation,
             )
         _active_account_lease = (
-            None if invalid_reported and failed_lease is previous_account_lease
+            None
+            if invalid_reported and failed_lease is previous_account_lease
             else previous_account_lease
         )
         _active_lease_operation = (
-            None if invalid_reported and failed_lease is previous_account_lease
+            None
+            if invalid_reported and failed_lease is previous_account_lease
             else previous_lease_operation
         )
         with _lifecycle.lock:
