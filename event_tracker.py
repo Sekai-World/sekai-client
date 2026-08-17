@@ -26,7 +26,12 @@ logger = logging.getLogger(__name__)
 
 def _new_http_session() -> requests.Session:
     session = requests.Session()
-    adapter = HTTPAdapter(pool_connections=4, pool_maxsize=4, max_retries=0)
+    adapter = HTTPAdapter(
+        pool_connections=4,
+        pool_maxsize=4,
+        max_retries=0,
+        pool_block=True,
+    )
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
@@ -174,6 +179,7 @@ def _track_event_cycle():
     curr_time = int(time.time() * 1000)
     logger.debug("[track_event_func] call track_event_scores now at %s", curr_time)
     try:
+        _drain_ranking_outbox()
         track_event_scores(curr_time)
     except Exception:
         _metric_counts["collection.failed"] += 1
@@ -188,7 +194,6 @@ def _track_event_cycle():
 def track_event_func():
     started_at = time.monotonic()
     try:
-        _drain_ranking_outbox()
         _track_event_cycle()
     finally:
         _drain_ranking_outbox()
@@ -424,13 +429,15 @@ def track_event_scores(curr_time):
     if not isinstance(snapshot, dict):
         raise RuntimeError("Event ranking snapshot response must be an object")
     first100_data = snapshot.get("first100")
-    border_data = snapshot.get("border")
-    if not isinstance(first100_data, dict) or not isinstance(border_data, dict):
+    if not isinstance(first100_data, dict):
         raise RuntimeError("Event ranking snapshot is incomplete")
     _record_stage("game_snapshot", collection_started)
     if first100_data["isEventAggregate"]:
         logger.debug("[track_event_scores] event is aggregating, skipping...")
         return
+    border_data = snapshot.get("border")
+    if not isinstance(border_data, dict):
+        raise RuntimeError("Event ranking snapshot is incomplete")
     ranking_data["first100"] = first100_data["rankings"]
     ranking_data["border"] = [
         x for x in border_data["borderRankings"] if x["rank"] > 100

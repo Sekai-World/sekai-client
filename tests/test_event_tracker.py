@@ -100,7 +100,7 @@ def test_maintenance_path_drains_pending_outbox(monkeypatch):
 
     event_tracker.track_event_func()
 
-    assert drain.call_count == 2
+    drain.assert_called_once_with()
 
 
 def test_collection_uses_combined_snapshot_rpc(monkeypatch):
@@ -132,9 +132,39 @@ def test_collection_uses_combined_snapshot_rpc(monkeypatch):
     outbox.enqueue.assert_called_once()
 
 
+def test_collection_skips_border_and_enqueue_during_aggregation(monkeypatch):
+    outbox = Mock()
+    monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)
+    monkeypatch.setattr(
+        event_tracker,
+        "event_data",
+        {
+            "id": 12,
+            "eventType": "marathon",
+            "startAt": 0,
+            "aggregateAt": 1_000_000,
+            "rankingAnnounceAt": 1_100_000,
+            "closedAt": 2_000_000,
+        },
+    )
+    request = Mock(
+        return_value={
+            "first100": {"isEventAggregate": True, "rankings": []},
+            "border": None,
+        }
+    )
+    monkeypatch.setattr(event_tracker.jsonrpc_client, "request", request)
+
+    event_tracker.track_event_scores(1_000)
+
+    request.assert_called_once_with("fetch_event_rank_snapshot", [12])
+    outbox.enqueue.assert_not_called()
+
+
 def test_http_sessions_use_bounded_connection_pools():
     session = event_tracker._new_http_session()
 
     adapter = session.get_adapter("https://")
     assert adapter._pool_connections == 4
     assert adapter._pool_maxsize == 4
+    assert adapter._pool_block is True

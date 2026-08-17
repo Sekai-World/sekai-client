@@ -1157,8 +1157,11 @@ def fetch_event_rank_snapshot(event_id: int) -> dict[str, Any]:
     client = require_api_client()
 
     def fetch() -> dict[str, Any]:
+        first100 = client.fetch_event_rank_first_100(event_id)
+        if first100.get("isEventAggregate"):
+            return {"first100": first100, "border": None}
         return {
-            "first100": client.fetch_event_rank_first_100(event_id),
+            "first100": first100,
             "border": client.fetch_event_rank_border(event_id),
         }
 
