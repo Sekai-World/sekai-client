@@ -1,18 +1,19 @@
 import logging
+import os
 import sys
 import time
 from os import getenv
 from typing import Any
 
 import requests
-from apscheduler.events import JobEvent
-from apscheduler.schedulers.base import EVENT_JOB_MAX_INSTANCES, STATE_RUNNING
+from apscheduler.schedulers.base import STATE_RUNNING
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from pytz import timezone
 
 from logging_config import configure_logging
 from utils.constants import pjsk_region, sekai_api_key, strapi_base_url
+from utils.event_outbox import EventRankingOutbox
 from utils.jsonrpc_client import JSONRPCClient
 
 LOGLEVEL = getenv("LOGLEVEL", "INFO").upper()
@@ -24,6 +25,30 @@ jsonrpc_client = JSONRPCClient(f"http://localhost:{getenv('JSONRPC_PORT', '3939'
 version_info: dict[str, Any] | None = None
 event_data: dict[str, Any] | None = None
 is_in_maintenance = False
+_DELIVERY_TIMEOUT_SECONDS = float(getenv("EVENT_TRACKER_DELIVERY_TIMEOUT", "15"))
+_DRAIN_MAX_DURATION_SECONDS = float(getenv("EVENT_TRACKER_DRAIN_MAX_DURATION", "30"))
+_OUTBOX_RETENTION_SECONDS = float(getenv("EVENT_TRACKER_OUTBOX_RETENTION", "86400"))
+
+_OUTBOX_PATH = getenv(
+    "EVENT_TRACKER_OUTBOX_PATH",
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        ".runtime",
+        f"event-tracker-{pjsk_region}.sqlite3",
+    ),
+)
+ranking_outbox: EventRankingOutbox | None = None
+
+
+def _ranking_outbox() -> EventRankingOutbox:
+    global ranking_outbox
+    if ranking_outbox is None:
+        ranking_outbox = EventRankingOutbox(
+            _OUTBOX_PATH,
+            retention_seconds=_OUTBOX_RETENTION_SECONDS,
+        )
+    return ranking_outbox
+
 
 curr_event_url = (
     f"{strapi_base_url}/sekai-current-event"
@@ -64,6 +89,7 @@ def get_current_world_link_character(event_id, curr_time):
 
 
 def track_event_func():
+    started_at = time.monotonic()
     logger.info("Track event score triggered by cron job")
 
     ver_res = None
@@ -84,6 +110,7 @@ def track_event_func():
 
     global is_in_maintenance
     if ver_res["maintenance"]:
+        _drain_ranking_outbox()
         logger.warning("PJSK server is in maintenance, skipping...")
         is_in_maintenance = True
         return
@@ -96,6 +123,7 @@ def track_event_func():
     curr_time = int(time.time() * 1000)
     logger.debug("[track_event_func] call track_event_scores now at %s", curr_time)
     try:
+        _drain_ranking_outbox()
         track_event_scores(curr_time)
     except Exception:
         logger.exception("[track_event_func] Failed to track event scores")
@@ -104,30 +132,23 @@ def track_event_func():
         )
         refresh_version()
         track_event_scores(curr_time)
-
-
-def scheduler_listener(event: JobEvent):
-    global track_event_job, track_event_cron_trigger
-    if event.code == EVENT_JOB_MAX_INSTANCES:
-        logger.error(
-            "Scheduler error: maximum number of running instances reached, "
-            "job %s skipped",
-            event.job_id,
+    finally:
+        _drain_ranking_outbox()
+        logger.info(
+            "[track_event_func] execution_seconds=%.3f",
+            time.monotonic() - started_at,
         )
-        if event.job_id == track_event_job.id:
-            logger.error("Track event job skipped, reset job...")
-            track_event_job.remove()
-            track_event_job = scheduler.add_job(
-                track_event_func, track_event_cron_trigger, name="track_event_job"
-            )
 
 
 scheduler = BlockingScheduler(timezone=timezone("Asia/Tokyo"))
 track_event_cron_trigger = CronTrigger(minute="*/3")
 track_event_job = scheduler.add_job(
-    track_event_func, track_event_cron_trigger, name="track_event_job"
+    track_event_func,
+    track_event_cron_trigger,
+    name="track_event_job",
+    max_instances=1,
+    coalesce=True,
 )
-scheduler.add_listener(scheduler_listener, EVENT_JOB_MAX_INSTANCES)
 
 
 def refresh_version():
@@ -162,19 +183,45 @@ def _should_skip_event_tracking(curr_time: int) -> bool:
     )
 
 
-def _post_event_ranking(event_id: int, ranking_data: dict) -> None:
-    try:
-        response = requests.post(
-            f"https://api.sekai.best/event/{event_id}/rankings",
-            json=ranking_data,
-            headers={"X-API-Key": sekai_api_key},
-            params={"region": pjsk_region},
-            timeout=60,
-        )
-        response.raise_for_status()
-        logger.debug("[track_event_scores] event ranking posted")
-    except requests.RequestException as err:
-        logger.error("Error posting event ranking result to api, %s", err)
+def _deliver_ranking(endpoint: str, payload: dict[str, Any], key: str) -> None:
+    response = requests.post(
+        endpoint,
+        json=payload,
+        headers={"X-API-Key": sekai_api_key, "Idempotency-Key": key},
+        params={"region": pjsk_region},
+        timeout=_DELIVERY_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+
+
+def _drain_ranking_outbox() -> None:
+    result = _ranking_outbox().drain(
+        _deliver_ranking,
+        max_duration_seconds=_DRAIN_MAX_DURATION_SECONDS,
+    )
+    metrics = _ranking_outbox().metrics()
+    logger.info(
+        "[ranking_outbox] sent=%s failed=%s retained=%s pending=%s sending=%s "
+        "failed_total=%s oldest_pending_age_seconds=%.3f",
+        result["sent"],
+        result["failed"],
+        result["retained"],
+        metrics.pending,
+        metrics.sending,
+        metrics.failed,
+        metrics.oldest_pending_age_seconds,
+    )
+
+
+def _enqueue_event_ranking(event_id: int, curr_time: int, ranking_data: dict) -> None:
+    _ranking_outbox().enqueue(
+        region=pjsk_region,
+        event_id=event_id,
+        collected_at=curr_time,
+        data_type="ranking",
+        endpoint=f"https://api.sekai.best/event/{event_id}/rankings",
+        payload=ranking_data,
+    )
 
 
 def _build_chapter_ranking_data(
@@ -201,21 +248,17 @@ def _build_chapter_ranking_data(
     return chapter_ranking_data
 
 
-def _post_world_bloom_chapter_ranking(
-    event_id: int, chapter_ranking_data: dict
+def _enqueue_world_bloom_chapter_ranking(
+    event_id: int, curr_time: int, character_id: int, chapter_ranking_data: dict
 ) -> None:
-    try:
-        response = requests.post(
-            f"https://api.sekai.best/event/{event_id}/chapter_rankings",
-            json=chapter_ranking_data,
-            headers={"X-API-Key": sekai_api_key},
-            params={"region": pjsk_region},
-            timeout=60,
-        )
-        response.raise_for_status()
-        logger.debug("[track_event_scores] event chapter ranking posted")
-    except requests.RequestException as err:
-        logger.error("Error posting event ranking result to api, %s", err)
+    _ranking_outbox().enqueue(
+        region=pjsk_region,
+        event_id=event_id,
+        collected_at=curr_time,
+        data_type=f"chapter:{character_id}",
+        endpoint=f"https://api.sekai.best/event/{event_id}/chapter_rankings",
+        payload=chapter_ranking_data,
+    )
 
 
 def _track_world_bloom_chapters(
@@ -244,7 +287,9 @@ def _track_world_bloom_chapters(
         chapter_ranking_data = _build_chapter_ranking_data(
             curr_time, curr_character_id, first100_data, border_data
         )
-        _post_world_bloom_chapter_ranking(event_id, chapter_ranking_data)
+        _enqueue_world_bloom_chapter_ranking(
+            event_id, curr_time, curr_character_id, chapter_ranking_data
+        )
 
     if aggregated_character_id == -1:
         logger.debug(
@@ -259,7 +304,9 @@ def _track_world_bloom_chapters(
     aggregated_chapter_ranking_data = _build_chapter_ranking_data(
         curr_time, aggregated_character_id, first100_data, border_data
     )
-    _post_world_bloom_chapter_ranking(event_id, aggregated_chapter_ranking_data)
+    _enqueue_world_bloom_chapter_ranking(
+        event_id, curr_time, aggregated_character_id, aggregated_chapter_ranking_data
+    )
 
 
 def track_event_scores(curr_time):
@@ -296,7 +343,7 @@ def track_event_scores(curr_time):
     #     "result=%s",
     #     ranking_data,
     # )
-    _post_event_ranking(event_data["id"], ranking_data)
+    _enqueue_event_ranking(event_data["id"], curr_time, ranking_data)
 
     if event_data["eventType"] == "world_bloom":
         _track_world_bloom_chapters(event_id, curr_time, first100_data, border_data)
