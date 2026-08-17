@@ -81,6 +81,49 @@ restarts, readiness, acquire latency/failures, active lease count, quarantine
 events, queue rejection/timeouts, check-update success, and event-tracker
 delivery. Do not expand the canary while any unexplained regression remains.
 
+## Public Observation Record (2026-08-17)
+
+The TW single-consumer canary exceeded the 24-hour observation gate. Public
+documentation records only the decision-level result; exact timestamps,
+revision identifiers, image digests, host paths, lease identifiers, and detailed
+counter values remain in the private operator record.
+
+- Client and account-service builds were the approved production revisions.
+- The shared client stayed online with one worker and no process restarts.
+- The account-service pod stayed ready with no container restarts.
+- TW inventory and lease health remained within the canary gate. No account
+  service error, failure, or quarantine signal was observed in the operator
+  metrics snapshot.
+- The event-ranking SQLite outbox was not deployed in this account-provider
+  canary, so this record does not claim event-tracker outbox delivery.
+
+The local-provider rollback artifact, rendered remote configuration, lease
+journal backup, and legacy inventory backup remain protected outside the
+repository throughout the rollback window.
+
+## Rollout Gate for the Next Region
+
+Do not switch another region until all of the following are recorded:
+
+1. At least one `AVAILABLE` account and a lease-scoped token for that region.
+2. A region-specific PM2 render with loopback binding, one worker, persistent
+   lease state, and a protected local-provider rollback file.
+3. A pre-activation snapshot of service version, pod readiness/restarts,
+   account inventory, and current local-provider process state.
+4. A 24-hour observation window with no unexplained restart, authentication,
+   lease, or downstream update regression.
+
+The current production service exposes only the canary region's verified
+inventory and is configured for single-region provisioning, so expansion
+remains blocked until the next region's inventory and configuration are verified.
+Once those preconditions are met, expand one region at a time and retain this
+TW rollback window until the new region passes its own gate.
+
+The rollback window is the later of 24 hours after the next-region activation
+or one complete scheduled update cycle. Do not delete the local-provider
+configuration, lease journal backup, or inventory backup before that point and
+before an explicit acceptance record is added.
+
 ## Rollback
 
 Rollback triggers include failure to become ready, repeated account-service

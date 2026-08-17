@@ -501,9 +501,9 @@ and test-count records above are retained as execution history.
 - Phase 3 code is present on `main`; desktop/mobile browser and real PM2 restart
   acceptance evidence is still missing.
 - Phase 5 lifecycle and readiness code is present on `main`; the older
-  "uncommitted" wording above is stale. PM2/Gunicorn validation, a regional
-  canary, public endpoint verification, and monitoring evidence are still
-  missing.
+  "uncommitted" wording above is stale. The TW remote-provider canary and its
+  first monitoring window are now recorded below. Public endpoint verification
+  and expansion to another region remain open.
 - Phase 6 is incomplete. Only the cooperative `check_update` cycle deadline is
   implemented; end-to-end RPC deadlines, cancellation, idempotency-aware
   retries, `Retry-After`/jitter handling, and queue metrics remain open.
@@ -539,4 +539,4 @@ and test-count records above are retained as execution history.
 | 2026-07-22 | 4 | Gate 5 Oracle **APPROVE**：显式 `Asia/Tokyo` scheduler trigger；持久化 Tokyo daily due marker 覆盖 late/coalesced/restart/overlap，且仅成功并完成日期绑定时清除/完成；clone/open `flock`；仅 Strapi ID outbox（不含 `event_tracker`），先持久化，Git 事务完成或可恢复 readiness checkpoint 后 ready，再 Git 后 HTTP，header auth、dedupe/retry。验证：`uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。 | 阶段 5；阶段 7 event_tracker outbox 仍未完成 |
 | 2026-07-23 | 4 | PR [#9](https://github.com/Sekai-World/sekai-client/pull/9) 已合并到 `transform-python`，合并提交 `<commit-id>`。合并范围为更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；不包含 `event_tracker` 排名 outbox。 | 阶段 5；阶段 7 event_tracker outbox 与 API 响应校验仍未完成 |
 | 2026-07-23 | 5 | 未推送的 `<commit-id>`、`<commit-id>` 实现固定区域生命周期、序列化状态变更、纯 readiness/liveness、目标区域 `ensure_ready` 与脱敏 503/`Retry-After`、live/ready/legacy health、Dashboard readiness 以及正式 JP/EN/TW/KR 的 PM2 `--workers 1` 拓扑。Oracle Gate 1/2 均 **APPROVE**；全套测试 414 passed，Ruff/Mypy/diff check clean。 | 受控 PM2/Gunicorn、单区域 canary/rollout、真实公共部署与监控检查；未实现的 bootstrap、阶段 6/7 保持待办 |
-| 2026-08-16 | 5 | TW remote-provider canary activated from isolated `main@<commit-id>` worktree. One Gunicorn worker remained READY on the existing loopback port with lease health within the canary gate, a private journal, no legacy TW credential variables, and no restarts. The 06:00 JST scheduled update committed and pushed successfully. The 05:30 failure was isolated to stale PAT-based Git process configuration and missing dynamic repositories; GitHub App authentication and repository restoration resolved it. A failed PM2 reload also demonstrated that cwd or credential-set changes require delete/start. | TW single-consumer canary accepted. Continue sustained monitoring before expanding to another region; retain the local-provider rollback file. |
+| 2026-08-16/17 | 5 | The first TW remote-provider consumer passed the 24-hour gate with the client and account service online and ready, without observed process or container restarts. Lease and inventory health stayed within acceptance criteria; no account-service error, failure, or quarantine signal was observed in the operator snapshot. Exact operational identifiers and counters are retained privately. The event-ranking SQLite outbox was not part of this canary. | TW gate accepted. Verify the next region's inventory and configuration before one-region-at-a-time rollout; retain rollback artifacts through the later of 24 hours after activation or one scheduled update cycle. |

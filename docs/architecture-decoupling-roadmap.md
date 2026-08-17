@@ -221,11 +221,14 @@ Acceptance criteria:
 ### Phase 5: Rollout and Remove Local Registration
 
 The repository contains a dedicated TW remote-provider PM2 template and
-[canary runbook](account-service-tw-canary.md). This is preparation only; the
-production canary remains unchecked until its evidence is recorded.
+[canary runbook](account-service-tw-canary.md). The first production canary is
+accepted; the next-region rollout remains gated by the evidence requirements
+below.
 
 - [x] Deploy the account service before enabling remote acquisition in clients.
-- [x] Canary one region and one consumer, then expand by region.
+- [x] Canary one region and one consumer.
+- [ ] Expand one region at a time after inventory, token, and rollback gates
+  are recorded.
 - [ ] Monitor lease conflicts, acquisition latency, authentication failures,
   quarantine rate, and account inventory.
 - [ ] Migrate existing credentials through an audited one-time import.
@@ -296,17 +299,20 @@ same time.
 
 The Phase 0 production audit, public-release gate, critical remediation Phase 6
 reliability work, and remote-provider lifecycle handling are complete. The
-immediate next action is one-region canary configuration without removing the
-local rollback path.
+immediate next action is to verify the next region's inventory and
+lease-scoped token while retaining the local rollback path.
 
-TW canary evidence (2026-08-16): the account service is deployed on Kubernetes
-with Postgres and separate encryption-key management. The TW shared client runs
-`main@<commit-id>` from an isolated worktree with one Gunicorn worker, remote account
-acquisition, and a private persistent lease journal. It reached `READY`, held
-lease health within the canary gate, exposed the existing loopback RPC contract to the legacy
-check-update client, and contained no legacy TW credential variables. The 06:00
-JST scheduled update completed and pushed the TW repository successfully without
-process restarts or new error-log entries. An earlier operational issue was resolved through the normal recovery procedure. Broader regional rollout and sustained monitoring remain pending.
+TW canary evidence (2026-08-16/17): the first remote-provider consumer passed
+the 24-hour gate with the client and account service online, ready, and free of
+observed process or container restarts. Lease and inventory health remained
+within the canary acceptance criteria, and no account-service error, failure, or
+quarantine signal was observed in the operator snapshot. The event-ranking
+SQLite outbox was not part of this account-provider canary and is not accepted
+by this record. Exact operational identifiers and counters are retained only in
+the private operator record. The next-region rollout remains gated on verified
+inventory and region-specific configuration. The local-provider rollback path
+must remain available through the later of 24 hours after activation or one
+complete scheduled update cycle.
 
 ## Suggested Pull Requests
 
