@@ -131,6 +131,11 @@ the next region's inventory and configuration are verified. Once those
 preconditions are met, expand one region at a time and retain this TW rollback
 window until the new region passes its own gate.
 
+The rollback window is the later of 24 hours after the next-region activation
+or one complete scheduled update cycle. Do not delete the local-provider
+configuration, lease journal backup, or inventory backup before that point and
+before an explicit acceptance record is added.
+
 ## Rollback
 
 Rollback triggers include failure to become ready, repeated account-service

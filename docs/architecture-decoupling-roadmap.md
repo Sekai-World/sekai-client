@@ -327,6 +327,8 @@ is not deployed in this account-provider canary and is therefore not covered by
 this acceptance. Production metrics currently expose only TW inventory while
 the service is configured for single-region TW provisioning, so the next-region
 rollout is gated on verified inventory and region-specific configuration.
+The local-provider rollback path remains mandatory through the later of 24 hours
+after the next-region activation or one complete scheduled update cycle.
 
 ## Suggested Pull Requests
 
