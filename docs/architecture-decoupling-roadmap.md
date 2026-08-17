@@ -302,33 +302,17 @@ reliability work, and remote-provider lifecycle handling are complete. The
 immediate next action is to verify the next region's inventory and
 lease-scoped token while retaining the local rollback path.
 
-TW canary evidence (2026-08-16): the account service is deployed on Kubernetes
-with Postgres and separate encryption-key management. The TW shared client runs
-`main@f3f2933` from an isolated worktree with one Gunicorn worker, remote account
-acquisition, and a private persistent lease journal. It reached `READY`, held
-exactly one TW lease, exposed the existing loopback RPC contract to the legacy
-check-update client, and contained no legacy TW credential variables. The 06:00
-JST scheduled update completed and pushed the TW repository successfully without
-process restarts or new error-log entries. The 05:30 failure was traced to stale
-PAT-based Git process configuration and missing dynamic repositories; reloading
-the update workers with GitHub App authentication and restoring the repositories
-resolved it. Broader regional rollout and sustained monitoring remain pending.
-
-TW canary acceptance evidence (2026-08-17): the canary client revision was
-`f26a43bb6a0555bc33ba4d3bde6f2119e3b5406b` and ran for `28h41m29.313s` at the
-capture point with PM2 restart count `0`, unstable restarts `0`, and one
-Gunicorn worker. The account service ran image `1.3.0` at digest
-`sha256:c163f33d2f14ebd7ff9c34c2e4c38b47d20244bad8892bcbfd1d2d244f04c4af`, with
-one ready pod and zero container restarts. Metrics showed one active TW lease,
-two successful acquires, one successful release, and one unknown-region release
-no-op; no filtered error/failure/quarantine series were exposed. The protected
-local-provider rollback file remains available. The event-ranking SQLite outbox
-is not deployed in this account-provider canary and is therefore not covered by
-this acceptance. Production metrics currently expose only TW inventory while
-the service is configured for single-region TW provisioning, so the next-region
-rollout is gated on verified inventory and region-specific configuration.
-The local-provider rollback path remains mandatory through the later of 24 hours
-after the next-region activation or one complete scheduled update cycle.
+TW canary evidence (2026-08-16/17): the first remote-provider consumer passed
+the 24-hour gate with the client and account service online, ready, and free of
+observed process or container restarts. Lease and inventory health remained
+within the canary acceptance criteria, and no account-service error, failure, or
+quarantine signal was observed in the operator snapshot. The event-ranking
+SQLite outbox was not part of this account-provider canary and is not accepted
+by this record. Exact operational identifiers and counters are retained only in
+the private operator record. The next-region rollout remains gated on verified
+inventory and region-specific configuration. The local-provider rollback path
+must remain available through the later of 24 hours after activation or one
+complete scheduled update cycle.
 
 ## Suggested Pull Requests
 
