@@ -36,7 +36,12 @@ class JSONRPCClient:
         url: Base URL of the JSON-RPC server (e.g., 'http://localhost:39390/')
     """
 
-    def __init__(self, url: str = "http://localhost:39390/") -> None:
+    def __init__(
+        self,
+        url: str = "http://localhost:39390/",
+        *,
+        transport: Any = requests,
+    ) -> None:
         """
         Initialize a JSON-RPC client.
 
@@ -44,6 +49,7 @@ class JSONRPCClient:
             url: Base URL of the JSON-RPC server endpoint
         """
         self.url = url
+        self._transport = transport
 
     def _is_loopback_target(self, url: str | None = None) -> bool:
         """Whether ``url`` points at a loopback host.
@@ -144,7 +150,7 @@ class JSONRPCClient:
             raise ValueError("JSON-RPC timeout must be positive")
         headers[INTERNAL_RPC_TIMEOUT_HEADER] = str(max(1, int(request_timeout * 1000)))
         try:
-            r = requests.post(
+            r = self._transport.post(
                 target_url,
                 json=request_uuid(func_name, request_params),
                 headers=headers,

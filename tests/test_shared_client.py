@@ -439,6 +439,52 @@ def test_account_info_rpc_returns_only_userid_and_region(monkeypatch, reset_life
     assert "signature" not in result
 
 
+def test_event_rank_snapshot_uses_one_serialized_job(monkeypatch, logged_in_client):
+    calls = []
+    logged_in_client.fetch_event_rank_first_100.return_value = {"rankings": []}
+    logged_in_client.fetch_event_rank_border.return_value = {"borderRankings": []}
+    monkeypatch.setattr(
+        shared_client,
+        "_client_job",
+        lambda job, *args, **kwargs: calls.append(job) or job(),
+    )
+
+    result = shared_client.fetch_event_rank_snapshot(12)
+
+    assert result == {
+        "first100": {"rankings": []},
+        "border": {"borderRankings": []},
+    }
+    assert len(calls) == 1
+    logged_in_client.fetch_event_rank_first_100.assert_called_once_with(12)
+    logged_in_client.fetch_event_rank_border.assert_called_once_with(12)
+
+
+def test_event_rank_snapshot_skips_border_during_aggregation(
+    monkeypatch, logged_in_client
+):
+    calls = []
+    logged_in_client.fetch_event_rank_first_100.return_value = {
+        "isEventAggregate": True,
+        "rankings": [],
+    }
+    monkeypatch.setattr(
+        shared_client,
+        "_client_job",
+        lambda job, *args, **kwargs: calls.append(job) or job(),
+    )
+
+    result = shared_client.fetch_event_rank_snapshot(12)
+
+    assert result == {
+        "first100": {"isEventAggregate": True, "rankings": []},
+        "border": None,
+    }
+    assert len(calls) == 1
+    logged_in_client.fetch_event_rank_first_100.assert_called_once_with(12)
+    logged_in_client.fetch_event_rank_border.assert_not_called()
+
+
 def test_fetch_master_split_rejects_unallowlisted_path(monkeypatch, reset_lifecycle):
     client = Mock()
     client.master_split_paths = ["suite/master/valid"]

@@ -46,12 +46,14 @@ remote storage.
 
 ## Phase 0: Instrument the Critical Path
 
-- [ ] Record durations for version check, account lookup, first-100 fetch,
-  border fetch, normal-ranking delivery, metadata lookup, and chapter delivery.
-- [ ] Record collection, durable, and confirmed-delivery latency separately.
-- [ ] Add counters for collection failures, delivery failures, retries, scheduler
+- [x] Record durations for version check, the combined game snapshot, durable
+  enqueue, delivery, and total execution. The redundant account lookup was
+  removed; receiver-side timing remains external.
+- [x] Record collection, durable, and confirmed-HTTP-delivery latency separately.
+- [x] Add counters for collection failures, delivery failures, retries, scheduler
   skips, and API status classes.
-- [ ] Establish 24-hour mean, median, P95, P99, and maximum baselines by region.
+- [x] Establish the initial 24-hour mean, median, P95, and maximum baseline by
+  region. P99 will be added to the post-deployment comparison.
 - [ ] Confirm the receiving API can identify when a payload is durably stored.
 
 Acceptance: dashboards and logs can locate the dominant stage without exposing
@@ -81,9 +83,9 @@ distinct states; a transient API failure cannot lose a snapshot.
 
 ## Phase 2: Remove Avoidable Transport Cost
 
-- [ ] Reuse bounded `requests.Session` connection pools for internal RPC and
+- [x] Reuse bounded `requests.Session` connection pools for internal RPC and
   external HTTPS requests.
-- [ ] Cache World Bloom metadata and refresh it on event/version change or a
+- [x] Cache World Bloom metadata and refresh it on event/version change or a
   bounded TTL instead of downloading it every cycle.
 - [ ] Add a receiving API endpoint that accepts normal and chapter rankings in
   one idempotent request where their lifecycle permits atomic delivery.
@@ -95,10 +97,11 @@ cross-region session state.
 
 ## Phase 3: Reduce Collection Latency
 
-- [ ] Add one combined shared-client RPC operation for a complete event snapshot
+- [x] Add one combined shared-client RPC operation for a complete event snapshot
   to avoid queue interleaving and repeated local RPC round trips.
-- [ ] Determine whether first-100 and border game requests can safely overlap.
-- [ ] Do not add concurrency to the existing stateful single-client worker
+- [x] Determine whether first-100 and border game requests can safely overlap:
+  they must remain serialized while using one mutable authenticated client.
+- [x] Do not add concurrency to the existing stateful single-client worker
   without protocol, rate-limit, and state-isolation evidence.
 - [ ] If concurrency is required, evaluate isolated clients and accounts rather
   than sharing one mutable game session.
