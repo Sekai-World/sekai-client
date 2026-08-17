@@ -1,6 +1,8 @@
 import sqlite3
 import time
 
+import pytest
+
 from utils.event_outbox import EventRankingOutbox
 
 
@@ -22,6 +24,37 @@ def test_enqueue_is_idempotent_and_file_is_private(tmp_path):
     assert _enqueue(outbox) == _enqueue(outbox)
     assert outbox.metrics().pending == 1
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"limit": -1}, "limit must be non-negative"),
+        ({"lease_seconds": 0}, "lease_seconds must be positive"),
+        ({"max_attempts": 0}, "max_attempts must be positive"),
+        ({"max_duration_seconds": 0}, "max_duration_seconds must be positive"),
+    ],
+)
+def test_drain_validates_options_before_touching_outbox(tmp_path, kwargs, message):
+    outbox = EventRankingOutbox(str(tmp_path / "outbox.sqlite3"))
+    _enqueue(outbox)
+
+    with pytest.raises(ValueError, match=message):
+        outbox.drain(lambda *_: None, **kwargs)
+
+    assert outbox.metrics().pending == 1
+
+
+def test_terminal_retention_index_is_created(tmp_path):
+    outbox = EventRankingOutbox(str(tmp_path / "outbox.sqlite3"))
+
+    with sqlite3.connect(outbox.path) as connection:
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(event_ranking_outbox)")
+        }
+
+    assert "event_ranking_outbox_terminal" in indexes
 
 
 def test_successful_delivery_is_acknowledged(tmp_path):
