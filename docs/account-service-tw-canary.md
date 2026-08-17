@@ -15,7 +15,7 @@ throughout the canary.
 - The canary token has lease capability only; it cannot provision or administer
   accounts.
 - The service URL is HTTPS and reachable from the shared-client host.
-- The current `<protected-ops-dir>/sharedApiClientTW.yaml` and PM2 process description have
+- The current protected PM2 configuration and process description have
   been copied to a protected rollback location.
 - The lease journal directory is persistent, writable only by the service user,
   and is not placed under `/tmp`.
@@ -25,12 +25,12 @@ The public ingress intentionally routes only `/v1` to the service; `/healthz`,
 Kubernetes operator context without requesting a lease:
 
 ```bash
-kubectl -n pjsk-account exec deployment/pjsk-account-service -- \
+kubectl -n <account-service-namespace> exec deployment/<account-service-deployment> -- \
   python -c "import urllib.request; print(urllib.request.urlopen( \
-  'http://loopback-service-endpoint/healthz').read().decode())"
-kubectl -n pjsk-account exec deployment/pjsk-account-service -- \
+  'http://service-local/healthz').read().decode())"
+kubectl -n <account-service-namespace> exec deployment/<account-service-deployment> -- \
   python -c "import urllib.request; print(urllib.request.urlopen( \
-  'http://loopback-service-endpoint/metrics').read().decode())" \
+  'http://service-local/metrics').read().decode())" \
   | grep -E '^pjsk_account_(inventory_accounts|active_leases)'
 ```
 
@@ -51,7 +51,7 @@ chmod 600 <protected-ops-dir>/sharedApiClientTW.remote-canary.yaml
 ```
 
 Before applying it, confirm all placeholders were replaced, the bind remains
-`loopback-service-endpoint`, `--workers 1` remains present, and no
+loopback-only, `--workers 1` remains present, and no
 `SEKAI_TW_ACCESS_TOKEN` or `SEKAI_TW_SDK_OPEN_ID` is present. Never print the
 rendered file into shared logs or CI output.
 Confirm `--config gunicorn_conf.py` and `SEKAI_ACCOUNT_LEASE_STATE_DIR` are

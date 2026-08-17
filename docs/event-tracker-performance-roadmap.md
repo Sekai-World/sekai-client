@@ -15,16 +15,20 @@ Writing to an outbox quickly does not satisfy the end-to-end delivery target.
 
 ## Production Baseline
 
-The baseline below covers one 24-hour observation window. JP had no active event and skipped collection.
+The initial baseline was collected during a 24-hour production observation
+window. Exact sample counts, timestamps, and latency values remain in the
+private operator record; this public roadmap retains only the decision-level
+comparison.
 
-| Region | Active samples | Mean | Median | P95 | Maximum |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| EN | private baseline |
-| KR | private baseline |
-| TW | private baseline |
+| Region | Public baseline status |
+| --- | --- |
+| EN | Active event observed; slower than the initial KR/TW target |
+| KR | Active event observed; used as a target-region comparison |
+| TW | Active event observed; used as a target-region comparison |
+| JP | No active event during the observation window |
 
-Detailed ranking POST timing remains private.
-Detailed ranking timing remains private.
+Detailed ranking POST and World Link timing remains private and is used only for
+the acceptance comparison.
 
 Current scheduler success is not reliable delivery evidence: POST failures are
 logged and swallowed, so a job may be reported as successful without confirmed

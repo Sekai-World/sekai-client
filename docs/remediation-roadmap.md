@@ -22,7 +22,7 @@
 | 2 | 凭据、日志和内部 RPC 安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | PR 3 (#7 merged) |
 | 3 | Dashboard 安全与交互 | `[-]` 进行中（待桌面/移动端手工验收） | 0.5-1 天 | 阶段 1 | PR 4 |
 | 4 | 定时任务互斥与 Git 数据安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
-| 5 | 区域 bootstrap 与客户端状态机 | `[-]` 已实现生命周期/readiness 代码切片，生产验收待完成 | 2-3 天 | 阶段 1 | 未提交（`<commit-id>`、`<commit-id>`） |
+| 5 | 区域 bootstrap 与客户端状态机 | `[-]` 已实现生命周期/readiness 代码切片，生产验收待完成 | 2-3 天 | 阶段 1 | 未提交 |
 | 6 | Deadline、重试与队列生命周期 | `[x]` 已完成 | 2-3 天 | 阶段 5 | PRs #21-#24 |
 | 7 | Event tracker outbox 与 API 响应校验 | `[ ]` | 2-4 天 | 阶段 1；建议在阶段 6 后 | PR 8-9 |
 
@@ -49,13 +49,13 @@
 ### 任务
 
 - [x] 确认 CN 不属于正式支持区域，完成 D-001（保留简化版 `checkUpdate-cn` 进程）。
-- [x] 自检代码库区域声明：从 `Config.REGIONS` 与 `api_public_server.client_map` 移除 CN；生产 PM2 使用 `<protected-ops-dir>` 下的一进程一个 YAML，正式服务不含 CN，保留独立 `checkUpdate-cn` 与 `CN_PORT`/port-map。
+- [x] 自检代码库区域声明：从 `Config.REGIONS` 与 `api_public_server.client_map` 移除 CN；生产 PM2 使用一进程一个 YAML，正式服务不含 CN，保留独立 `checkUpdate-cn` 与其专用配置。
 - [x] 检查生产环境实际启动的区域和 PM2 进程。
-  - 状态：`[x]` 2026-08-13 在 <production-host> 确认 预期业务进程在线：JP/EN/TW/KR 各有 shared/check/event，另有 `sekai-api` 与 standalone `checkUpdate-cn`。
-- [x] 确认 shared client 是否始终绑定 `127.0.0.1`。
-  - 状态：`[x]` PM2 参数与 `ss -lntp` 均确认四个 shared client 分别绑定 `loopback-only-service-bindings`；未对外监听。
+  - 状态：`[x]` 只读生产审计确认正式区域服务和独立 CN 更新进程均按预期运行。
+- [x] 确认 shared client 是否始终绑定 loopback。
+  - 状态：`[x]` PM2 参数与监听检查确认 shared client 仅绑定 loopback，未对外监听。
 - [x] 确认每个 shared client 的 Gunicorn worker 数量。
-  - 状态：`[x]` 2026-08-13 的进程树确认每个 shared client 为一个 Gunicorn master 加一个 worker；未配置额外 workers。
+  - 状态：`[x]` 进程树确认每个 shared client 使用一个 Gunicorn worker。
 - [x] 确认 master/i18n 仓库是否可能存在未推送 commit。
   - 状态：`[x]` JP/EN/KR/TW/CN master 仓库与共享 i18n 均为干净的 `main...origin/main`，且 `log --branches --not --remotes` 无输出。
 - [x] 记录当前 pytest、Ruff 结果作为基线（见“验收证据”）。
@@ -66,7 +66,7 @@
 - [x] 所有声明支持的区域（jp/en/tw/kr）均具有 headers、URL、端口等完整配置。
 - [x] 缺失区域配置时，进程在启动阶段给出明确错误（`Config.validate_region_config` + `api_public_server.bootstrap` 抛 `RuntimeError`）。
 - [x] 生产部署约束已记录，不再依赖未文档化假设。
-  - 状态：`[x]` 拓扑、loopback、单 worker 与全部数据仓库状态均已通过 2026-08-13 只读生产审计确认。
+  - 状态：`[x]` 拓扑、loopback、单 worker 与数据仓库状态均已通过只读生产审计确认。
 
 ### 验收证据
 
@@ -76,14 +76,14 @@
 - 代码层改动：
   - `config.py`：`REGIONS` 移除 `cn`；新增 `validate_region_config` 并接入 `Config.validate`。
   - `api_public_server.py`：`client_map` 移除 `cn`；`bootstrap` 在区域映射不完整时启动失败。
-  - 生产 PM2：已确认 <production-host> 使用 `<protected-ops-dir>` 下 14 个独立 YAML；4 个正式区域各有 shared/check/event，另有 `sekai-api` 与 standalone `checkUpdate-cn`（simple mode）。仓库 `deployment/pm2/examples/` 提供对应无 secret 模板。
-  - 2026-08-13 生产审计：PM2 与进程树确认四个正式区域各一套 shared/check/event，shared client 均为 loopback + 单 worker；JP/EN/KR/TW/CN master 与共享 i18n 仓库均干净且无未推送提交。
-  - EN 观察项：`checkUpdate-en` 与 `eventTracker-en` 累计重启分别为 aggregate historical restart data，但均连续在线约两天、`unstable_restarts=0`。最后退出码为 130，证据不显示当前 crash loop；历史累计次数的具体原因未推断，作为非阻塞观察项保留。
+  - 生产 PM2：只读审计确认正式区域各有 shared/check/event，另有 `sekai-api` 与独立 `checkUpdate-cn`；仓库模板不包含 secrets。
+  - 生产审计：PM2 与进程树确认正式区域 shared client 均为 loopback + 单 worker；各数据仓库均干净且无未推送提交。
+  - 历史重启观察项未公开具体计数；当前进程状态稳定且无 unstable restart，具体原因未推断。
 
 ### 执行记录
 
 - 2026-07-16：完成 D-001 决策与代码层阶段 0 改动。CN 从正式区域声明移除，保留简化版 `checkUpdate-cn`。新增启动期区域映射完整性校验并接入 `Config.validate` 与 `api_public_server.bootstrap`。新增聚焦测试 `tests/test_config.py::TestRegionConfigValidation`。未做 CI/安全/状态机（属阶段 1-7）。生产运行事实类检查项标记为待运维确认。
-- 2026-08-13：完成 <production-host> 只读生产审计。确认 预期业务进程拓扑、四个 shared client 的 loopback 监听和单 Gunicorn worker；所有 master 与共享 i18n 仓库均干净且无未推送提交。EN 两进程虽有较高累计重启数，但当前稳定且无 unstable restart，阶段 0 关闭。
+- 完成只读生产审计：确认正式进程拓扑、shared client 的 loopback 监听和单 Gunicorn worker；所有 master 与共享 i18n 仓库均干净且无未推送提交。阶段 0 关闭。
 
 ## 阶段 1：测试基线与 CI
 
@@ -137,7 +137,7 @@ uv run --extra dev pytest tests/
 ### 执行记录
 
 - 2026-07-16：新增 `.github/workflows/ci.yml`（阶段 4 之前脚手架，read-only 权限，针对 `transform-python`）。机械修复 `tests/` 与 `service_dashboard.py` 的格式/未用 import/空白以通过 lint 门禁（零逻辑变化）。扩展 `tests/test_shared_client.py` 覆盖已登录缓存不重复 login 与队列满快速拒绝；扩展 `tests/test_config.py` 覆盖 bootstrap 配置 fail-fast 与幂等安全边界；新增 `tests/test_check_update.py` 锁定 push 失败返回契约、确认执行到远端 push 错误，但不把 rmtree 固化为正确行为。下列原任务因依赖阶段 4/5/6 修复而标记为 deferred，未伪称完成：bootstrap 部分失败恢复、POST 非幂等自动重试、update job 互斥、push 失败保留本地数据。`pytest` 71 → 76 passed。`git diff --check` clean。
-- 2026-07-16：阶段 1 PR [#6](https://github.com/Sekai-World/sekai-client/pull/6) 的 CI 检查通过后合并到 `transform-python`，合并提交 `<commit-id>`。代码与 CI 基线工作已完成；仓库分支保护是否把该检查配置为 required status check 仍需在 GitHub 仓库设置中确认，不以 PR 成功合并替代该运维事实。
+- 2026-07-16：阶段 1 PR [#6](https://github.com/Sekai-World/sekai-client/pull/6) 的 CI 检查通过后合并到目标分支。代码与 CI 基线工作已完成；仓库分支保护是否把该检查配置为 required status check 仍需在 GitHub 仓库设置中确认。
 
 ## 阶段 2：凭据、日志和内部 RPC 安全
 
@@ -188,8 +188,8 @@ uv run --extra dev pytest tests/
 
 ### 执行记录
 
-- 2026-07-16：实现阶段 2 最小安全设计。新增 `utils/redaction.py`（递归+文本脱敏、`SecretRedactingFilter`、`attach_redaction`），`logging_config.configure_logging` 默认安装 filter。`Config` 增加动态内部 RPC 安全配置；client/server 默认 fail-closed，account_info/RPC capability/URL allowlist/YAML 写入与日志脱敏均收敛。`check_update` 的 Strapi token 改为 header。README 增加内部 token 部署说明。后续生产盘点确认 <production-host> 实际使用 `<protected-ops-dir>` 的独立 YAML，因此仓库改为 `deployment/pm2/examples/*.yaml.example`，而不是误导性的单一 ecosystem 文件。**明确延期项（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model；未改变阶段 4 Git 删除 / 阶段 5 状态机 / 阶段 6 重试。最终验证全绿（119 passed，mypy/ruff/YAML/git clean）。
-- 2026-07-16：阶段 2 PR [#7](https://github.com/Sekai-World/sekai-client/pull/7) 在最终 CI 通过后 squash 合并到 `transform-python`，合并提交 `<commit-id>`。
+- 实现阶段 2 最小安全设计：新增日志脱敏、内部 RPC 鉴权、URL allowlist、原子凭据写入和安全 PM2 模板。secret store、mTLS/Unix socket、完整 capability model 保持延期；最终验证全绿。
+- 2026-07-16：阶段 2 PR [#7](https://github.com/Sekai-World/sekai-client/pull/7) 在最终 CI 通过后 squash 合并到目标分支。
 
 ## 阶段 3：Dashboard 安全与交互
 
@@ -276,7 +276,7 @@ uv run --extra dev pytest tests/
 - 2026-07-18：commit 仅使用 cycle manifest；所有仓库先 commit 再按固定顺序 push，首个 push 失败停止后续 push，保留所有 pending local SHA。通过本地 bare remote、spawn 锁和真实 staging 路径完成验收；未访问生产仓库或外部网络。
 - 2026-07-18：为后续“一小时硬期限与 04:00 daily 抢占”增加严格 owner metadata 基础（尚未接入生产）：包含 canonical schema、Linux `/proc` 身份字段、0600 原子 owner 文件、完整 metadata matched-delete、多锁写失败回滚和持有 `flock` 期间的 cleanup 协议。该提交不创建或终止 worker，不改变 scheduler 行为；owner/watchdog、进程树终止和 daily 抢占必须在 Linux CI/隔离环境完成真实信号验证后另行接入。
 - 2026-07-22：完成 Gate 5 Phase 4 执行记录并获 Oracle **APPROVE**。新增显式 `Asia/Tokyo` scheduler trigger、可持久化且按日期绑定的 Tokyo daily due marker（覆盖 late/coalesced/restart/overlap，成功后才完成），clone/open `flock`，以及仅限 Strapi ID 的持久化 outbox：Git 事务完成或可恢复 readiness checkpoint 后 ready，Git 后 HTTP、header auth、dedupe/retry。`event_tracker` outbox 仍属于阶段 7，未宣称完成。全套 `uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。
-- 2026-07-23：阶段 4 通过 [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) 合并到 `transform-python`，合并提交为 `<commit-id>`。PR #9 包含更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；`event_tracker` 排名 outbox 仍未实现，保留在阶段 7。
+- 2026-07-23：阶段 4 通过 [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) 合并到目标分支。PR #9 包含更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；`event_tracker` 排名 outbox 仍未实现，保留在阶段 7。
 
 ## 阶段 5：区域 Bootstrap 与客户端状态机
 
@@ -334,7 +334,7 @@ UNINITIALIZED
 
 ### 执行记录
 
-- 2026-07-23：提交 `<commit-id>`（`feat: add fixed-region client lifecycle`）实现每进程固定区域、区域生命周期状态、序列化生命周期变更与兼容 RPC、纯 readiness/liveness 状态接口及独立退避；提交 `<commit-id>`（`feat: expose regional lifecycle readiness`）实现公共 API 目标区域 `ensure_ready`、脱敏 503/`Retry-After`、`/health/live`、`/health/ready` 和 legacy `/health` 兼容，并将 Dashboard 探针改为 readiness、PM2 正式区域模板显式 `--workers 1`。两提交目前为 `transform-python` 上未推送的阶段 5 工作；无 PR/合并状态可记录。
+- 阶段 5 代码切片实现每进程固定区域、区域生命周期状态、readiness/liveness、目标区域 `ensure_ready`、脱敏 503/`Retry-After` 和正式区域 PM2 模板；生产验收仍需独立记录。
 - 本次代码验收：Oracle Gate 1/2 均 **APPROVE**；全套 `pytest` 414 passed，Ruff、Mypy、`git diff --check` clean。生产 PM2/Gunicorn、canary/rollout、公共部署和监控验收仍待完成。
 - 2026-08-14: Added a separate TW remote-account-provider PM2 canary template,
   configuration contract test, and backup/observation/rollback runbook. This is
@@ -461,11 +461,11 @@ UNINITIALIZED
 | PR | 建议标题 | 范围 | 状态 | 链接 |
 |---|---|---|---|---|
 | 1 | `fix: validate supported region configuration` | CN 决策、区域配置校验与测试 | `[x]` | #5 merged |
-| 2 | `ci: establish phase 1 verification baseline` | Ruff、mypy、pytest CI | `[x]` | [#6](https://github.com/Sekai-World/sekai-client/pull/6) merged（`<commit-id>`） |
-| 3 | `security: harden internal rpc and credential handling` | 日志、token、文件权限、RPC | `[x]` | [#7](https://github.com/Sekai-World/sekai-client/pull/7) merged（`<commit-id>`） |
+| 2 | `ci: establish phase 1 verification baseline` | Ruff、mypy、pytest CI | `[x]` | [#6](https://github.com/Sekai-World/sekai-client/pull/6) merged |
+| 3 | `security: harden internal rpc and credential handling` | 日志、token、文件权限、RPC | `[x]` | [#7](https://github.com/Sekai-World/sekai-client/pull/7) merged |
 | 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[-]` | 分支 `security/phase-3-dashboard-safety`，待浏览器验收与 PR |
-| 5 | `fix: harden update cycle and git publishing` | 定时任务互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox（不含 `event_tracker` 排名 outbox） | `[x]` | [#9](https://github.com/Sekai-World/sekai-client/pull/9) merged（`<commit-id>`，2026-07-23） |
-| 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[-]` | 未提交阶段 5 工作：`<commit-id>`、`<commit-id>`；无 PR |
+| 5 | `fix: harden update cycle and git publishing` | 定时任务互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox（不含 `event_tracker` 排名 outbox） | `[x]` | [#9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
+| 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[-]` | 未提交阶段 5 工作；无 PR |
 | 7 | `refactor: enforce request deadlines and retry policy` | Deadline、重试、取消、队列 | `[ ]` | 待填写 |
 | 8 | `feat: persist event tracker delivery outbox` | SQLite outbox 与 scheduler | `[ ]` | 待填写 |
 | 9 | `refactor: validate upstream api responses` | 关键 API 响应模型 | `[ ]` | 待填写 |
@@ -481,7 +481,7 @@ UNINITIALIZED
 - 登录和写接口改动先在单一区域灰度。
 - 阶段 5-7 上线后重点观察错误率、队列等待、任务耗时、区域 readiness 和 outbox 积压。
 
-## Current Repository Audit (2026-08-13)
+## Current Repository Audit
 
 This audit reflects the current `main` working tree. Historical branch, commit,
 and test-count records above are retained as execution history.
@@ -512,7 +512,7 @@ and test-count records above are retained as execution history.
   `event_tracker` still removes and recreates a slow scheduler job, and explicit
   upstream response models remain absent.
 - Production Git authentication migration is prepared in-repository: the
-  `repository-scoped-github-app` GitHub App is restricted to the six generated-data
+  repository-scoped GitHub App is restricted to approved generated-data
   repositories, and the credential helper replaces long-lived PATs with
   repository-scoped installation tokens. Production installation, old-token
   revocation, and update-cycle verification remain operational steps.
@@ -533,10 +533,10 @@ and test-count records above are retained as execution history.
 | 日期 | 阶段 | 记录 | 下一步 |
 |---|---|---|---|
 | 2026-07-16 | 0 | D-001 决策：CN 非正式区域，保留简化版 checkUpdate-cn。代码层：REGIONS/PM2/公共 API 移除 CN，新增区域映射完整性校验与聚焦测试。生产运行事实（PM2 进程、loopback 绑定、worker 数、未推送 commit）待运维确认。 | 阶段 1 测试基线与 CI；运维核对生产事实 |
-| 2026-07-16 | 1 | 新增 CI（`.github/workflows/ci.yml`，针对 transform-python，read-only，Python 3.12 + uv）。机械 lint 修复 tests/ 与 service_dashboard.py（零逻辑变化）。新增 5 个回归测试：登录缓存、bootstrap fail-fast 安全边界、队列满拒绝、push 失败返回契约。4 项原任务因依赖阶段 4/5/6 标记为 deferred（bootstrap 部分失败恢复、POST 非幂等重试、update job 互斥、push 失败保留本地数据）。验证：format/check/mypy/pytest(76) 全绿，`git diff --check` clean。PR #6 已合并为 `<commit-id>`；required status check 的仓库设置仍待确认。 | 阶段 2；运维核对阶段 0 生产事实和分支保护 |
-| 2026-07-16 | 2 | 实现最小安全设计：日志脱敏、Strapi header 化、凭据 YAML 原子写入 0600、内部 RPC 鉴权、请求白名单、受限 master split RPC、account_info 缩权、PM2 env 传递及安全 PM2 示例。最终 pytest 119，format/check/mypy/node/git diff --check 全绿。PR #7 已合并为 `<commit-id>`。**延期（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model；Dashboard token 存储转入阶段 3。 | 阶段 3 Dashboard 安全与交互 |
+| 2026-07-16 | 1 | 新增 CI（`.github/workflows/ci.yml`，read-only，Python 3.12 + uv）。机械 lint 修复与 5 个回归测试完成；依赖后续阶段的任务保持 deferred。验证：format/check/mypy/pytest 全绿，`git diff --check` clean。PR #6 已合并；required status check 的仓库设置仍待确认。 | 阶段 2；运维核对阶段 0 生产事实和分支保护 |
+| 2026-07-16 | 2 | 实现最小安全设计：日志脱敏、Strapi header 化、凭据 YAML 原子写入 0600、内部 RPC 鉴权、请求白名单、受限 master split RPC、account_info 缩权、PM2 env 传递及安全 PM2 示例。最终验证全绿。PR #7 已合并。**延期（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model；Dashboard token 存储转入阶段 3。 | 阶段 3 Dashboard 安全与交互 |
 | 2026-07-17 | 3 | 已实现统一状态模型、安全 DOM 渲染、重启确认与防重复、结构化 restartStatus、session-only/记住设备/清除 token。聚焦测试 24 passed，实施时全套测试 139 passed，JavaScript syntax 与 diff check 通过。真实桌面/移动端流程和 PM2 重启尚未手工验证。 | 完成浏览器验收，更新证据后提交阶段 3 PR |
 | 2026-07-22 | 4 | Gate 5 Oracle **APPROVE**：显式 `Asia/Tokyo` scheduler trigger；持久化 Tokyo daily due marker 覆盖 late/coalesced/restart/overlap，且仅成功并完成日期绑定时清除/完成；clone/open `flock`；仅 Strapi ID outbox（不含 `event_tracker`），先持久化，Git 事务完成或可恢复 readiness checkpoint 后 ready，再 Git 后 HTTP，header auth、dedupe/retry。验证：`uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。 | 阶段 5；阶段 7 event_tracker outbox 仍未完成 |
-| 2026-07-23 | 4 | PR [#9](https://github.com/Sekai-World/sekai-client/pull/9) 已合并到 `transform-python`，合并提交 `<commit-id>`。合并范围为更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；不包含 `event_tracker` 排名 outbox。 | 阶段 5；阶段 7 event_tracker outbox 与 API 响应校验仍未完成 |
-| 2026-07-23 | 5 | 未推送的 `<commit-id>`、`<commit-id>` 实现固定区域生命周期、序列化状态变更、纯 readiness/liveness、目标区域 `ensure_ready` 与脱敏 503/`Retry-After`、live/ready/legacy health、Dashboard readiness 以及正式 JP/EN/TW/KR 的 PM2 `--workers 1` 拓扑。Oracle Gate 1/2 均 **APPROVE**；全套测试 414 passed，Ruff/Mypy/diff check clean。 | 受控 PM2/Gunicorn、单区域 canary/rollout、真实公共部署与监控检查；未实现的 bootstrap、阶段 6/7 保持待办 |
+| 2026-07-23 | 4 | PR [#9](https://github.com/Sekai-World/sekai-client/pull/9) 已合并。合并范围为更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；不包含 `event_tracker` 排名 outbox。 | 阶段 5；阶段 7 event_tracker outbox 与 API 响应校验仍未完成 |
+| 2026-07-23 | 5 | 阶段 5 代码切片实现固定区域生命周期、序列化状态变更、readiness、目标区域 `ensure_ready`、脱敏 503/`Retry-After`、health 兼容和正式区域 PM2 单 worker 拓扑。Oracle Gate 1/2 均 **APPROVE**；全套测试和静态检查通过。 | 受控 PM2/Gunicorn、单区域 canary/rollout、真实公共入口与部署监控检查；未实现的 bootstrap、阶段 6/7 保持待办 |
 | 2026-08-16/17 | 5 | The first TW remote-provider consumer passed the 24-hour gate with the client and account service online and ready, without observed process or container restarts. Lease and inventory health stayed within acceptance criteria; no account-service error, failure, or quarantine signal was observed in the operator snapshot. Exact operational identifiers and counters are retained privately. The event-ranking SQLite outbox was not part of this canary. | TW gate accepted. Verify the next region's inventory and configuration before one-region-at-a-time rollout; retain rollback artifacts through the later of 24 hours after activation or one scheduled update cycle. |

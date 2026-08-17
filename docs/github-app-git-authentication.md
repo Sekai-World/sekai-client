@@ -1,15 +1,15 @@
 # GitHub App Authentication for Update Repositories
 
-Production Git publishing uses the `repository-scoped-github-app` GitHub App instead
-of a personal access token. The App is installed only on the six generated-data
+Production Git publishing uses a repository-scoped GitHub App instead of a
+personal access token. The App is installed only on approved generated-data
 repositories and has `Contents: write` plus `Metadata: read` permissions.
 
-## Fixed identifiers and repository scope
+## Repository scope
 
-- App ID: `<redacted-app-id>`
-- Installation ID: `<redacted-installation-id>`
-- Repositories: `sekai-i18n` and the JP, EN, TW, KR, and CN master-db diff
-  repositories listed in `deployment/github-app/config.example.json`
+The exact App and installation identifiers are intentionally omitted from this
+public document. The allowlist is maintained in
+`deployment/github-app/config.example.json` and should be reviewed privately
+before installation.
 
 The global credential helper checks the requested Git repository against this
 allowlist and requests an installation token scoped only to that repository. It
@@ -30,7 +30,7 @@ uv run python deployment/github-app/install.py \
 ```
 
 The installer copies the key to
-`<protected-app-config-path>`, writes the non-secret App
+`<protected-app-config-path>/private-key.pem`, writes the non-secret App
 configuration, replaces each existing subrepository remote with a
 credential-free HTTPS URL, and installs the allowlist-aware global Git
 credential helper so future regional clones also authenticate. The configuration
@@ -46,7 +46,7 @@ then perform a fetch. Validate a push using the normal update transaction rather
 than creating an unrelated production commit. Review logs to ensure no helper
 output or Git URL contains credentials.
 
-Only after all six repositories authenticate through the App:
+Only after all approved repositories authenticate through the App:
 
 1. Revoke the old PAT.
 2. Confirm it returns HTTP 401.
