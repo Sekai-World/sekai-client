@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+_PRUNE_BATCH_SIZE = 100
+
 
 @dataclass(frozen=True)
 class OutboxMetrics:
@@ -77,6 +79,10 @@ class EventRankingOutbox:
                 "CREATE INDEX IF NOT EXISTS event_ranking_outbox_ready "
                 "ON event_ranking_outbox(status, next_attempt_at)"
             )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS event_ranking_outbox_terminal "
+                "ON event_ranking_outbox(status, collected_at)"
+            )
         self.path.chmod(0o600)
         self.prune_terminal()
 
@@ -123,11 +129,17 @@ class EventRankingOutbox:
         max_attempts: int = 10,
         max_duration_seconds: float = 30.0,
     ) -> dict[str, int]:
+        if limit < 0:
+            raise ValueError("limit must be non-negative")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be positive")
         if max_duration_seconds <= 0:
             raise ValueError("max_duration_seconds must be positive")
-        self.prune_terminal()
-        result = {"sent": 0, "failed": 0, "retained": 0}
         deadline = time.monotonic() + max_duration_seconds
+        self._prune_terminal(deadline=deadline)
+        result = {"sent": 0, "failed": 0, "retained": 0}
         for _ in range(limit):
             if time.monotonic() >= deadline:
                 break
@@ -149,15 +161,32 @@ class EventRankingOutbox:
 
     def prune_terminal(self) -> int:
         """Remove terminal records older than the configured retention window."""
+        return self._prune_terminal(deadline=None)
+
+    def _prune_terminal(self, *, deadline: float | None) -> int:
+        """Remove old terminal records in bounded batches until the deadline."""
         # collected_at is the event timestamp in milliseconds since epoch.
         cutoff = (time.time() - self.retention_seconds) * 1000
-        with self._connect() as connection:
-            cursor = connection.execute(
-                "DELETE FROM event_ranking_outbox WHERE status IN ('sent','failed') "
-                "AND collected_at <= ?",
-                (cutoff,),
-            )
-            return cursor.rowcount
+        deleted = 0
+        while deadline is None or time.monotonic() < deadline:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT idempotency_key FROM event_ranking_outbox "
+                    "WHERE status IN ('sent','failed') AND collected_at <= ? "
+                    "ORDER BY collected_at,idempotency_key LIMIT ?",
+                    (cutoff, _PRUNE_BATCH_SIZE),
+                ).fetchall()
+                if not rows:
+                    break
+                cursor = connection.executemany(
+                    "DELETE FROM event_ranking_outbox "
+                    "WHERE idempotency_key=? AND status IN ('sent','failed')",
+                    ((row["idempotency_key"],) for row in rows),
+                )
+                deleted += cursor.rowcount
+            if len(rows) < _PRUNE_BATCH_SIZE:
+                break
+        return deleted
 
     def _claim(
         self, lease_seconds: float
