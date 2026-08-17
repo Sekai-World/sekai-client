@@ -81,6 +81,56 @@ restarts, readiness, acquire latency/failures, active lease count, quarantine
 events, queue rejection/timeouts, check-update success, and event-tracker
 delivery. Do not expand the canary while any unexplained regression remains.
 
+## Observation Record (2026-08-17)
+
+The following snapshot was captured from the production host and Kubernetes
+cluster at `2026-08-17T21:02:50Z` (`2026-08-18T06:02:50+09:00`). The canary
+process was started at `2026-08-16T16:21:20.687Z`, giving an observed runtime of
+`28h41m29.313s`.
+
+- Client revision: `f26a43bb6a0555bc33ba4d3bde6f2119e3b5406b` (detached canary
+  checkout); PM2 status `online`, one Gunicorn worker, `restart_time=0`,
+  `unstable_restarts=0`, and no exit code.
+- Account-service revision: image tag `1.3.0`, digest
+  `sha256:c163f33d2f14ebd7ff9c34c2e4c38b47d20244bad8892bcbfd1d2d244f04c4af`;
+  Deployment revision `2`, one replica ready/available, pod restart count `0`.
+- Lease metrics: one active TW lease; two successful TW acquires, one
+  successful TW release, and one `unknown`-region release `no_op`. No
+  `error`, `failure`, or `quarantine` series were exposed in the filtered
+  metrics output.
+- PM2 stdout and stderr files were both empty at capture time. This is only a
+  supporting observation, not a complete request-level error audit.
+- The lease journal contained one mode-`0600` TW record with
+  `release_pending=false`; no credential, lease ID, or consumer identifier is
+  recorded here.
+- Event-ranking outbox: not part of this account-provider canary. The canary
+  shared-client process has no event-tracker outbox configuration, and no
+  `event-tracker-*.sqlite3` file was present in its runtime directory. This
+  acceptance record therefore does not claim event-tracker outbox delivery.
+
+The TW single-consumer 24-hour gate is accepted. The local-provider rollback
+file remains protected at `/root/pm2/sharedApiClientTW.local-provider.rollback.yaml`
+(`0600`), alongside the rendered remote canary file. Keep both files and the
+legacy inventory backup through the rollback window.
+
+## Rollout Gate for the Next Region
+
+Do not switch another region until all of the following are recorded:
+
+1. At least one `AVAILABLE` account and a lease-scoped token for that region.
+2. A region-specific PM2 render with loopback binding, one worker, persistent
+   lease state, and a protected local-provider rollback file.
+3. A pre-activation snapshot of service version, pod readiness/restarts,
+   account inventory, and current local-provider process state.
+4. A 24-hour observation window with no unexplained restart, authentication,
+   lease, or downstream update regression.
+
+The current production service exposes only TW inventory and is configured for
+single-region TW GSDK provisioning, so KR/JP/EN expansion remains blocked until
+the next region's inventory and configuration are verified. Once those
+preconditions are met, expand one region at a time and retain this TW rollback
+window until the new region passes its own gate.
+
 ## Rollback
 
 Rollback triggers include failure to become ready, repeated account-service

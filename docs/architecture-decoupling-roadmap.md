@@ -221,11 +221,14 @@ Acceptance criteria:
 ### Phase 5: Rollout and Remove Local Registration
 
 The repository contains a dedicated TW remote-provider PM2 template and
-[canary runbook](account-service-tw-canary.md). This is preparation only; the
-production canary remains unchecked until its evidence is recorded.
+[canary runbook](account-service-tw-canary.md). The first production canary is
+accepted; the next-region rollout remains gated by the evidence requirements
+below.
 
 - [x] Deploy the account service before enabling remote acquisition in clients.
-- [x] Canary one region and one consumer, then expand by region.
+- [x] Canary one region and one consumer.
+- [ ] Expand one region at a time after inventory, token, and rollback gates
+  are recorded.
 - [ ] Monitor lease conflicts, acquisition latency, authentication failures,
   quarantine rate, and account inventory.
 - [ ] Migrate existing credentials through an audited one-time import.
@@ -296,8 +299,8 @@ same time.
 
 The Phase 0 production audit, public-release gate, critical remediation Phase 6
 reliability work, and remote-provider lifecycle handling are complete. The
-immediate next action is one-region canary configuration without removing the
-local rollback path.
+immediate next action is to verify the next region's inventory and
+lease-scoped token while retaining the local rollback path.
 
 TW canary evidence (2026-08-16): the account service is deployed on Kubernetes
 with Postgres and separate encryption-key management. The TW shared client runs
@@ -310,6 +313,20 @@ process restarts or new error-log entries. The 05:30 failure was traced to stale
 PAT-based Git process configuration and missing dynamic repositories; reloading
 the update workers with GitHub App authentication and restoring the repositories
 resolved it. Broader regional rollout and sustained monitoring remain pending.
+
+TW canary acceptance evidence (2026-08-17): the canary client revision was
+`f26a43bb6a0555bc33ba4d3bde6f2119e3b5406b` and ran for `28h41m29.313s` at the
+capture point with PM2 restart count `0`, unstable restarts `0`, and one
+Gunicorn worker. The account service ran image `1.3.0` at digest
+`sha256:c163f33d2f14ebd7ff9c34c2e4c38b47d20244bad8892bcbfd1d2d244f04c4af`, with
+one ready pod and zero container restarts. Metrics showed one active TW lease,
+two successful acquires, one successful release, and one unknown-region release
+no-op; no filtered error/failure/quarantine series were exposed. The protected
+local-provider rollback file remains available. The event-ranking SQLite outbox
+is not deployed in this account-provider canary and is therefore not covered by
+this acceptance. Production metrics currently expose only TW inventory while
+the service is configured for single-region TW provisioning, so the next-region
+rollout is gated on verified inventory and region-specific configuration.
 
 ## Suggested Pull Requests
 
