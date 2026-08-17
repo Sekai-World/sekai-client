@@ -3,6 +3,7 @@ import time
 
 import pytest
 
+import utils.event_outbox as event_outbox_module
 from utils.event_outbox import EventRankingOutbox
 
 
@@ -187,7 +188,7 @@ def test_retention_keeps_recent_terminal_rows(tmp_path):
         ).fetchone() == ("sent",)
 
 
-def test_drain_duration_budget_stops_before_claiming_more_rows(tmp_path):
+def test_drain_duration_budget_stops_before_claiming_more_rows(tmp_path, monkeypatch):
     outbox = EventRankingOutbox(str(tmp_path / "outbox.sqlite3"))
     _enqueue(outbox)
     outbox.enqueue(
@@ -199,10 +200,10 @@ def test_drain_duration_budget_stops_before_claiming_more_rows(tmp_path):
         payload={"time": 457},
     )
 
-    def slow_delivery(*_):
-        time.sleep(0.01)
+    clock = iter((0.0, 0.0, 0.0005, 0.002))
+    monkeypatch.setattr(event_outbox_module.time, "monotonic", lambda: next(clock))
 
-    result = outbox.drain(slow_delivery, max_duration_seconds=0.001)
+    result = outbox.drain(lambda *_: None, max_duration_seconds=0.001)
 
     assert result == {"sent": 1, "failed": 0, "retained": 0}
     assert outbox.metrics().pending == 1
