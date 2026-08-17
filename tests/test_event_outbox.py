@@ -40,10 +40,17 @@ def test_drain_validates_options_before_touching_outbox(tmp_path, kwargs, messag
     outbox = EventRankingOutbox(str(tmp_path / "outbox.sqlite3"))
     _enqueue(outbox)
 
+    def snapshot():
+        with sqlite3.connect(outbox.path) as connection:
+            return connection.execute(
+                "SELECT * FROM event_ranking_outbox ORDER BY idempotency_key"
+            ).fetchall()
+
+    before = snapshot()
     with pytest.raises(ValueError, match=message):
         outbox.drain(lambda *_: None, **kwargs)
 
-    assert outbox.metrics().pending == 1
+    assert snapshot() == before
 
 
 def test_terminal_retention_index_is_created(tmp_path):
