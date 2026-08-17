@@ -422,14 +422,16 @@ UNINITIALIZED
 
 ### 任务
 
-- [ ] 设计 SQLite outbox，幂等键使用 `(region, event_id, timestamp, data_type)`。
-- [ ] 支持 `pending`、`sending`、`sent` 和 `failed` 状态。
-- [ ] 排名数据先持久化，再 POST。
-- [ ] POST 成功后标记完成，失败后退避重试。
-- [ ] 进程重启后继续处理未完成 outbox。
-- [ ] Scheduler 使用 `max_instances=1` 和 `coalesce=True`。
-- [ ] 移除通过删除、重新添加 job 处理慢任务的逻辑。
-- [ ] 记录任务延迟、执行时间和 outbox 积压。
+- [x] 设计 SQLite outbox，幂等键使用 `(region, event_id, timestamp, data_type)`。
+- [x] 支持 `pending`、`sending`、`sent` 和 `failed` 状态。
+- [x] 排名数据先持久化，再 POST。
+- [x] POST 成功后标记完成，失败后退避重试。
+- [x] 进程重启后继续处理未完成 outbox。
+- [x] 每轮投递有 30 秒预算，单次远端请求超时为 15 秒，避免阻塞后续调度。
+- [x] terminal `sent`/`failed` 记录按可配置的默认 24 小时保留期清理，不删除 pending/sending。
+- [x] Scheduler 使用 `max_instances=1` 和 `coalesce=True`。
+- [x] 移除通过删除、重新添加 job 处理慢任务的逻辑。
+- [x] 记录任务执行时间和 outbox 状态/积压；精确调度延迟指标保留在性能 roadmap 阶段 0。
 - [ ] 从登录响应开始引入明确的响应模型和边界校验。
 - [ ] 依次覆盖版本、活动、ranking 和 master 数据响应。
 - [ ] schema 错误不得破坏当前有效客户端状态。
@@ -444,7 +446,10 @@ UNINITIALIZED
 
 ### 验收证据
 
-- 待填写：outbox 重试、重启与幂等测试
+- `tests/test_event_outbox.py`：覆盖 enqueue 幂等、私有文件权限、成功确认、临时失败退避、重启恢复、过期 claim 恢复、失败终态与章节幂等键。
+- `tests/test_event_outbox.py`：另覆盖 terminal retention 和 drain 时间预算。
+- `tests/test_event_tracker.py`：覆盖单一 coalescing scheduler job、先持久化、携带幂等键投递和独立投递状态日志。
+- 客户端 outbox 已完成；接收 API 尚未持久化或强制执行 `Idempotency-Key`，因此 crash-after-remote-commit 边界的端到端去重验收仍待接收端配套变更。
 - 待填写：响应 schema 异常测试
 
 ### 执行记录
