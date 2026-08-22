@@ -115,9 +115,9 @@ Do not switch another region until all of the following are recorded:
 
 KR is the selected next region. The current production service exposes only the
 canary region's verified inventory and is configured for single-region
-provisioning, so KR expansion remains blocked until its inventory and
-configuration are verified. Once those preconditions are met, expand one region
-at a time and retain this TW rollback window until KR passes its own gate.
+provisioning, so KR expansion remains blocked until all four gates above are
+recorded for KR. Only then may activation proceed one region at a time, with
+this TW rollback window retained until KR passes its own gate.
 
 The rollback window is the later of 24 hours after the next-region activation
 or one complete scheduled update cycle. Do not delete the local-provider
