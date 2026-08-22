@@ -302,9 +302,11 @@ reliability work, and remote-provider lifecycle handling are complete. The
 immediate next action is to prepare KR inventory and a lease-scoped token
 through the account-service operator workflow while retaining the local
 rollback path. No KR client activation is authorized until the complete
-[rollout gate](account-service-tw-canary.md#rollout-gate-for-the-next-region)
+[pre-activation gate](account-service-tw-canary.md#rollout-gate-for-the-next-region)
 is satisfied: verified inventory and lease-scoped token, region-specific
-configuration, pre-activation evidence, and the required observation window.
+configuration, rollback artifacts, and pre-activation evidence. After the
+canary is activated, further expansion remains blocked until the required
+observation window passes without regression.
 
 TW canary evidence (2026-08-16/17): the first remote-provider consumer passed
 the 24-hour gate with the client and account service online, ready, and free of
