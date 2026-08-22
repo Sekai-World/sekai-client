@@ -85,9 +85,19 @@ def test_successful_delivery_is_acknowledged(tmp_path):
 
 def test_transient_failure_survives_restart_and_retries(tmp_path, monkeypatch):
     path = tmp_path / "outbox.sqlite3"
-    current = {"time": 1000.0}
-    monkeypatch.setattr(event_outbox_module.time, "time", lambda: current["time"])
-    monkeypatch.setattr(event_outbox_module.time, "monotonic", lambda: current["time"])
+
+    class FakeClock:
+        def __init__(self) -> None:
+            self.value = 1000.0
+
+        def time(self) -> float:
+            return self.value
+
+        def monotonic(self) -> float:
+            return self.value
+
+    clock = FakeClock()
+    monkeypatch.setattr(event_outbox_module, "time", clock)
 
     outbox = EventRankingOutbox(str(path), retry_base_seconds=0.01)
     _enqueue(outbox)
@@ -98,7 +108,7 @@ def test_transient_failure_survives_restart_and_retries(tmp_path, monkeypatch):
     assert result == {"sent": 0, "failed": 0, "retained": 1}
     assert outbox.metrics().pending == 1
 
-    current["time"] += 0.02  # advance past the 10ms retry backoff
+    clock.value += 0.02  # advance past the 10ms retry backoff
     restarted = EventRankingOutbox(str(path), retry_base_seconds=0.01)
     assert restarted.drain(lambda *_: None)["sent"] == 1
 
