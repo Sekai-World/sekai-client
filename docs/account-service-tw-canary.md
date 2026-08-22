@@ -113,11 +113,11 @@ Do not switch another region until all of the following are recorded:
 4. A 24-hour observation window with no unexplained restart, authentication,
    lease, or downstream update regression.
 
-The current production service exposes only the canary region's verified
-inventory and is configured for single-region provisioning, so expansion
-remains blocked until the next region's inventory and configuration are verified.
-Once those preconditions are met, expand one region at a time and retain this
-TW rollback window until the new region passes its own gate.
+KR is the selected next region. The current production service exposes only the
+canary region's verified inventory and is configured for single-region
+provisioning, so KR expansion remains blocked until its inventory and
+configuration are verified. Once those preconditions are met, expand one region
+at a time and retain this TW rollback window until KR passes its own gate.
 
 The rollback window is the later of 24 hours after the next-region activation
 or one complete scheduled update cycle. Do not delete the local-provider
