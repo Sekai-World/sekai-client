@@ -22,9 +22,9 @@
 | 2 | 凭据、日志和内部 RPC 安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | PR 3 (#7 merged) |
 | 3 | Dashboard 安全与交互 | `[-]` 进行中（待桌面/移动端手工验收） | 0.5-1 天 | 阶段 1 | PR 4 |
 | 4 | 定时任务互斥与 Git 数据安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
-| 5 | 区域 bootstrap 与客户端状态机 | `[-]` 已实现生命周期/readiness 代码切片，生产验收待完成 | 2-3 天 | 阶段 1 | 未提交 |
+| 5 | 区域 bootstrap 与客户端状态机 | `[-]` 已实现生命周期/readiness 代码切片，生产验收待完成 | 2-3 天 | 阶段 1 | 代码已合入 main；无独立 PR |
 | 6 | Deadline、重试与队列生命周期 | `[x]` 已完成 | 2-3 天 | 阶段 5 | PRs #21-#24 |
-| 7 | Event tracker outbox 与 API 响应校验 | `[ ]` | 2-4 天 | 阶段 1；建议在阶段 6 后 | PR 8-9 |
+| 7 | Event tracker outbox 与 API 响应校验 | `[-]` 进行中（排名 outbox 已完成，API 响应校验未开始） | 2-4 天 | 阶段 1；建议在阶段 6 后 | PR #40；响应校验待拆分 |
 
 预计总工作量：10-16 个工程日。阶段 0-4 优先止血，阶段 5-7 处理结构性风险。
 
@@ -454,7 +454,8 @@ UNINITIALIZED
 
 ### 执行记录
 
-- 待填写
+- 2026-08-18：event ranking SQLite outbox 通过 [PR #40](https://github.com/Sekai-World/sekai-client/pull/40) 合并。实现先持久化后投递、`(region, event_id, timestamp, data_type)` 幂等键、`pending`/`sending`/`sent`/`failed` 状态、有界 drain 预算与单请求超时、terminal 记录保留期清理、重启恢复与过期 claim 恢复；scheduler 改为单一 coalescing job，不再删除重建慢任务。同日 [PR #41](https://github.com/Sekai-World/sekai-client/pull/41) 进一步降低事件追踪请求开销。验证：`tests/test_event_outbox.py` 与 `tests/test_event_tracker.py` 覆盖上述行为。
+- 未完成：上游 API 响应模型与边界校验（登录→版本→活动→ranking→master 数据）；接收端 `Idempotency-Key` 持久化与强制执行（crash-after-remote-commit 端到端去重依赖接收端配套变更）。
 
 ## PR 拆分
 
@@ -466,8 +467,8 @@ UNINITIALIZED
 | 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[-]` | 分支 `security/phase-3-dashboard-safety`，待浏览器验收与 PR |
 | 5 | `fix: harden update cycle and git publishing` | 定时任务互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox（不含 `event_tracker` 排名 outbox） | `[x]` | [#9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
 | 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[-]` | 未提交阶段 5 工作；无 PR |
-| 7 | `refactor: enforce request deadlines and retry policy` | Deadline、重试、取消、队列 | `[ ]` | 待填写 |
-| 8 | `feat: persist event tracker delivery outbox` | SQLite outbox 与 scheduler | `[ ]` | 待填写 |
+| 7 | `refactor: enforce request deadlines and retry policy` | Deadline、重试、取消、队列 | `[x]` | PRs [#21](https://github.com/Sekai-World/sekai-client/pull/21)、[#22](https://github.com/Sekai-World/sekai-client/pull/22)、[#23](https://github.com/Sekai-World/sekai-client/pull/23)、[#24](https://github.com/Sekai-World/sekai-client/pull/24) merged |
+| 8 | `feat: persist event tracker delivery outbox` | SQLite outbox 与 scheduler | `[x]` | [#40](https://github.com/Sekai-World/sekai-client/pull/40) merged |
 | 9 | `refactor: validate upstream api responses` | 关键 API 响应模型 | `[ ]` | 待填写 |
 
 ## 发布与回滚原则
@@ -500,31 +501,37 @@ and test-count records above are retained as execution history.
   end-to-end without administrator bypass.
 - Phase 3 code is present on `main`; desktop/mobile browser and real PM2 restart
   acceptance evidence is still missing.
-- Phase 5 lifecycle and readiness code is present on `main`; the older
-  "uncommitted" wording above is stale. The TW remote-provider canary and its
-  first monitoring window are now recorded below. Public endpoint verification
-  and expansion to another region remain open.
-- Phase 6 is incomplete. Only the cooperative `check_update` cycle deadline is
-  implemented; end-to-end RPC deadlines, cancellation, idempotency-aware
-  retries, `Retry-After`/jitter handling, and queue metrics remain open.
-- Phase 7 is not implemented. The existing Strapi ID outbox belongs to the
-  update publisher and does not satisfy the event-ranking outbox requirement.
-  `event_tracker` still removes and recreates a slow scheduler job, and explicit
-  upstream response models remain absent.
+- Phase 5 lifecycle and readiness code is present on `main`. The TW
+  remote-provider canary and its first monitoring window are recorded below.
+  Public endpoint verification and expansion to another region remain open.
+- Phase 6 is complete. End-to-end RPC deadlines, late-task state protection,
+  idempotency-aware retry policy with `Retry-After`/jitter backoff, and queue
+  metrics landed through PRs #21-#24; the cooperative `check_update` cycle
+  deadline from Phase 4 remains in place.
+- Phase 7 is partially complete. The event-ranking SQLite outbox merged through
+  PR #40: snapshots persist before delivery, drains are time-bounded, terminal
+  records expire by retention, and pending deliveries resume after restart;
+  the scheduler no longer removes and recreates slow jobs. PR #41 further
+  reduced event-tracker request overhead. Remaining open items: upstream
+  response models and boundary validation, and receiver-side
+  `Idempotency-Key` enforcement for end-to-end deduplication.
 - Production Git authentication migration is prepared in-repository: the
   repository-scoped GitHub App is restricted to approved generated-data
   repositories, and the credential helper replaces long-lived PATs with
   repository-scoped installation tokens. Production installation, old-token
   revocation, and update-cycle verification remain operational steps.
 - [architecture-decoupling-roadmap.md](architecture-decoupling-roadmap.md) tracks
-  the subsequent modularization and account-service extraction. Its remote
-  provider rollout depends on the unfinished Phase 6 reliability work.
+  the subsequent modularization and account-service extraction. The critical
+  Phase 6 reliability prerequisite is complete and the first TW remote-provider
+  canary passed its observation gate; next-region rollout remains gated on
+  inventory/token verification and rollback readiness.
 - Follow the roadmap's
   [Recommended Execution Order](architecture-decoupling-roadmap.md#recommended-execution-order):
-  finish the Phase 0/1 confirmations first, then the critical Phase 6 work;
-  local account-provider refactoring may begin before unrelated remediation
-  items are complete, while remote rollout requires Phase 5 production
-  acceptance.
+  the Phase 0/1 confirmations and critical Phase 6 reliability work are done.
+  Remaining priorities: Phase 7 upstream response validation, Phase 5
+  production acceptance (PM2/Gunicorn, public endpoints, monitoring), Phase 3
+  desktop/mobile browser acceptance, and one-region-at-a-time remote-provider
+  rollout.
 
 ## 进度日志
 
@@ -539,4 +546,6 @@ and test-count records above are retained as execution history.
 | 2026-07-22 | 4 | Gate 5 Oracle **APPROVE**：显式 `Asia/Tokyo` scheduler trigger；持久化 Tokyo daily due marker 覆盖 late/coalesced/restart/overlap，且仅成功并完成日期绑定时清除/完成；clone/open `flock`；仅 Strapi ID outbox（不含 `event_tracker`），先持久化，Git 事务完成或可恢复 readiness checkpoint 后 ready，再 Git 后 HTTP，header auth、dedupe/retry。验证：`uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。 | 阶段 5；阶段 7 event_tracker outbox 仍未完成 |
 | 2026-07-23 | 4 | PR [#9](https://github.com/Sekai-World/sekai-client/pull/9) 已合并。合并范围为更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；不包含 `event_tracker` 排名 outbox。 | 阶段 5；阶段 7 event_tracker outbox 与 API 响应校验仍未完成 |
 | 2026-07-23 | 5 | 阶段 5 代码切片实现固定区域生命周期、序列化状态变更、readiness、目标区域 `ensure_ready`、脱敏 503/`Retry-After`、health 兼容和正式区域 PM2 单 worker 拓扑。Oracle Gate 1/2 均 **APPROVE**；全套测试和静态检查通过。 | 受控 PM2/Gunicorn、单区域 canary/rollout、真实公共入口与部署监控检查；未实现的 bootstrap、阶段 6/7 保持待办 |
+| 2026-08-13 | 6 | Phase 6 四个 PR 切片全部合并（PRs #21–#24）：端到端 RPC deadline 与预算传递、迟到任务状态提交保护、幂等感知重试策略（GET 可重试、写默认不重试）、429/`Retry-After` 与指数退避+jitter、队列 envelope 与指标快照。各切片验证：Ruff、scoped Mypy、pytest 全绿。 | 阶段 7 排名 outbox 与响应校验 |
 | 2026-08-16/17 | 5 | The first TW remote-provider consumer passed the 24-hour gate with the client and account service online and ready, without observed process or container restarts. Lease and inventory health stayed within acceptance criteria; no account-service error, failure, or quarantine signal was observed in the operator snapshot. Exact operational identifiers and counters are retained privately. The event-ranking SQLite outbox was not part of this canary. | TW gate accepted. Verify the next region's inventory and configuration before one-region-at-a-time rollout; retain rollback artifacts through the later of 24 hours after activation or one scheduled update cycle. |
+| 2026-08-18 | 7 | event ranking SQLite outbox 经 [PR #40](https://github.com/Sekai-World/sekai-client/pull/40) 合并：先持久化后投递、幂等键、投递状态机、drain 预算、保留期清理、重启恢复；scheduler 单一 coalescing job。[PR #41](https://github.com/Sekai-World/sekai-client/pull/41) 同日降低事件追踪请求开销。接收端 `Idempotency-Key` 强制执行与上游响应校验仍未完成。 | 上游响应模型与边界校验；接收端幂等强制执行 |
