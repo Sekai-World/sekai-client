@@ -103,21 +103,24 @@ repository throughout the rollback window.
 
 ## Rollout Gate for the Next Region
 
-Do not switch another region until all of the following are recorded:
+Before activating a next-region canary, record all of the following
+pre-activation gates:
 
 1. At least one `AVAILABLE` account and a lease-scoped token for that region.
-2. A region-specific PM2 render with loopback binding, one worker, persistent
-   lease state, and a protected local-provider rollback file.
-3. A pre-activation snapshot of service version, pod readiness/restarts,
+2. A region-specific PM2 render with loopback binding, one worker, and
+   persistent lease state.
+3. Protected local-provider configuration, lease journal, and inventory
+   rollback artifacts.
+4. A pre-activation snapshot of service version, pod readiness/restarts,
    account inventory, and current local-provider process state.
-4. A 24-hour observation window with no unexplained restart, authentication,
-   lease, or downstream update regression.
 
-The current production service exposes only the canary region's verified
-inventory and is configured for single-region provisioning, so expansion
-remains blocked until the next region's inventory and configuration are verified.
-Once those preconditions are met, expand one region at a time and retain this
-TW rollback window until the new region passes its own gate.
+KR is the selected next region. The current production service exposes only the
+canary region's verified inventory and is configured for single-region
+provisioning, so KR activation remains blocked until all four pre-activation
+gates above are recorded for KR. Once activated as a one-region canary, KR must
+complete a 24-hour observation window with no unexplained restart,
+authentication, lease, or downstream update regression before any further
+expansion is authorized.
 
 The rollback window is the later of 24 hours after the next-region activation
 or one complete scheduled update cycle. Do not delete the local-provider
