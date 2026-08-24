@@ -114,13 +114,12 @@ pre-activation gates:
 4. A pre-activation snapshot of service version, pod readiness/restarts,
    account inventory, and current local-provider process state.
 
-KR is the selected next region. The current production service exposes only the
-canary region's verified inventory and is configured for single-region
-provisioning, so KR activation remains blocked until all four pre-activation
-gates above are recorded for KR. Once activated as a one-region canary, KR must
-complete a 24-hour observation window with no unexplained restart,
-authentication, lease, or downstream update regression before any further
-expansion is authorized.
+KR was the selected next region. All four pre-activation gates above were
+recorded for KR, the one-region canary was activated, and KR completed its
+observation window on 2026-08-25 without unexplained restart, authentication,
+lease, or downstream update regression. The next region, if any, follows the
+same sequence: record all four gates, activate as a one-region canary, and
+complete the observation window before further expansion is authorized.
 
 The rollback window is the later of 24 hours after the next-region activation
 or one complete scheduled update cycle. Do not delete the local-provider
