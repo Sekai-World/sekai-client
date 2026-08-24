@@ -24,7 +24,7 @@
 | 4 | 定时任务互斥与 Git 数据安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
 | 5 | 区域 bootstrap 与客户端状态机 | `[-]` 已实现生命周期/readiness 代码切片，生产验收待完成 | 2-3 天 | 阶段 1 | 代码已合入 main；无独立 PR |
 | 6 | Deadline、重试与队列生命周期 | `[x]` 已完成 | 2-3 天 | 阶段 5 | PRs #21-#24 |
-| 7 | Event tracker outbox 与 API 响应校验 | `[-]` 进行中（排名 outbox 已完成，API 响应校验未开始） | 2-4 天 | 阶段 1；建议在阶段 6 后 | PR #40；响应校验待拆分 |
+| 7 | Event tracker outbox 与 API 响应校验 | `[-]` 进行中（排名 outbox 与接收端幂等已完成，API 响应校验未开始） | 2-4 天 | 阶段 1；建议在阶段 6 后 | PR #40；响应校验待拆分 |
 
 预计总工作量：10-16 个工程日。阶段 0-4 优先止血，阶段 5-7 处理结构性风险。
 
@@ -449,13 +449,14 @@ UNINITIALIZED
 - `tests/test_event_outbox.py`：覆盖 enqueue 幂等、私有文件权限、成功确认、临时失败退避、重启恢复、过期 claim 恢复、失败终态与章节幂等键。
 - `tests/test_event_outbox.py`：另覆盖 terminal retention 和 drain 时间预算。
 - `tests/test_event_tracker.py`：覆盖单一 coalescing scheduler job、先持久化、携带幂等键投递和独立投递状态日志。
-- 客户端 outbox 已完成；接收 API 尚未持久化或强制执行 `Idempotency-Key`，因此 crash-after-remote-commit 边界的端到端去重验收仍待接收端配套变更。
+- 客户端 outbox 已完成；已部署的接收 API 会持久化并强制执行
+  `Idempotency-Key`，覆盖 crash-after-remote-commit 边界的端到端去重。
 - 待填写：响应 schema 异常测试
 
 ### 执行记录
 
 - 2026-08-18：event ranking SQLite outbox 通过 [PR #40](https://github.com/Sekai-World/sekai-client/pull/40) 合并。实现先持久化后投递、`(region, event_id, timestamp, data_type)` 幂等键、`pending`/`sending`/`sent`/`failed` 状态、有界 drain 预算与单请求超时、terminal 记录保留期清理、重启恢复与过期 claim 恢复；scheduler 改为单一 coalescing job，不再删除重建慢任务。同日 [PR #41](https://github.com/Sekai-World/sekai-client/pull/41) 进一步降低事件追踪请求开销。验证：`tests/test_event_outbox.py` 与 `tests/test_event_tracker.py` 覆盖上述行为。
-- 未完成：上游 API 响应模型与边界校验（登录→版本→活动→ranking→master 数据）；接收端 `Idempotency-Key` 持久化与强制执行（crash-after-remote-commit 端到端去重依赖接收端配套变更）。
+- 未完成：上游 API 响应模型与边界校验（登录→版本→活动→ranking→master 数据）。
 
 ## PR 拆分
 
@@ -512,9 +513,9 @@ and test-count records above are retained as execution history.
   PR #40: snapshots persist before delivery, drains are time-bounded, terminal
   records expire by retention, and pending deliveries resume after restart;
   the scheduler no longer removes and recreates slow jobs. PR #41 further
-  reduced event-tracker request overhead. Remaining open items: upstream
-  response models and boundary validation, and receiver-side
-  `Idempotency-Key` enforcement for end-to-end deduplication.
+  reduced event-tracker request overhead. The deployed receiver now persists
+  and enforces `Idempotency-Key`; upstream response models and boundary
+  validation remain open.
 - Production Git authentication migration is prepared in-repository: the
   repository-scoped GitHub App is restricted to approved generated-data
   repositories, and the credential helper replaces long-lived PATs with
