@@ -298,15 +298,12 @@ account-source migration and event-delivery reliability are not changed at the
 same time.
 
 The Phase 0 production audit, public-release gate, critical remediation Phase 6
-reliability work, and remote-provider lifecycle handling are complete. The
-immediate next action is to prepare KR inventory and a lease-scoped token
-through the account-service operator workflow while retaining the local
-rollback path. No KR client activation is authorized until the complete
+reliability work, and remote-provider lifecycle handling are complete. KR
+satisfied the complete
 [pre-activation gate](account-service-tw-canary.md#rollout-gate-for-the-next-region)
-is satisfied: verified inventory and lease-scoped token, region-specific
-configuration, rollback artifacts, and pre-activation evidence. After the
-canary is activated, further expansion remains blocked until the required
-observation window passes without regression.
+and passed its observation window on 2026-08-25. The immediate next action is
+to select and prepare the next region through the same operator workflow while
+retaining rollback paths; expansion remains one region at a time.
 
 TW canary evidence (2026-08-16/17): the first remote-provider consumer passed
 the 24-hour gate with the client and account service online, ready, and free of
@@ -319,6 +316,14 @@ the private operator record. The next-region rollout remains gated on verified
 inventory and region-specific configuration. The local-provider rollback path
 must remain available through the later of 24 hours after activation or one
 complete scheduled update cycle.
+
+KR canary evidence (2026-08-24/25): the second remote-provider consumer passed
+its observation gate with the client and account service online and ready and
+no unexplained consumer restarts. Lease and inventory health stayed within the
+canary acceptance criteria; aggregate evidence only is recorded here and exact
+operational identifiers remain in the private operator record. After the gate,
+all production processes were migrated onto the current main line so consumers,
+event delivery, and publication share one code baseline.
 
 ## Suggested Pull Requests
 

@@ -284,7 +284,7 @@ uv run --extra dev pytest tests/
 
 使用每区域生命周期状态替代全局 `bootstrapped` 和不完整的 `is_init` 语义。
 
-当前状态：`[-]` 已实现区域生命周期、readiness/liveness 和目标区域请求门控；生产 PM2/Gunicorn 验证、单区域 canary、实际公共入口与部署监控尚未完成。因此本阶段不标记为生产验收完成。
+当前状态：`[-]` 已实现区域生命周期、readiness/liveness 和目标区域请求门控；TW 与 KR 的 remote-provider 单区域 canary 均已通过观察 gate，全部生产进程已迁移至当前 main 基线并经实际运行验证。实际公共入口验证与部署监控接入尚未完成，因此本阶段不标记为全部验收完成。
 
 ### 建议状态
 
@@ -522,15 +522,17 @@ and test-count records above are retained as execution history.
   revocation, and update-cycle verification remain operational steps.
 - [architecture-decoupling-roadmap.md](architecture-decoupling-roadmap.md) tracks
   the subsequent modularization and account-service extraction. The critical
-  Phase 6 reliability prerequisite is complete and the first TW remote-provider
-  canary passed its observation gate; next-region rollout remains gated on
-  inventory/token verification and rollback readiness.
+  Phase 6 reliability prerequisite is complete, and the TW and KR remote-provider
+  canaries both passed their observation gates. On 2026-08-25 all production
+  processes were migrated from the legacy release branch onto the current main
+  line; further region expansion continues one region at a time.
 - Follow the roadmap's
   [Recommended Execution Order](architecture-decoupling-roadmap.md#recommended-execution-order):
   the Phase 0/1 confirmations and critical Phase 6 reliability work are done.
-  Remaining priorities: Phase 7 upstream response validation, Phase 5
-  production acceptance (PM2/Gunicorn, public endpoints, monitoring), Phase 3
-  desktop/mobile browser acceptance, and one-region-at-a-time remote-provider
+  Remaining priorities: Phase 7 upstream response validation, Phase 5 public
+  endpoint verification and monitoring integration, Phase 3 desktop/mobile
+  browser acceptance, retirement of the legacy production checkout after one
+  observed daily cycle, and continued one-region-at-a-time remote-provider
   rollout.
 
 ## 进度日志
@@ -550,3 +552,5 @@ and test-count records above are retained as execution history.
 | 2026-08-16/17 | 5 | The first TW remote-provider consumer passed the 24-hour gate with the client and account service online and ready, without observed process or container restarts. Lease and inventory health stayed within acceptance criteria; no account-service error, failure, or quarantine signal was observed in the operator snapshot. Exact operational identifiers and counters are retained privately. The event-ranking SQLite outbox was not part of this canary. | TW gate accepted. Verify the next region's inventory and configuration before one-region-at-a-time rollout; retain rollback artifacts through the later of 24 hours after activation or one scheduled update cycle. |
 | 2026-08-18 | 7 | event ranking SQLite outbox 经 [PR #40](https://github.com/Sekai-World/sekai-client/pull/40) 合并：先持久化后投递、幂等键、投递状态机、drain 预算、保留期清理、重启恢复；scheduler 单一 coalescing job。[PR #41](https://github.com/Sekai-World/sekai-client/pull/41) 同日降低事件追踪请求开销。接收端 `Idempotency-Key` 强制执行与上游响应校验仍未完成。 | 上游响应模型与边界校验；接收端幂等强制执行 |
 | 2026-08-22 | 5 | KR is selected as the next rollout region. Inventory and a lease-scoped token are not yet prepared, so no KR production activation has been performed. | Complete KR preparation against the pre-activation gate (inventory, lease-scoped token, region-specific configuration, rollback artifacts, and pre-activation evidence); then activate a one-region KR canary and complete the observation gate before expanding. |
+| 2026-08-25 | 5 | The KR remote-provider consumer passed its observation gate with the client and account service online and ready; no unexplained consumer restarts were observed and lease/inventory health stayed within acceptance criteria. Aggregate evidence only; operational identifiers are retained privately. | Retain KR rollback artifacts through the standard window; select and prepare the next region one at a time. |
+| 2026-08-25 | ops | All production processes migrated from the legacy release branch onto the current main line; data repositories moved with the checkout and the GitHub App credential helper repointed. Two incidents during the window were resolved: a stale git index.lock left by a killed process blocked one daily cycle, and a JSON-RPC method-version mismatch between the event tracker and a stale shared-client instance raised -32601 until restart. Final health: all regions READY. | Observe the next scheduled daily cycle before retiring the legacy checkout and failure-artifact directories. |
