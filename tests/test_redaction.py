@@ -45,6 +45,17 @@ class TestRedactStructure:
         assert out["x-internal-rpc-token"] == REDACTED
         assert out["accessToken"] == REDACTED
 
+    def test_redacts_camelcase_device_and_install_keys(self):
+        data = {
+            "deviceId": "dev-123",
+            "installId": "inst-456",
+            "userId": "u1",
+        }
+        out = redact_structure(data)
+        assert out["deviceId"] == REDACTED
+        assert out["installId"] == REDACTED
+        assert out["userId"] == "u1"
+
 
 class TestRedactText:
     def test_redacts_bearer_token(self):
@@ -63,6 +74,13 @@ class TestRedactText:
         assert "supersecret" not in out
         # The token value must be replaced by the redaction marker.
         assert "[REDACTED]" in out
+
+    def test_redacts_url_query_camelcase_device_and_install(self):
+        url = "https://host/path?deviceId=dev-123&installId=inst-456&other=1"
+        out = redact_text(url)
+        assert "dev-123" not in out
+        assert "inst-456" not in out
+        assert out.count("[REDACTED]") == 2
 
     def test_redacts_json_and_python_repr_fields(self):
         json_text = '{"credential": "secret", "userId": "1"}'

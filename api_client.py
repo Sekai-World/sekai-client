@@ -397,40 +397,7 @@ class APIClient:
                 str(self.account_info["signature"]),
             )
         elif self.region in ("tw", "kr"):
-            device_id = self.account_info["deviceId"]
-            install_id = self.account_info["installId"]
-            user_agent = self.account_info["userAgent"]
-            device_model = self.account_info["deviceModel"]
-            os_version = self.account_info["osVersion"]
-            if self.region == "tw":
-                os_header = "x-operatingSystem"
-            else:
-                os_header = "x-operatingsystem"
-            if not isinstance(device_id, str) or not device_id:
-                raise ValueError("TW/KR account info requires a non-empty deviceId")
-            if not isinstance(install_id, str) or not install_id:
-                raise ValueError("TW/KR account info requires a non-empty installId")
-            if not isinstance(user_agent, str) or not user_agent:
-                raise ValueError("TW/KR account info requires a non-empty userAgent")
-            if not isinstance(device_model, str) or not device_model:
-                raise ValueError("TW/KR account info requires a non-empty deviceModel")
-            if not isinstance(os_version, str) or not os_version:
-                raise ValueError("TW/KR account info requires a non-empty osVersion")
-            self.headers["device_id"] = device_id
-            self.headers["x-install-id"] = install_id
-            self.headers["user-agent"] = user_agent
-            self.headers["x-devicemodel"] = device_model
-            self.headers[os_header] = os_version
-            credential = TwKrCredential(
-                AccountRegion(self.region),
-                str(self.account_info["userId"]),
-                str(self.account_info["loginInfo"]["accessToken"]),
-                device_id,
-                install_id,
-                user_agent,
-                device_model,
-                os_version,
-            )
+            credential = self._validate_tw_kr_account_info()
         elif self.region == "cn":
             access_token = self.account_info["loginInfo"]["accessToken"]
             return self._require_dict_response(
@@ -445,6 +412,52 @@ class APIClient:
         result = GameAuthenticationService(self).authenticate(credential)
         self.master_split_paths = list(result.master_split_paths)
         return result.data
+
+    def _validate_tw_kr_account_info(self) -> TwKrCredential:
+        required_keys = (
+            "deviceId",
+            "installId",
+            "userAgent",
+            "deviceModel",
+            "osVersion",
+        )
+        missing = [key for key in required_keys if key not in self.account_info]
+        if missing:
+            raise ValueError(f"TW/KR account info missing keys: {', '.join(missing)}")
+        device_id = self.account_info["deviceId"]
+        install_id = self.account_info["installId"]
+        user_agent = self.account_info["userAgent"]
+        device_model = self.account_info["deviceModel"]
+        os_version = self.account_info["osVersion"]
+        if self.region == "tw":
+            os_header = "x-operatingSystem"
+        else:
+            os_header = "x-operatingsystem"
+        if not isinstance(device_id, str) or not device_id:
+            raise ValueError("TW/KR account info requires a non-empty deviceId")
+        if not isinstance(install_id, str) or not install_id:
+            raise ValueError("TW/KR account info requires a non-empty installId")
+        if not isinstance(user_agent, str) or not user_agent:
+            raise ValueError("TW/KR account info requires a non-empty userAgent")
+        if not isinstance(device_model, str) or not device_model:
+            raise ValueError("TW/KR account info requires a non-empty deviceModel")
+        if not isinstance(os_version, str) or not os_version:
+            raise ValueError("TW/KR account info requires a non-empty osVersion")
+        self.headers["device_id"] = device_id
+        self.headers["x-install-id"] = install_id
+        self.headers["user-agent"] = user_agent
+        self.headers["x-devicemodel"] = device_model
+        self.headers[os_header] = os_version
+        return TwKrCredential(
+            AccountRegion(self.region),
+            str(self.account_info["userId"]),
+            str(self.account_info["loginInfo"]["accessToken"]),
+            device_id,
+            install_id,
+            user_agent,
+            device_model,
+            os_version,
+        )
 
     def _apply_auth_headers_and_version_info(self, auth_data: dict[str, Any]) -> None:
         session_token = auth_data["sessionToken"]
