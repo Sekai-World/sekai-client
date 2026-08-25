@@ -160,7 +160,12 @@ def test_four_region_lease_contract_and_client_owned_game_auth(region):
         game_transport.call_pjsk_api.assert_called_once_with(
             "/user/auth",
             "post",
-            {"userID": 0, "accessToken": f"{region.value}-token"},
+            {
+                "userID": 0,
+                "accessToken": f"{region.value}-token",
+                "deviceId": None,
+                "authTriggerType": "normal",
+            },
         )
 
 

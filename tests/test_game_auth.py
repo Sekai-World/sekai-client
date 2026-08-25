@@ -36,7 +36,14 @@ def test_kr_authentication_uses_access_token():
     GameAuthenticationService(transport).authenticate(credential)
 
     transport.call_pjsk_api.assert_called_once_with(
-        "/user/auth", "post", {"userID": 0, "accessToken": "access-token"}
+        "/user/auth",
+        "post",
+        {
+            "userID": 0,
+            "accessToken": "access-token",
+            "deviceId": None,
+            "authTriggerType": "normal",
+        },
     )
 
 
@@ -68,5 +75,12 @@ def test_tw_kr_auth_sets_device_id_header_on_transport():
 
     assert client.headers["device_id"] == "lease-device-id"
     client.call_pjsk_api.assert_called_once_with(
-        "/user/auth", "post", {"userID": 0, "accessToken": "token"}
+        "/user/auth",
+        "post",
+        {
+            "userID": 0,
+            "accessToken": "token",
+            "deviceId": None,
+            "authTriggerType": "normal",
+        },
     )
