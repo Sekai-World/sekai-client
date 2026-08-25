@@ -31,9 +31,7 @@ class GameProtocolTransport:
 
     def init_cookie(self) -> None:
         cookie_url = pjsk_cookie_post_url[self.region]
-        self.logger.debug(
-            "init_cookie method=POST url=%s", cookie_url
-        )
+        self.logger.debug("init_cookie method=POST url=%s", cookie_url)
         try:
             response = requests.post(
                 cookie_url,
@@ -88,9 +86,7 @@ class GameProtocolTransport:
         self.headers["x-request-id"] = request_id or str(uuid4())
         self.headers["content-type"] = "application/octet-stream"
         req_url = f"{base_pjsk_api_url[self.region]}{endpoint}"
-        headers_str = " ".join(
-            f"{k}={v}" for k, v in sorted(self.headers.items())
-        )
+        headers_str = " ".join(f"{k}={v}" for k, v in sorted(self.headers.items()))
         self.logger.debug(
             "request url=%s method=%s headers=%s data_len=%s",
             req_url,
