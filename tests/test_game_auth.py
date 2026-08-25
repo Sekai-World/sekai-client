@@ -30,7 +30,14 @@ def test_kr_authentication_uses_access_token():
     transport = Mock()
     transport.call_pjsk_api.return_value = {"sessionToken": "session"}
     credential = TwKrCredential(
-        AccountRegion.KR, "open-id", "access-token", "device-id"
+        AccountRegion.KR,
+        "open-id",
+        "access-token",
+        "device-id",
+        "install-id",
+        "user-agent",
+        "device-model",
+        "os-version",
     )
 
     GameAuthenticationService(transport).authenticate(credential)
@@ -52,7 +59,14 @@ def test_authentication_rejects_invalid_response(response):
     transport = Mock()
     transport.call_pjsk_api.return_value = response
     credential = TwKrCredential(
-        AccountRegion.TW, "open-id", "access-token", "device-id"
+        AccountRegion.TW,
+        "open-id",
+        "access-token",
+        "device-id",
+        "install-id",
+        "user-agent",
+        "device-model",
+        "os-version",
     )
 
     with pytest.raises(ValueError, match="Invalid credential validation response"):
@@ -60,7 +74,7 @@ def test_authentication_rejects_invalid_response(response):
 
 
 def test_tw_kr_auth_sets_device_id_header_on_transport():
-    """Verify _authenticate() sets the device_id header from the lease for tw/kr."""
+    """Verify _authenticate() sets all fingerprint headers from the lease for tw/kr."""
     from api_client import APIClient
 
     client = APIClient(region="tw")
@@ -68,12 +82,20 @@ def test_tw_kr_auth_sets_device_id_header_on_transport():
         "userId": "open-id",
         "loginInfo": {"accessToken": "token"},
         "deviceId": "lease-device-id",
+        "installId": "lease-install-id",
+        "userAgent": "lease-user-agent",
+        "deviceModel": "lease-device-model",
+        "osVersion": "lease-os-version",
     }
     client.call_pjsk_api = Mock(return_value={"sessionToken": "game-session"})
 
     client._authenticate()
 
     assert client.headers["device_id"] == "lease-device-id"
+    assert client.headers["x-install-id"] == "lease-install-id"
+    assert client.headers["user-agent"] == "lease-user-agent"
+    assert client.headers["x-devicemodel"] == "lease-device-model"
+    assert client.headers["x-operatingSystem"] == "lease-os-version"
     client.call_pjsk_api.assert_called_once_with(
         "/user/auth",
         "post",

@@ -169,6 +169,10 @@ class RemoteAccountProvider:
             payload.get("sdk_open_id"),
             payload.get("access_token"),
             payload.get("device_id"),
+            payload.get("install_id"),
+            payload.get("user_agent"),
+            payload.get("device_model"),
+            payload.get("os_version"),
         )
         if not all(isinstance(value, str) and value for value in tw_kr_values):
             raise ValueError
@@ -177,6 +181,10 @@ class RemoteAccountProvider:
             payload["sdk_open_id"],
             payload["access_token"],
             payload["device_id"],
+            payload["install_id"],
+            payload["user_agent"],
+            payload["device_model"],
+            payload["os_version"],
         )
 
     @staticmethod

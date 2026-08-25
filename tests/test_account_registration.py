@@ -91,7 +91,16 @@ def test_registration_rejects_tw_before_transport_call():
             ),
         ),
         (
-            TwKrCredential(AccountRegion.KR, "open-id", "access-token", "device-id"),
+            TwKrCredential(
+                AccountRegion.KR,
+                "open-id",
+                "access-token",
+                "device-id",
+                "install-id",
+                "user-agent",
+                "device-model",
+                "os-version",
+            ),
             (
                 "/user/auth",
                 "post",

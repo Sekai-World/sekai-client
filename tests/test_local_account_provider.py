@@ -77,6 +77,10 @@ def test_loads_tw_kr_environment_credentials(monkeypatch, tmp_path, region):
     monkeypatch.setenv(f"{prefix}_ACCESS_TOKEN", "token")
     monkeypatch.setenv(f"{prefix}_SDK_OPEN_ID", "open-id")
     monkeypatch.setenv(f"{prefix}_DEVICE_ID", "device-id")
+    monkeypatch.setenv(f"{prefix}_INSTALL_ID", "install-id")
+    monkeypatch.setenv(f"{prefix}_USER_AGENT", "user-agent")
+    monkeypatch.setenv(f"{prefix}_DEVICE_MODEL", "device-model")
+    monkeypatch.setenv(f"{prefix}_OS_VERSION", "os-version")
 
     lease = LocalAccountProvider(tmp_path).acquire(
         region, "worker", ttl_seconds=60, idempotency_key="request-1"
@@ -86,6 +90,10 @@ def test_loads_tw_kr_environment_credentials(monkeypatch, tmp_path, region):
         "loginInfo": {"accessToken": "token"},
         "userId": "open-id",
         "deviceId": "device-id",
+        "installId": "install-id",
+        "userAgent": "user-agent",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
     }
 
 
@@ -95,8 +103,12 @@ def test_missing_environment_credentials_fail_without_exposing_values(
     monkeypatch.delenv("SEKAI_TW_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("SEKAI_TW_SDK_OPEN_ID", raising=False)
     monkeypatch.delenv("SEKAI_TW_DEVICE_ID", raising=False)
+    monkeypatch.delenv("SEKAI_TW_INSTALL_ID", raising=False)
+    monkeypatch.delenv("SEKAI_TW_USER_AGENT", raising=False)
+    monkeypatch.delenv("SEKAI_TW_DEVICE_MODEL", raising=False)
+    monkeypatch.delenv("SEKAI_TW_OS_VERSION", raising=False)
 
-    with pytest.raises(ValueError, match="Missing access token"):
+    with pytest.raises(ValueError, match="Missing"):
         LocalAccountProvider(tmp_path).acquire(
             AccountRegion.TW, "worker", ttl_seconds=60, idempotency_key="request-1"
         )

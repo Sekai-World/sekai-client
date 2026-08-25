@@ -41,6 +41,10 @@ def credential_to_account_info(
         "loginInfo": {"accessToken": credential.access_token},
         "userId": credential.sdk_open_id,
         "deviceId": credential.device_id,
+        "installId": credential.install_id,
+        "userAgent": credential.user_agent,
+        "deviceModel": credential.device_model,
+        "osVersion": credential.os_version,
     }
 
 
@@ -156,9 +160,18 @@ class LocalAccountProvider:
         access_token = os.getenv(f"{prefix}_ACCESS_TOKEN")
         sdk_open_id = os.getenv(f"{prefix}_SDK_OPEN_ID")
         device_id = os.getenv(f"{prefix}_DEVICE_ID")
+        install_id = os.getenv(f"{prefix}_INSTALL_ID")
+        user_agent = os.getenv(f"{prefix}_USER_AGENT")
+        device_model = os.getenv(f"{prefix}_DEVICE_MODEL")
+        os_version = os.getenv(f"{prefix}_OS_VERSION")
         if not access_token or not sdk_open_id or not device_id:
             raise ValueError(
                 f"Missing access token, SDK open id, or device id "
+                f"for {region.value} server"
+            )
+        if not install_id or not user_agent or not device_model or not os_version:
+            raise ValueError(
+                f"Missing install id, user agent, device model, or OS version "
                 f"for {region.value} server"
             )
         return TwKrCredential(
@@ -166,6 +179,10 @@ class LocalAccountProvider:
             sdk_open_id=sdk_open_id,
             access_token=access_token,
             device_id=device_id,
+            install_id=install_id,
+            user_agent=user_agent,
+            device_model=device_model,
+            os_version=os_version,
         )
 
 

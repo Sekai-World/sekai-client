@@ -33,6 +33,7 @@ SENSITIVE_KEYS = {
     "x-api-token",
     "x-api-key",
     "device_id",
+    "install_id",
     "x-install-id",
     "x-internal-rpc-token",
     "internal_rpc_token",
@@ -61,7 +62,7 @@ _QUOTED_FIELD_RE = re.compile(
     r"(?i)(['\"])("
     r"authorization|cookie|set-cookie|x-session-token|credential|signature|"
     r"accessToken|access_token|token|api_key|x-api-token|x-api-key|"
-    r"device_id|x-install-id|x-internal-rpc-token|internal_rpc_token|"
+    r"device_id|install_id|installId|x-install-id|x-internal-rpc-token|internal_rpc_token|"
     r"x-strapi-token|strapi_token"
     r")\1\s*:\s*(['\"])(.*?)\3"
 )
