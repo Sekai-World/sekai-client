@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from typing import TextIO
 
 import jwt
 import requests
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = Path("/root/.config/sekai-github-app/config.json")
 GITHUB_API = "https://api.github.com"
@@ -133,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     except CredentialNotApplicable:
         return 0
     except Exception:
-        print("GitHub App credential helper failed", file=sys.stderr)
+        logger.exception("GitHub App credential helper failed")
         return 1
     return 0
 
