@@ -30,9 +30,11 @@ class GameProtocolTransport:
         self.logger = logger
 
     def init_cookie(self) -> None:
+        cookie_url = pjsk_cookie_post_url[self.region]
+        self.logger.debug("init_cookie method=POST url=%s", cookie_url)
         try:
             response = requests.post(
-                pjsk_cookie_post_url[self.region],
+                cookie_url,
                 timeout=bounded_timeout(Config.REQUEST_TIMEOUT),
                 allow_redirects=False,
             )
@@ -52,6 +54,11 @@ class GameProtocolTransport:
 
         cookie = response.headers.get("set-cookie") or response.headers.get(
             "Set-Cookie"
+        )
+        self.logger.debug(
+            "init_cookie status=%s set_cookie_present=%s",
+            response.status_code,
+            cookie is not None,
         )
         if not cookie:
             raise RuntimeError(
@@ -78,28 +85,32 @@ class GameProtocolTransport:
     ) -> requests.Response:
         self.headers["x-request-id"] = request_id or str(uuid4())
         self.headers["content-type"] = "application/octet-stream"
+        req_url = f"{base_pjsk_api_url[self.region]}{endpoint}"
+        headers_str = " ".join(f"{k}={v}" for k, v in sorted(self.headers.items()))
         self.logger.debug(
-            "request url=%s%s, method=%s, headers=%s",
-            base_pjsk_api_url[self.region],
-            endpoint,
+            "request url=%s method=%s headers=%s data_len=%s",
+            req_url,
             method.lower(),
-            self.headers.items(),
+            headers_str,
+            len(data) if data is not None else None,
         )
         response = requests.request(
             method=method.lower(),
-            url=f"{base_pjsk_api_url[self.region]}{endpoint}",
+            url=req_url,
             headers=self.headers,
             data=data,
             timeout=bounded_timeout(Config.REQUEST_TIMEOUT),
             allow_redirects=False,
         )
+        resp_headers_str = " ".join(
+            f"{k}={v}" for k, v in sorted(response.headers.items())
+        )
         self.logger.debug(
-            "response url=%s%s, method=%s, headers=%s, status=%s",
-            base_pjsk_api_url[self.region],
-            endpoint,
+            "response url=%s method=%s status=%s headers=%s",
+            req_url,
             method.lower(),
-            response.headers.items(),
             response.status_code,
+            resp_headers_str,
         )
         if not 300 <= response.status_code < 400 and response.headers.get(
             "x-session-token"

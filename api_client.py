@@ -552,6 +552,15 @@ class APIClient:
 
         max_retries = Config.MAX_API_RETRIES if policy is RetryPolicy.IDEMPOTENT else 0
         request_id = str(uuid4())
+        self.logger.debug(
+            "call_pjsk_api endpoint=%s method=%s request_id=%s "
+            "body=%s encrypted_len=%s",
+            endpoint,
+            normalized_method,
+            request_id,
+            body,
+            len(data) if data is not None else None,
+        )
         attempt = 0
         while True:
             r = None
@@ -817,6 +826,12 @@ class APIClient:
         body: str | dict[str, Any] = "",
     ) -> Any:
         self._validate_request_and_decrypt_url(url, method, body)
+        self.logger.debug(
+            "request_and_decrypt method=%s url=%s body=%s",
+            method,
+            url,
+            body,
+        )
         res = requests.request(
             method,
             url,
@@ -828,7 +843,14 @@ class APIClient:
             raise RuntimeError(f"Master-data redirect refused (HTTP {res.status_code})")
         res.raise_for_status()
 
-        return decrypt_msgpack(res.content)
+        decrypted = decrypt_msgpack(res.content)
+        self.logger.debug(
+            "request_and_decrypt status=%s decrypted_type=%s decrypted_size=%s",
+            res.status_code,
+            type(decrypted).__name__,
+            len(decrypted) if hasattr(decrypted, "__len__") else "N/A",
+        )
+        return decrypted
 
     def _validate_request_and_decrypt_url(
         self, url: str, method: str, body: str | dict[str, Any]
