@@ -29,12 +29,21 @@ def test_jp_authentication_returns_session_metadata():
 def test_kr_authentication_uses_access_token():
     transport = Mock()
     transport.call_pjsk_api.return_value = {"sessionToken": "session"}
-    credential = TwKrCredential(AccountRegion.KR, "open-id", "access-token")
+    credential = TwKrCredential(
+        AccountRegion.KR, "open-id", "access-token", "device-id"
+    )
 
     GameAuthenticationService(transport).authenticate(credential)
 
     transport.call_pjsk_api.assert_called_once_with(
-        "/user/auth", "post", {"userID": 0, "accessToken": "access-token"}
+        "/user/auth",
+        "post",
+        {
+            "userID": 0,
+            "accessToken": "access-token",
+            "deviceId": None,
+            "authTriggerType": "normal",
+        },
     )
 
 
@@ -42,7 +51,36 @@ def test_kr_authentication_uses_access_token():
 def test_authentication_rejects_invalid_response(response):
     transport = Mock()
     transport.call_pjsk_api.return_value = response
-    credential = TwKrCredential(AccountRegion.TW, "open-id", "access-token")
+    credential = TwKrCredential(
+        AccountRegion.TW, "open-id", "access-token", "device-id"
+    )
 
     with pytest.raises(ValueError, match="Invalid credential validation response"):
         GameAuthenticationService(transport).authenticate(credential)
+
+
+def test_tw_kr_auth_sets_device_id_header_on_transport():
+    """Verify _authenticate() sets the device_id header from the lease for tw/kr."""
+    from api_client import APIClient
+
+    client = APIClient(region="tw")
+    client.account_info = {
+        "userId": "open-id",
+        "loginInfo": {"accessToken": "token"},
+        "deviceId": "lease-device-id",
+    }
+    client.call_pjsk_api = Mock(return_value={"sessionToken": "game-session"})
+
+    client._authenticate()
+
+    assert client.headers["device_id"] == "lease-device-id"
+    client.call_pjsk_api.assert_called_once_with(
+        "/user/auth",
+        "post",
+        {
+            "userID": 0,
+            "accessToken": "token",
+            "deviceId": None,
+            "authTriggerType": "normal",
+        },
+    )

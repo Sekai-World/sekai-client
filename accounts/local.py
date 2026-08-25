@@ -40,6 +40,7 @@ def credential_to_account_info(
     return {
         "loginInfo": {"accessToken": credential.access_token},
         "userId": credential.sdk_open_id,
+        "deviceId": credential.device_id,
     }
 
 
@@ -154,14 +155,17 @@ class LocalAccountProvider:
         prefix = f"SEKAI_{region.value.upper()}"
         access_token = os.getenv(f"{prefix}_ACCESS_TOKEN")
         sdk_open_id = os.getenv(f"{prefix}_SDK_OPEN_ID")
-        if not access_token or not sdk_open_id:
+        device_id = os.getenv(f"{prefix}_DEVICE_ID")
+        if not access_token or not sdk_open_id or not device_id:
             raise ValueError(
-                f"Missing access token and/or SDK open id for {region.value} server"
+                f"Missing access token, SDK open id, or device id "
+                f"for {region.value} server"
             )
         return TwKrCredential(
             region=region,
             sdk_open_id=sdk_open_id,
             access_token=access_token,
+            device_id=device_id,
         )
 
 

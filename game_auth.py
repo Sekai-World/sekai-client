@@ -38,7 +38,12 @@ class GameAuthenticationService:
             response = self._transport.call_pjsk_api(
                 "/user/auth",
                 "post",
-                {"userID": 0, "accessToken": credential.access_token},
+                {
+                    "userID": 0,
+                    "accessToken": credential.access_token,
+                    "deviceId": None,
+                    "authTriggerType": "normal",
+                },
             )
         if not isinstance(response, dict) or not response.get("sessionToken"):
             raise ValueError("Invalid credential validation response")
