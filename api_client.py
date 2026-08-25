@@ -397,12 +397,15 @@ class APIClient:
                 str(self.account_info["signature"]),
             )
         elif self.region in ("tw", "kr"):
-            self.headers["device_id"] = str(self.account_info["deviceId"])
+            device_id = self.account_info["deviceId"]
+            if not isinstance(device_id, str) or not device_id:
+                raise ValueError("TW/KR account info requires a non-empty deviceId")
+            self.headers["device_id"] = device_id
             credential = TwKrCredential(
                 AccountRegion(self.region),
                 str(self.account_info["userId"]),
                 str(self.account_info["loginInfo"]["accessToken"]),
-                str(self.account_info["deviceId"]),
+                device_id,
             )
         elif self.region == "cn":
             access_token = self.account_info["loginInfo"]["accessToken"]

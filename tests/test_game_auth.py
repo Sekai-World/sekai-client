@@ -29,7 +29,9 @@ def test_jp_authentication_returns_session_metadata():
 def test_kr_authentication_uses_access_token():
     transport = Mock()
     transport.call_pjsk_api.return_value = {"sessionToken": "session"}
-    credential = TwKrCredential(AccountRegion.KR, "open-id", "access-token", "device-id")
+    credential = TwKrCredential(
+        AccountRegion.KR, "open-id", "access-token", "device-id"
+    )
 
     GameAuthenticationService(transport).authenticate(credential)
 
@@ -42,7 +44,9 @@ def test_kr_authentication_uses_access_token():
 def test_authentication_rejects_invalid_response(response):
     transport = Mock()
     transport.call_pjsk_api.return_value = response
-    credential = TwKrCredential(AccountRegion.TW, "open-id", "access-token", "device-id")
+    credential = TwKrCredential(
+        AccountRegion.TW, "open-id", "access-token", "device-id"
+    )
 
     with pytest.raises(ValueError, match="Invalid credential validation response"):
         GameAuthenticationService(transport).authenticate(credential)

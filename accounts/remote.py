@@ -173,7 +173,10 @@ class RemoteAccountProvider:
         if not all(isinstance(value, str) and value for value in tw_kr_values):
             raise ValueError
         return TwKrCredential(
-            region, payload["sdk_open_id"], payload["access_token"], payload["device_id"]
+            region,
+            payload["sdk_open_id"],
+            payload["access_token"],
+            payload["device_id"],
         )
 
     @staticmethod

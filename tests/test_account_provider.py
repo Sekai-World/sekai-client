@@ -44,7 +44,9 @@ def test_account_lease_normalizes_expiry_and_hides_credential():
 
 
 def test_account_lease_rejects_naive_expiry():
-    credential = TwKrCredential(AccountRegion.TW, "open-id", "access-token", "device-id")
+    credential = TwKrCredential(
+        AccountRegion.TW, "open-id", "access-token", "device-id"
+    )
     with pytest.raises(ValueError, match="timezone-aware"):
         AccountLease("lease-1", "consumer", datetime(2026, 8, 13), credential)
 

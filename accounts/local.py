@@ -158,7 +158,8 @@ class LocalAccountProvider:
         device_id = os.getenv(f"{prefix}_DEVICE_ID")
         if not access_token or not sdk_open_id or not device_id:
             raise ValueError(
-                f"Missing access token, SDK open id, or device id for {region.value} server"
+                f"Missing access token, SDK open id, or device id "
+                f"for {region.value} server"
             )
         return TwKrCredential(
             region=region,
