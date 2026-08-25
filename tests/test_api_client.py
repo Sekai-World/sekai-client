@@ -362,6 +362,30 @@ def test_fetch_master_split_allows_and_calls():
     client.call_pjsk_api.assert_called_once_with("/suite/master/valid")
 
 
+@pytest.mark.parametrize(
+    "missing_key",
+    ["deviceId", "installId", "userAgent", "deviceModel", "osVersion"],
+)
+def test_tw_kr_auth_rejects_missing_key_and_does_not_mutate_headers(missing_key):
+    client = APIClient(region="tw")
+    original_headers = dict(client.headers)
+    client.account_info = {
+        "userId": "u",
+        "loginInfo": {"accessToken": "tok"},
+        "deviceId": "device-id",
+        "installId": "install-id",
+        "userAgent": "user-agent",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
+    }
+    del client.account_info[missing_key]
+
+    with pytest.raises(ValueError, match="missing keys"):
+        client._authenticate()
+
+    assert client.headers == original_headers
+
+
 @pytest.mark.parametrize("bad_device_id", [None, 0, False, "", 123])
 def test_tw_kr_auth_rejects_malformed_device_id_and_does_not_mutate_headers(
     bad_device_id,
@@ -372,9 +396,39 @@ def test_tw_kr_auth_rejects_malformed_device_id_and_does_not_mutate_headers(
         "userId": "u",
         "loginInfo": {"accessToken": "tok"},
         "deviceId": bad_device_id,
+        "installId": "install-id",
+        "userAgent": "user-agent",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
     }
 
     with pytest.raises(ValueError, match="non-empty deviceId"):
+        client._authenticate()
+
+    assert client.headers == original_headers
+
+
+@pytest.mark.parametrize(
+    "field", ["installId", "userAgent", "deviceModel", "osVersion"]
+)
+@pytest.mark.parametrize("bad_value", [None, 0, False, "", 123])
+def test_tw_kr_auth_rejects_malformed_fingerprint_field_and_does_not_mutate_headers(
+    field, bad_value
+):
+    client = APIClient(region="tw")
+    original_headers = dict(client.headers)
+    client.account_info = {
+        "userId": "u",
+        "loginInfo": {"accessToken": "tok"},
+        "deviceId": "device-id",
+        "installId": "install-id",
+        "userAgent": "user-agent",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
+    }
+    client.account_info[field] = bad_value
+
+    with pytest.raises(ValueError, match=f"non-empty {field}"):
         client._authenticate()
 
     assert client.headers == original_headers

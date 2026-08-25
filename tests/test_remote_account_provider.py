@@ -63,6 +63,10 @@ class FakeAccountService:
                             "sdk_open_id": f"{region}-open",
                             "access_token": f"{region}-token",
                             "device_id": f"{region}-device",
+                            "install_id": f"{region}-install",
+                            "user_agent": f"{region}-agent",
+                            "device_model": f"{region}-model",
+                            "os_version": f"{region}-os",
                         }
                     )
                     self._respond(
@@ -256,5 +260,45 @@ def test_tw_kr_payload_empty_device_id_is_rejected():
         "access_token": "token",
         "device_id": "",
     }
+    with pytest.raises(ValueError):
+        RemoteAccountProvider._credential(AccountRegion.TW, payload)
+
+
+@pytest.mark.parametrize(
+    "missing_key",
+    ["install_id", "user_agent", "device_model", "os_version"],
+)
+def test_tw_kr_payload_rejects_missing_fingerprint_field(missing_key):
+    payload = {
+        "kind": "tw_kr",
+        "sdk_open_id": "open",
+        "access_token": "token",
+        "device_id": "device",
+        "install_id": "install",
+        "user_agent": "agent",
+        "device_model": "model",
+        "os_version": "os",
+    }
+    del payload[missing_key]
+    with pytest.raises(ValueError):
+        RemoteAccountProvider._credential(AccountRegion.TW, payload)
+
+
+@pytest.mark.parametrize(
+    "empty_key",
+    ["install_id", "user_agent", "device_model", "os_version"],
+)
+def test_tw_kr_payload_rejects_empty_fingerprint_field(empty_key):
+    payload = {
+        "kind": "tw_kr",
+        "sdk_open_id": "open",
+        "access_token": "token",
+        "device_id": "device",
+        "install_id": "install",
+        "user_agent": "agent",
+        "device_model": "model",
+        "os_version": "os",
+    }
+    payload[empty_key] = ""
     with pytest.raises(ValueError):
         RemoteAccountProvider._credential(AccountRegion.TW, payload)
