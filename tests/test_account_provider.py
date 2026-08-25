@@ -25,9 +25,9 @@ def test_jp_en_credential_rejects_wrong_region_and_hides_secrets():
 
 def test_tw_kr_credential_rejects_wrong_region_and_hides_token():
     with pytest.raises(ValueError, match="region tw or kr"):
-        TwKrCredential(AccountRegion.EN, "open-id", "access-token")
+        TwKrCredential(AccountRegion.EN, "open-id", "access-token", "device-id")
 
-    value = TwKrCredential(AccountRegion.KR, "open-id", "secret-token")
+    value = TwKrCredential(AccountRegion.KR, "open-id", "secret-token", "device-id")
     assert "secret-token" not in repr(value)
 
 
@@ -44,7 +44,7 @@ def test_account_lease_normalizes_expiry_and_hides_credential():
 
 
 def test_account_lease_rejects_naive_expiry():
-    credential = TwKrCredential(AccountRegion.TW, "open-id", "access-token")
+    credential = TwKrCredential(AccountRegion.TW, "open-id", "access-token", "device-id")
     with pytest.raises(ValueError, match="timezone-aware"):
         AccountLease("lease-1", "consumer", datetime(2026, 8, 13), credential)
 

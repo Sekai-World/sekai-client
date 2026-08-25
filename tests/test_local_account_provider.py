@@ -76,6 +76,7 @@ def test_loads_tw_kr_environment_credentials(monkeypatch, tmp_path, region):
     prefix = f"SEKAI_{region.value.upper()}"
     monkeypatch.setenv(f"{prefix}_ACCESS_TOKEN", "token")
     monkeypatch.setenv(f"{prefix}_SDK_OPEN_ID", "open-id")
+    monkeypatch.setenv(f"{prefix}_DEVICE_ID", "device-id")
 
     lease = LocalAccountProvider(tmp_path).acquire(
         region, "worker", ttl_seconds=60, idempotency_key="request-1"
@@ -84,6 +85,7 @@ def test_loads_tw_kr_environment_credentials(monkeypatch, tmp_path, region):
     assert credential_to_account_info(lease.credential) == {
         "loginInfo": {"accessToken": "token"},
         "userId": "open-id",
+        "deviceId": "device-id",
     }
 
 
@@ -92,6 +94,7 @@ def test_missing_environment_credentials_fail_without_exposing_values(
 ):
     monkeypatch.delenv("SEKAI_TW_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("SEKAI_TW_SDK_OPEN_ID", raising=False)
+    monkeypatch.delenv("SEKAI_TW_DEVICE_ID", raising=False)
 
     with pytest.raises(ValueError, match="Missing access token"):
         LocalAccountProvider(tmp_path).acquire(

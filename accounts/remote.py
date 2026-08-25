@@ -165,10 +165,16 @@ class RemoteAccountProvider:
             )
         if payload.get("kind") != "tw_kr":
             raise ValueError
-        tw_kr_values = (payload.get("sdk_open_id"), payload.get("access_token"))
+        tw_kr_values = (
+            payload.get("sdk_open_id"),
+            payload.get("access_token"),
+            payload.get("device_id"),
+        )
         if not all(isinstance(value, str) and value for value in tw_kr_values):
             raise ValueError
-        return TwKrCredential(region, payload["sdk_open_id"], payload["access_token"])
+        return TwKrCredential(
+            region, payload["sdk_open_id"], payload["access_token"], payload["device_id"]
+        )
 
     @staticmethod
     def _retry_after(response: Any) -> float | None:

@@ -397,10 +397,12 @@ class APIClient:
                 str(self.account_info["signature"]),
             )
         elif self.region in ("tw", "kr"):
+            self.headers["device_id"] = str(self.account_info["deviceId"])
             credential = TwKrCredential(
                 AccountRegion(self.region),
                 str(self.account_info["userId"]),
                 str(self.account_info["loginInfo"]["accessToken"]),
+                str(self.account_info["deviceId"]),
             )
         elif self.region == "cn":
             access_token = self.account_info["loginInfo"]["accessToken"]

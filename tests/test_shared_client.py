@@ -590,7 +590,7 @@ def test_tw_kr_auth_rejection_reports_and_discards_lease(
         "lease-auth-rejected",
         f"shared-client-{region.value}",
         datetime.now(UTC) + timedelta(hours=1),
-        TwKrCredential(region, "open-id", "token"),
+        TwKrCredential(region, "open-id", "token", "device-id"),
     )
     provider = Mock()
     monkeypatch.setattr(shared_client, "_active_account_lease", lease)
@@ -617,7 +617,7 @@ def test_tw_auth_rejection_discards_lease_when_journal_cleanup_fails(
         "lease-tw",
         "shared-client-tw",
         datetime.now(UTC) + timedelta(hours=1),
-        TwKrCredential(AccountRegion.TW, "open-id", "token"),
+        TwKrCredential(AccountRegion.TW, "open-id", "token", "device-id"),
     )
     operation = Mock()
     journal = Mock()
