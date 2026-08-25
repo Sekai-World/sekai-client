@@ -36,7 +36,7 @@ def _lease(lease_id="lease-1"):
         lease_id,
         "shared-client-tw",
         datetime.now(UTC) + timedelta(minutes=5),
-        TwKrCredential(AccountRegion.TW, "open-id", "token"),
+        TwKrCredential(AccountRegion.TW, "open-id", "token", "device-id"),
     )
 
 

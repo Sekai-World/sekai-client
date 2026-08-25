@@ -62,6 +62,7 @@ class FakeAccountService:
                             "kind": "tw_kr",
                             "sdk_open_id": f"{region}-open",
                             "access_token": f"{region}-token",
+                            "device_id": f"{region}-device",
                         }
                     )
                     self._respond(
@@ -159,7 +160,12 @@ def test_four_region_lease_contract_and_client_owned_game_auth(region):
         game_transport.call_pjsk_api.assert_called_once_with(
             "/user/auth",
             "post",
-            {"userID": 0, "accessToken": f"{region.value}-token"},
+            {
+                "userID": 0,
+                "accessToken": f"{region.value}-token",
+                "deviceId": None,
+                "authTriggerType": "normal",
+            },
         )
 
 
@@ -231,3 +237,24 @@ def test_shared_client_selects_remote_provider_from_environment(monkeypatch):
 
     assert isinstance(provider, RemoteAccountProvider)
     assert "configuration-secret" not in repr(provider)
+
+
+def test_tw_kr_payload_missing_device_id_is_rejected():
+    payload = {
+        "kind": "tw_kr",
+        "sdk_open_id": "open",
+        "access_token": "token",
+    }
+    with pytest.raises(ValueError):
+        RemoteAccountProvider._credential(AccountRegion.TW, payload)
+
+
+def test_tw_kr_payload_empty_device_id_is_rejected():
+    payload = {
+        "kind": "tw_kr",
+        "sdk_open_id": "open",
+        "access_token": "token",
+        "device_id": "",
+    }
+    with pytest.raises(ValueError):
+        RemoteAccountProvider._credential(AccountRegion.TW, payload)

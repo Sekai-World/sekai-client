@@ -360,3 +360,21 @@ def test_fetch_master_split_allows_and_calls():
     result = client.fetch_master_split("suite/master/valid")
     assert result == {"k": "v"}
     client.call_pjsk_api.assert_called_once_with("/suite/master/valid")
+
+
+@pytest.mark.parametrize("bad_device_id", [None, 0, False, "", 123])
+def test_tw_kr_auth_rejects_malformed_device_id_and_does_not_mutate_headers(
+    bad_device_id,
+):
+    client = APIClient(region="tw")
+    original_headers = dict(client.headers)
+    client.account_info = {
+        "userId": "u",
+        "loginInfo": {"accessToken": "tok"},
+        "deviceId": bad_device_id,
+    }
+
+    with pytest.raises(ValueError, match="non-empty deviceId"):
+        client._authenticate()
+
+    assert client.headers == original_headers

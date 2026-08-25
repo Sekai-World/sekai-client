@@ -43,11 +43,12 @@ class TwKrCredential:
     region: AccountRegion
     sdk_open_id: str
     access_token: str = field(repr=False)
+    device_id: str = field(repr=False)
 
     def __post_init__(self) -> None:
         if self.region not in (AccountRegion.TW, AccountRegion.KR):
             raise ValueError("TW/KR credential requires region tw or kr")
-        if not self.sdk_open_id or not self.access_token:
+        if not self.sdk_open_id or not self.access_token or not self.device_id:
             raise ValueError("TW/KR credential fields must be non-empty")
 
     def __repr__(self) -> str:
