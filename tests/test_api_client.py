@@ -169,6 +169,26 @@ def test_non_redirect_response_persists_session_token(monkeypatch):
     assert client.headers["x-session-token"] == "new-token"
 
 
+def test_post_426_invokes_handler_but_does_not_replay_request(monkeypatch):
+    """Regression: non-idempotent HTTP 426 must run recovery side effects."""
+    client = APIClient(region="jp")
+    response = Mock(status_code=426, headers={}, content=b"")
+    response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    request = Mock(return_value=response)
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(client, "_encrypt_request_body", lambda method, body: b"data")
+    monkeypatch.setattr(api_client, "sleep", Mock())
+
+    handler = Mock(return_value=True)
+    client._handle_http_error_retry = handler
+
+    with pytest.raises(RuntimeError, match="HTTP 426"):
+        client.call_pjsk_api("/user", "post", {"action": "do"})
+
+    handler.assert_called_once_with(response, None)
+    assert request.call_count == 1
+
+
 def test_post_network_failure_is_not_retried(monkeypatch):
     client = APIClient(region="jp")
     request = Mock(side_effect=requests.ConnectionError("unknown outcome"))
