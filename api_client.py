@@ -623,9 +623,8 @@ class APIClient:
                     status_code,
                 )
 
-                should_retry = policy is RetryPolicy.IDEMPOTENT and (
-                    self._handle_http_error_retry(r, res_data)
-                )
+                handled = self._handle_http_error_retry(r, res_data)
+                should_retry = policy is RetryPolicy.IDEMPOTENT and handled
 
                 transient = r is not None and (
                     r.status_code == 429 or 500 <= r.status_code < 600
