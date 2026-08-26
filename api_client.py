@@ -210,7 +210,17 @@ class APIClient:
             raise RuntimeError(f"Expected object response from {endpoint}")
         return response
 
-    def _update_version_after_426(self) -> None:
+    @staticmethod
+    def _is_auth_endpoint(endpoint: str) -> bool:
+        """Return True if *endpoint* is an authentication endpoint."""
+        path = endpoint.split("?", 1)[0]
+        return path == "/user/auth" or (
+            path.startswith("/user/")
+            and path.endswith("/auth")
+            and path.count("/") == 3
+        )
+
+    def _update_version_after_426(self, *, endpoint: str | None = None) -> None:
         if self.region in ["jp"]:
             ver_data = get_app_ver_and_hash_jp()
             self.headers["x-app-version"] = ver_data["appVersion"]
@@ -225,13 +235,15 @@ class APIClient:
             ver_text = get_app_ver_qooapp(app_id_regions[self.region])
             self.headers["x-app-version"] = ver_text
         self.check_versions()
-        if self.account_info:
+        if self.account_info and not self._is_auth_endpoint(endpoint or ""):
             self.login()
 
     def _handle_http_error_retry(  # noqa: C901 - established retry decision table
         self,
         response: requests.Response | None,
         res_data: Any,
+        *,
+        endpoint: str | None = None,
     ) -> bool:  # noqa: C901 - preserves the established HTTP retry decision table
         error_code = res_data.get("errorCode") if isinstance(res_data, dict) else None
 
@@ -251,7 +263,7 @@ class APIClient:
             if self.account_info:
                 transaction_id = self._begin_auth_transition()
             try:
-                self._update_version_after_426()
+                self._update_version_after_426(endpoint=endpoint)
             except Exception as error:
                 if transaction_id is not None:
                     self._finish_auth_transition(transaction_id, error)
@@ -623,7 +635,7 @@ class APIClient:
                     status_code,
                 )
 
-                handled = self._handle_http_error_retry(r, res_data)
+                handled = self._handle_http_error_retry(r, res_data, endpoint=endpoint)
                 should_retry = policy is RetryPolicy.IDEMPOTENT and handled
 
                 transient = r is not None and (

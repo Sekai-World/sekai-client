@@ -185,8 +185,105 @@ def test_post_426_invokes_handler_but_does_not_replay_request(monkeypatch):
     with pytest.raises(RuntimeError, match="HTTP 426"):
         client.call_pjsk_api("/user", "post", {"action": "do"})
 
-    handler.assert_called_once_with(response, None)
+    handler.assert_called_once_with(response, None, endpoint="/user")
     assert request.call_count == 1
+
+
+def test_auth_endpoint_426_skips_recursive_login(monkeypatch):
+    """Regression: POST /user/auth 426 must not recurse via login()."""
+    client = APIClient(region="kr")
+    client.account_info = {"userId": "u"}
+    login_mock = Mock()
+    client.login = login_mock
+    check_versions_mock = Mock()
+    client.check_versions = check_versions_mock
+
+    response = Mock(status_code=426, headers={}, content=b"")
+    response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    request = Mock(return_value=response)
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(client, "_encrypt_request_body", lambda method, body: b"data")
+    monkeypatch.setattr(api_client, "sleep", Mock())
+    monkeypatch.setattr(
+        api_client,
+        "get_app_ver_qooapp",
+        Mock(return_value="100.0"),
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 426"):
+        client.call_pjsk_api("/user/auth", "post", {"userID": 0})
+
+    check_versions_mock.assert_called_once()
+    login_mock.assert_not_called()
+    assert request.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "auth_endpoint",
+    [
+        "/user/12345/auth?refreshUpdatedResources=False",
+        "/user/auth",
+    ],
+)
+def test_auth_endpoint_426_skips_login_jp_en(monkeypatch, auth_endpoint):
+    """JP/EN auth endpoints must not recurse via login() on 426."""
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "u"}
+    login_mock = Mock()
+    client.login = login_mock
+    check_versions_mock = Mock()
+    client.check_versions = check_versions_mock
+
+    response = Mock(status_code=426, headers={}, content=b"")
+    response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    request = Mock(return_value=response)
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(client, "_encrypt_request_body", lambda method, body: b"data")
+    monkeypatch.setattr(api_client, "sleep", Mock())
+    monkeypatch.setattr(
+        api_client,
+        "get_app_ver_and_hash_jp",
+        Mock(return_value={"appVersion": "100.0", "appHash": "abc"}),
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 426"):
+        client.call_pjsk_api(auth_endpoint, "put", {"credential": "c"})
+
+    check_versions_mock.assert_called_once()
+    login_mock.assert_not_called()
+    assert request.call_count == 1
+
+
+def test_non_auth_426_still_calls_login_when_account_present(monkeypatch):
+    """Non-auth endpoints must still re-login on 426.
+
+    GET uses IDEMPOTENT policy, so the retry loop runs multiple times.
+    We only need to verify login and check_versions were invoked.
+    """
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "u"}
+    login_mock = Mock()
+    client.login = login_mock
+    check_versions_mock = Mock()
+    client.check_versions = check_versions_mock
+
+    response = Mock(status_code=426, headers={}, content=b"")
+    response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    request = Mock(return_value=response)
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(client, "_encrypt_request_body", lambda method, body: b"data")
+    monkeypatch.setattr(api_client, "sleep", Mock())
+    monkeypatch.setattr(
+        api_client,
+        "get_app_ver_and_hash_jp",
+        Mock(return_value={"appVersion": "100.0", "appHash": "abc"}),
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 426"):
+        client.call_pjsk_api("/user/profile", "get")
+
+    check_versions_mock.assert_called()
+    login_mock.assert_called()
 
 
 def test_post_network_failure_is_not_retried(monkeypatch):
