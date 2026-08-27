@@ -168,3 +168,40 @@ def test_http_sessions_use_bounded_connection_pools():
     assert adapter._pool_connections == 4
     assert adapter._pool_maxsize == 4
     assert adapter._pool_block is True
+
+
+def test_refresh_version_accepts_mismatched_upstream_region_marker(monkeypatch):
+    """There is no verified mapping between ``pjsk_region`` and the optional
+    upstream Strapi ``region``/``regionCode`` markers, so ``refresh_version``
+    must not reject a payload whose markers disagree with the configured region.
+    """
+    good_version = {"appVersion": "1", "dataVersion": "1", "assetVersion": "1"}
+    payload = {
+        "region": "kr",
+        "regionCode": "kr",
+        "eventJson": {
+            "id": 12,
+            "eventType": "marathon",
+            "startAt": 0,
+            "closedAt": 2_000_000,
+            "rankingAnnounceAt": 1_100_000,
+            "aggregateAt": 1_000_000,
+        },
+    }
+
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = payload
+    monkeypatch.setattr(
+        event_tracker._external_session, "get", Mock(return_value=response)
+    )
+    monkeypatch.setattr(
+        event_tracker.jsonrpc_client, "request", Mock(return_value=good_version)
+    )
+    monkeypatch.setattr(event_tracker, "pjsk_region", "jp")
+
+    # A conflicting upstream region marker must NOT cause rejection.
+    result = event_tracker.refresh_version()
+    assert result == good_version
+    assert event_tracker.event_data is not None
+    assert event_tracker.event_data["id"] == 12

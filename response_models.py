@@ -449,13 +449,22 @@ def validate_event_ranking_snapshot(snapshot: object) -> dict[str, Any]:
 def validate_information(data: object) -> dict[str, Any]:
     """Validate the ``/information`` response object/list shape.
 
-    Required to be an object. Known list fields (``informations``,
-    ``userHomeBanners``, ``userInformations``) are type-checked when present so a
-    scalar where a list is expected fails clearly instead of crashing downstream.
+    Required to be an object with a present ``informations`` list, because
+    ``refresh_information`` unconditionally indexes ``res["informations"]`` when
+    writing the user informations file; a missing/invalid field fails with a clear
+    diagnostic instead of a bare ``KeyError``/``TypeError``. The other known list
+    fields (``userHomeBanners``, ``userInformations``) are type-checked when
+    present.
     """
     src = "information"
     d = _require_dict(data, src)
-    for field in ("informations", "userHomeBanners", "userInformations"):
+    if "informations" not in d:
+        raise ResponseValidationError.missing_field(src, "informations")
+    if not isinstance(d["informations"], list):
+        raise ResponseValidationError.invalid_type(
+            src, "informations", "list", d["informations"]
+        )
+    for field in ("userHomeBanners", "userInformations"):
         if field in d and not isinstance(d[field], list):
             raise ResponseValidationError.invalid_type(src, field, "list", d[field])
     return d

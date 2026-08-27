@@ -313,6 +313,21 @@ def test_validate_information_rejects_invalid(response):
         validate_information(response)
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {"userHomeBanners": []},
+        {"userInformations": []},
+        {"informations": "scalar"},
+    ],
+)
+def test_validate_information_requires_informations_list(response):
+    """``refresh_information`` unconditionally indexes ``res["informations"]``."""
+    with pytest.raises(ResponseValidationError):
+        validate_information(response)
+
+
 # --------------------------------------------------------------------------- #
 # master data
 # --------------------------------------------------------------------------- #

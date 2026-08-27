@@ -139,4 +139,7 @@ def test_credential_validation_rejects_malformed_response_without_secret_leak():
         AccountCredentialValidator(transport).validate(credential)
 
     assert "Invalid credential validation response" in str(caught.value)
+    # The wrapped boundary validator should name the offending endpoint and field.
+    assert "auth/login" in str(caught.value)
+    assert "sessionToken" in str(caught.value)
     assert "do-not-leak" not in str(caught.value)

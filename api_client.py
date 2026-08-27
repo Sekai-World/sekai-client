@@ -426,7 +426,6 @@ class APIClient:
             raise ValueError(f"Unsupported region: {self.region}")
 
         result = GameAuthenticationService(self).authenticate(credential)
-        self.master_split_paths = list(result.master_split_paths)
         auth_data = result.data
         # TW/KR (non-suite) login responses must also carry a cdnVersion of the
         # correct type; the region-agnostic auth service only validates the common
@@ -437,6 +436,10 @@ class APIClient:
                 validate_auth_response(auth_data, require_cdn_version=True)
             except ResponseValidationError as error:
                 raise RuntimeError(f"Invalid login response: {error}") from error
+        # Record split paths only after the region-specific validation above has
+        # succeeded, so a malformed TW/KR auth response cannot leave stale/partial
+        # split paths on the client.
+        self.master_split_paths = list(result.master_split_paths)
         return auth_data
 
     def _validate_tw_kr_account_info(self) -> TwKrCredential:

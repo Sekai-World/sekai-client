@@ -7,6 +7,7 @@ import requests
 
 import api_client
 from api_client import APIClient, RetryPolicy
+from game_auth import AuthenticationResult
 
 
 def test_refresh_master_split_paths_only_applies_auth_metadata():
@@ -549,3 +550,85 @@ def test_tw_kr_auth_rejects_malformed_fingerprint_field_and_does_not_mutate_head
         client._authenticate()
 
     assert client.headers == original_headers
+
+
+def test_tw_kr_auth_rejects_missing_cdn_version_without_mutating_split_paths(
+    monkeypatch,
+):
+    client = APIClient(region="tw")
+    client.account_info = {
+        "userId": "u",
+        "loginInfo": {"accessToken": "tok"},
+        "deviceId": "device-id",
+        "installId": "install-id",
+        "userAgent": "user-agent",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
+    }
+    # Seed a sentinel so accidental mutation of split paths is detectable.
+    client.master_split_paths = ["PREVIOUS"]
+
+    class _FakeAuthService:
+        def __init__(self, transport):
+            self._transport = transport
+
+        def authenticate(self, credential):
+            # Common fields valid, but no cdnVersion -> TW/KR validation must fail.
+            return AuthenticationResult(
+                {
+                    "sessionToken": "sess",
+                    "appVersion": "1",
+                    "dataVersion": "1",
+                    "assetVersion": "1",
+                    "multiPlayVersion": "1",
+                },
+                ("split/path",),
+            )
+
+    monkeypatch.setattr(api_client, "GameAuthenticationService", _FakeAuthService)
+
+    with pytest.raises(RuntimeError, match="Invalid login response"):
+        client._authenticate()
+
+    # A malformed TW/KR auth response must not leave split paths mutated.
+    assert client.master_split_paths == ["PREVIOUS"]
+
+
+def test_tw_kr_auth_records_split_paths_only_after_cdn_version_validation(
+    monkeypatch,
+):
+    client = APIClient(region="tw")
+    client.account_info = {
+        "userId": "u",
+        "loginInfo": {"accessToken": "tok"},
+        "deviceId": "device-id",
+        "installId": "install-id",
+        "userAgent": "user-agent",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
+    }
+    client.master_split_paths = ["PREVIOUS"]
+
+    class _FakeAuthService:
+        def __init__(self, transport):
+            self._transport = transport
+
+        def authenticate(self, credential):
+            return AuthenticationResult(
+                {
+                    "sessionToken": "sess",
+                    "appVersion": "1",
+                    "dataVersion": "1",
+                    "assetVersion": "1",
+                    "multiPlayVersion": "1",
+                    "cdnVersion": "1",
+                },
+                ("split/path",),
+            )
+
+    monkeypatch.setattr(api_client, "GameAuthenticationService", _FakeAuthService)
+
+    auth_data = client._authenticate()
+
+    assert auth_data["sessionToken"] == "sess"
+    assert client.master_split_paths == ["split/path"]

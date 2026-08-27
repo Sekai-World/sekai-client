@@ -238,10 +238,14 @@ def refresh_version():
     # Validate the current-event boundary (eventJson presence, event identity
     # and timing fields) first. Validation raises before any module-level state
     # is assigned, so a malformed payload never overwrites last-known-good state.
+    # The repository has no verified mapping between ``pjsk_region`` and the
+    # optional upstream Strapi ``region``/``regionCode`` markers, so we do NOT
+    # compare the raw region against them. We still pass no ``expected_region``,
+    # which lets the validator type-check those optional fields without rejecting
+    # them incorrectly. Callers with a verified region mapping may pass
+    # ``expected_region`` to enforce an exact match.
     try:
-        current_event = validate_current_event_response(
-            payload, expected_region=pjsk_region
-        )
+        current_event = validate_current_event_response(payload)
     except ResponseValidationError as error:
         raise RuntimeError(f"Invalid current event response: {error}") from error
 

@@ -673,9 +673,12 @@ def fetch_simple_version_info() -> dict[str, Any]:
     res.raise_for_status()
     raw = _require_dict_response(res.json(), "fetch simple version info")
     # Simple version info carries the same required version fields as the
-    # full ``version_info`` boundary.
+    # full ``version_info`` boundary. cn/tw/kr simple feeds also carry a
+    # ``cdnVersion`` that downstream consumers require, so enforce it there.
     try:
-        return validate_version_info(raw)
+        return validate_version_info(
+            raw, require_cdn_version=pjsk_region in ("cn", "tw", "kr")
+        )
     except ResponseValidationError as error:
         raise RuntimeError(f"Invalid simple version info response: {error}") from error
 

@@ -462,3 +462,66 @@ def test_deadline_expires_after_interval(monkeypatch):
     assert d.expired() is True
     with pytest.raises(check_update.CycleDeadlineExceeded):
         d.check()
+
+
+def test_fetch_simple_version_info_requires_cdn_version_for_cn_tw_kr(monkeypatch):
+    monkeypatch.setattr(
+        check_update, "check_update_versions_url", "http://example/versions"
+    )
+    payload = {"appVersion": "1", "dataVersion": "1", "assetVersion": "1"}
+
+    for region in ("cn", "tw", "kr"):
+        monkeypatch.setattr(check_update, "pjsk_region", region)
+        resp = Mock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = payload
+        monkeypatch.setattr(check_update.requests, "get", lambda *a, r=resp, **k: r)
+
+        with pytest.raises(RuntimeError, match="Invalid simple version info response"):
+            check_update.fetch_simple_version_info()
+
+
+def test_fetch_simple_version_info_accepts_without_cdn_version_for_jp_en(monkeypatch):
+    monkeypatch.setattr(
+        check_update, "check_update_versions_url", "http://example/versions"
+    )
+    payload = {"appVersion": "1", "dataVersion": "1", "assetVersion": "1"}
+
+    for region in ("jp", "en"):
+        monkeypatch.setattr(check_update, "pjsk_region", region)
+        resp = Mock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = payload
+        monkeypatch.setattr(check_update.requests, "get", lambda *a, r=resp, **k: r)
+
+        assert check_update.fetch_simple_version_info() == payload
+
+
+def test_fetch_simple_version_info_accepts_cdn_version_for_cn_tw_kr(monkeypatch):
+    monkeypatch.setattr(
+        check_update, "check_update_versions_url", "http://example/versions"
+    )
+    payload = {
+        "appVersion": "1",
+        "dataVersion": "1",
+        "assetVersion": "1",
+        "cdnVersion": "1",
+    }
+
+    for region in ("cn", "tw", "kr"):
+        monkeypatch.setattr(check_update, "pjsk_region", region)
+        resp = Mock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = payload
+        monkeypatch.setattr(check_update.requests, "get", lambda *a, r=resp, **k: r)
+
+        assert check_update.fetch_simple_version_info() == payload
+
+
+def test_validate_information_rejects_missing_informations_field(monkeypatch):
+    """refresh_information indexes res["informations"], so it must be required."""
+    monkeypatch.setattr(check_update, "pjsk_region", "jp")
+
+    for response in ({}, {"userHomeBanners": []}, {"userInformations": []}):
+        with pytest.raises(check_update.ResponseValidationError):
+            check_update.validate_information(response)
