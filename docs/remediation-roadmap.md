@@ -529,7 +529,8 @@ and test-count records above are retained as execution history.
   Phase 6 reliability prerequisite is complete, and the TW and KR remote-provider
   canaries both passed their observation gates. On 2026-08-25 all production
   processes were migrated from the legacy release branch onto the current main
-  line; further region expansion continues one region at a time.
+  line; TW and KR are now migrated, and the remaining EN/JP expansion continues
+  one region at a time.
 - Follow the roadmap's
   [Recommended Execution Order](architecture-decoupling-roadmap.md#recommended-execution-order):
   the Phase 0/1 confirmations and critical Phase 6 reliability work are done.
@@ -557,5 +558,6 @@ and test-count records above are retained as execution history.
 | 2026-08-18 | 7 | event ranking SQLite outbox 经 [PR #40](https://github.com/Sekai-World/sekai-client/pull/40) 合并：先持久化后投递、幂等键、投递状态机、drain 预算、保留期清理、重启恢复；scheduler 单一 coalescing job。[PR #41](https://github.com/Sekai-World/sekai-client/pull/41) 同日降低事件追踪请求开销。接收端 `Idempotency-Key` 强制执行与上游响应校验仍未完成。 | 上游响应模型与边界校验；接收端幂等强制执行 |
 | 2026-08-22 | 5 | KR is selected as the next rollout region. Inventory and a lease-scoped token are not yet prepared, so no KR production activation has been performed. | Complete KR preparation against the pre-activation gate (inventory, lease-scoped token, region-specific configuration, rollback artifacts, and pre-activation evidence); then activate a one-region KR canary and complete the observation gate before expanding. |
 | 2026-08-25 | 5 | The KR remote-provider consumer passed its observation gate with the client and account service online and ready; no unexplained consumer restarts were observed and lease/inventory health stayed within acceptance criteria. Aggregate evidence only; operational identifiers are retained privately. | Retain KR rollback artifacts through the standard window; select and prepare the next region one at a time. |
+| 2026-08-27 | 5 | Remote-provider rollout is complete for TW and KR. | Prepare and activate EN and JP one region at a time, retaining rollback paths and observation gates. |
 | 2026-08-25 | ops | All production processes migrated from the legacy release branch onto the current main line; data repositories moved with the checkout and the GitHub App credential helper repointed. Two incidents during the window were resolved: a stale git index.lock left by a killed process blocked one daily cycle, and a JSON-RPC method-version mismatch between the event tracker and a stale shared-client instance raised -32601 until restart. Final health: all regions READY. | Observe the next scheduled daily cycle before retiring the legacy checkout and failure-artifact directories. |
 | 2026-08-26 | roadmap | Current audit reconciled: event-tracker client and receiver idempotency/outbox work is complete; Dashboard desktop/mobile browser acceptance is complete; remaining work is upstream response validation, Phase 5 public endpoint/monitoring acceptance, legacy checkout retirement, and one-region rollout. | Track [#55](https://github.com/Sekai-World/sekai-client/issues/55), [#56](https://github.com/Sekai-World/sekai-client/issues/56), [#57](https://github.com/Sekai-World/sekai-client/issues/57), and [#58](https://github.com/Sekai-World/sekai-client/issues/58). |

@@ -117,8 +117,9 @@ pre-activation gates:
 KR was the selected next region. All four pre-activation gates above were
 recorded for KR, the one-region canary was activated, and KR completed its
 observation window on 2026-08-25 without unexplained restart, authentication,
-lease, or downstream update regression. The next region, if any, follows the
-same sequence: record all four gates, activate as a one-region canary, and
+lease, or downstream update regression. EN and JP remain to be rolled out. Each
+next region follows the same sequence: record all four gates, activate as a
+one-region canary, and
 complete the observation window before further expansion is authorized.
 
 The rollback window is the later of 24 hours after the next-region activation
