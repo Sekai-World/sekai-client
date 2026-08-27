@@ -116,7 +116,13 @@ def test_registration_rejects_tw_before_transport_call():
 )
 def test_credential_validation_only_calls_auth_endpoint(credential, expected_call):
     transport = Mock()
-    transport.call_pjsk_api.return_value = {"sessionToken": "session"}
+    transport.call_pjsk_api.return_value = {
+        "sessionToken": "session",
+        "appVersion": "1.0.0",
+        "dataVersion": "1.0.0",
+        "assetVersion": "1.0.0",
+        "multiPlayVersion": "1.0.0",
+    }
 
     assert AccountCredentialValidator(transport).validate(credential) is True
     transport.call_pjsk_api.assert_called_once_with(*expected_call)
@@ -132,5 +138,8 @@ def test_credential_validation_rejects_malformed_response_without_secret_leak():
     with pytest.raises(ValueError) as caught:
         AccountCredentialValidator(transport).validate(credential)
 
-    assert str(caught.value) == "Invalid credential validation response"
+    assert "Invalid credential validation response" in str(caught.value)
+    # The wrapped boundary validator should name the offending endpoint and field.
+    assert "auth/login" in str(caught.value)
+    assert "sessionToken" in str(caught.value)
     assert "do-not-leak" not in str(caught.value)

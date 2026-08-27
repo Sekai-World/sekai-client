@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from response_models import (
+    ResponseValidationError,
+    validate_information,
+    validate_system_data,
+)
+
 
 class GameAPICaller(Protocol):
     def call_pjsk_api(
@@ -66,13 +72,19 @@ class PublicGameAPIService:
     def __init__(self, caller: GameAPICaller) -> None:
         self._caller = caller
 
-    def fetch_information(self) -> object:
-        return self._caller.call_pjsk_api("/information")
+    def fetch_information(self) -> dict[str, Any]:
+        response = self._caller.call_pjsk_api("/information")
+        try:
+            return validate_information(response)
+        except ResponseValidationError as error:
+            raise RuntimeError(f"Invalid information response: {error}") from error
 
     def fetch_system_data(self) -> dict[str, Any]:
-        return GameAPIService._require_dict(
-            self._caller.call_pjsk_api("/system"), "/system"
-        )
+        response = self._caller.call_pjsk_api("/system")
+        try:
+            return validate_system_data(response)
+        except ResponseValidationError as error:
+            raise RuntimeError(f"Invalid system data response: {error}") from error
 
     def fetch_event_rank_border(self, event_id: int) -> dict[str, Any]:
         endpoint = f"/event/{event_id}/ranking-border"

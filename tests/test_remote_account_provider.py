@@ -151,7 +151,13 @@ def test_four_region_lease_contract_and_client_owned_game_auth(region):
     }
 
     game_transport = Mock()
-    game_transport.call_pjsk_api.return_value = {"sessionToken": "game-session"}
+    game_transport.call_pjsk_api.return_value = {
+        "sessionToken": "game-session",
+        "appVersion": "1.0.0",
+        "dataVersion": "1.0.0",
+        "assetVersion": "1.0.0",
+        "multiPlayVersion": "1.0.0",
+    }
     GameAuthenticationService(game_transport).authenticate(lease.credential)
     if isinstance(lease.credential, JpEnCredential):
         game_transport.call_pjsk_api.assert_called_once_with(

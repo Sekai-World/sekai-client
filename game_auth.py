@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from accounts.models import AccountCredential, JpEnCredential
+from response_models import (
+    ResponseValidationError,
+    validate_auth_response,
+)
 
 
 class AuthenticationTransport(Protocol):
@@ -45,10 +49,16 @@ class GameAuthenticationService:
                     "authTriggerType": "normal",
                 },
             )
-        if not isinstance(response, dict) or not response.get("sessionToken"):
-            raise ValueError("Invalid credential validation response")
+        # Validate the login response boundary before any session state is
+        # derived from it. A malformed response raises a clear diagnostic error
+        # instead of letting ``_apply_auth_headers_and_version_info`` fail later
+        # with an opaque ``KeyError``/``TypeError``.
+        try:
+            validated = validate_auth_response(response)
+        except ResponseValidationError as error:
+            raise ValueError(
+                f"Invalid credential validation response: {error}"
+            ) from error
 
-        raw_paths = response.get("suiteMasterSplitPath", ())
-        if not isinstance(raw_paths, (list, tuple)):
-            raise ValueError("Invalid credential validation response")
-        return AuthenticationResult(response, tuple(str(path) for path in raw_paths))
+        raw_paths = validated.get("suiteMasterSplitPath", ())
+        return AuthenticationResult(validated, tuple(str(path) for path in raw_paths))

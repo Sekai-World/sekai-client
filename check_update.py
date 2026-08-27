@@ -23,6 +23,12 @@ from git.util import Actor
 from pytz import timezone
 
 from logging_config import configure_logging
+from response_models import (
+    ResponseValidationError,
+    validate_information,
+    validate_master_data,
+    validate_version_info,
+)
 from utils.array_to_dict import (
     convert_array_to_dict,
     get_structures_for_app_ver,
@@ -622,6 +628,16 @@ def get_splitted_master_data() -> dict[str, Any]:
         )
         master_data |= _require_dict_response(split_data_raw, "fetch master split")
 
+    # Validate the merged master-data object/list shape before generation. A
+    # corrupt split (scalar where a list/object is expected, or an i18n record
+    # missing its ``id``) fails here with a precise diagnostic rather than
+    # during i18n file writing, which would otherwise leave a half-published
+    # staging tree.
+    try:
+        validate_master_data(master_data, source="master-data")
+    except ResponseValidationError as error:
+        raise RuntimeError(f"Invalid master data response: {error}") from error
+
     return master_data
 
 
@@ -631,14 +647,20 @@ def download_nuverse_master_data(cdn_version: int) -> dict[str, Any]:
     if check_update_simple_mode:
         res = requests.get(f"{base_url}/master-data-{cdn_version}.info", timeout=150)
         res.raise_for_status()
-        return decrypt_msgpack(res.content)
+        raw = decrypt_msgpack(res.content)
+    else:
+        raw = _require_dict_response(
+            jsonrpc_client.request(
+                "request_and_decrypt", [f"{base_url}/master-data-{cdn_version}.info"]
+            ),
+            "download Nuverse master data",
+        )
 
-    return _require_dict_response(
-        jsonrpc_client.request(
-            "request_and_decrypt", [f"{base_url}/master-data-{cdn_version}.info"]
-        ),
-        "download Nuverse master data",
-    )
+    # Validate the master-data object/list shape before generation.
+    try:
+        return validate_master_data(raw, source="master-data")
+    except ResponseValidationError as error:
+        raise RuntimeError(f"Invalid master data response: {error}") from error
 
 
 def fetch_simple_version_info() -> dict[str, Any]:
@@ -649,7 +671,16 @@ def fetch_simple_version_info() -> dict[str, Any]:
 
     res = requests.get(check_update_versions_url, timeout=150)
     res.raise_for_status()
-    return _require_dict_response(res.json(), "fetch simple version info")
+    raw = _require_dict_response(res.json(), "fetch simple version info")
+    # Simple version info carries the same required version fields as the
+    # full ``version_info`` boundary. cn/tw/kr simple feeds also carry a
+    # ``cdnVersion`` that downstream consumers require, so enforce it there.
+    try:
+        return validate_version_info(
+            raw, require_cdn_version=pjsk_region in ("cn", "tw", "kr")
+        )
+    except ResponseValidationError as error:
+        raise RuntimeError(f"Invalid simple version info response: {error}") from error
 
 
 def check_versions_simple() -> dict[str, Any]:
@@ -696,9 +727,25 @@ def _refresh_version_info_from_source() -> dict[str, Any]:
                 "running full login workflow"
             )
             jsonrpc_client.request("refresh_master_split_paths")
-    return _require_dict_response(
-        jsonrpc_client.request("version_info"), "fetch version info"
+    return _validate_fetched_version_info(
+        jsonrpc_client.request("version_info"),
+        require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
     )
+
+
+def _validate_fetched_version_info(
+    raw: object, *, require_cdn_version: bool = False
+) -> dict[str, Any]:
+    """Validate the upstream ``version_info`` boundary before use.
+
+    Raises a clear diagnostic error on malformed/partial version info so a bad
+    candidate never advances the published ``version_info`` global. ``cdnVersion``
+    is required (and type-checked) for cn/tw/kr version data.
+    """
+    try:
+        return validate_version_info(raw, require_cdn_version=require_cdn_version)
+    except ResponseValidationError as error:
+        raise RuntimeError(f"Invalid version info response: {error}") from error
 
 
 def _fetch_master_data_by_region(candidate: dict[str, Any] | None) -> dict[str, Any]:
@@ -812,6 +859,14 @@ def refresh_version(candidate: dict[str, Any] | None = None) -> dict[str, Any]:
 
     if candidate is None:
         candidate = _refresh_version_info_from_source()
+    else:
+        # Validate the explicit candidate boundary before writing ``versions.json``
+        # or using it for generation; a malformed candidate must fail closed rather
+        # than publish a corrupt ``versions.json`` or drive generation from bad data.
+        candidate = _validate_fetched_version_info(
+            candidate,
+            require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
+        )
     logger.debug("[refresh_version] using candidate version info: %s", candidate)
     _write_master_file("versions.json", candidate)
 
@@ -888,6 +943,13 @@ def save_info_from_suite_user():
 def refresh_information():
     logger.debug("[refresh_information] get informations")
     res = jsonrpc_client.request("fetch_information")
+    # Validate the /information object/list shape before writing so a scalar
+    # where a list is expected fails with a clear diagnostic instead of a bare
+    # ``KeyError``/``TypeError`` during file write.
+    try:
+        res = validate_information(res)
+    except ResponseValidationError as error:
+        raise RuntimeError(f"Invalid information response: {error}") from error
 
     logger.debug("[refresh_information] write user informations")
     _write_master_file("userInformations.json", res["informations"])

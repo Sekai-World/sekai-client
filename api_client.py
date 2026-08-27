@@ -36,6 +36,7 @@ from config import Config
 from game_auth import GameAuthenticationService
 from game_protocol import GameProtocolTransport
 from game_services import GameAPIService, PublicGameAPIService
+from response_models import ResponseValidationError, validate_auth_response
 from utils.constants import (
     app_id_regions,
     initial_api_headers,
@@ -412,18 +413,34 @@ class APIClient:
             credential = self._validate_tw_kr_account_info()
         elif self.region == "cn":
             access_token = self.account_info["loginInfo"]["accessToken"]
-            return self._require_dict_response(
-                self.call_pjsk_api(
-                    "/user/auth", "post", {"userID": 0, "accessToken": access_token}
-                ),
-                "/user/auth",
+            raw = self.call_pjsk_api(
+                "/user/auth", "post", {"userID": 0, "accessToken": access_token}
             )
+            # CN login response must carry a cdnVersion consumed by
+            # ``_apply_auth_headers_and_version_info``.
+            try:
+                return validate_auth_response(raw, require_cdn_version=True)
+            except ResponseValidationError as error:
+                raise RuntimeError(f"Invalid login response: {error}") from error
         else:
             raise ValueError(f"Unsupported region: {self.region}")
 
         result = GameAuthenticationService(self).authenticate(credential)
+        auth_data = result.data
+        # TW/KR (non-suite) login responses must also carry a cdnVersion of the
+        # correct type; the region-agnostic auth service only validates the common
+        # fields, so re-run validation requiring cdnVersion (rejecting bool/float
+        # and a missing value) for consistency with the CN path.
+        if self.region in ("tw", "kr"):
+            try:
+                validate_auth_response(auth_data, require_cdn_version=True)
+            except ResponseValidationError as error:
+                raise RuntimeError(f"Invalid login response: {error}") from error
+        # Record split paths only after the region-specific validation above has
+        # succeeded, so a malformed TW/KR auth response cannot leave stale/partial
+        # split paths on the client.
         self.master_split_paths = list(result.master_split_paths)
-        return result.data
+        return auth_data
 
     def _validate_tw_kr_account_info(self) -> TwKrCredential:
         required_keys = (
