@@ -298,12 +298,12 @@ account-source migration and event-delivery reliability are not changed at the
 same time.
 
 The Phase 0 production audit, public-release gate, critical remediation Phase 6
-reliability work, and remote-provider lifecycle handling are complete. KR
+reliability work, and remote-provider lifecycle handling are complete. TW and KR
 satisfied the complete
 [pre-activation gate](account-service-tw-canary.md#rollout-gate-for-the-next-region)
-and passed its observation window on 2026-08-25. The immediate next action is
-to select and prepare the next region through the same operator workflow while
-retaining rollback paths; expansion remains one region at a time.
+and passed their observation windows. The immediate next action is to select and
+prepare EN and JP through the same operator workflow while retaining rollback
+paths; expansion remains one region at a time.
 
 TW canary evidence (2026-08-16/17): the first remote-provider consumer passed
 the 24-hour gate with the client and account service online, ready, and free of
@@ -324,6 +324,9 @@ canary acceptance criteria; aggregate evidence only is recorded here and exact
 operational identifiers remain in the private operator record. After the gate,
 all production processes were migrated onto the current main line so consumers,
 event delivery, and publication share one code baseline.
+
+The current rollout state is two of four regions complete (TW and KR). EN and JP
+remain to be prepared, activated, and observed individually.
 
 ## Suggested Pull Requests
 
