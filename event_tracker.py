@@ -15,6 +15,12 @@ from pytz import timezone
 from requests.adapters import HTTPAdapter
 
 from logging_config import configure_logging
+from response_models import (
+    ResponseValidationError,
+    validate_current_event_response,
+    validate_event_ranking_snapshot,
+    validate_version_info,
+)
 from utils.constants import pjsk_region, sekai_api_key, strapi_base_url
 from utils.event_outbox import EventRankingOutbox
 from utils.jsonrpc_client import JSONRPCClient
@@ -226,22 +232,39 @@ scheduler.add_listener(_scheduler_listener, EVENT_JOB_MAX_INSTANCES)
 def refresh_version():
     logger.info("Refresh version info")
 
-    global event_data
     response = _external_session.get(curr_event_url, timeout=60)
     response.raise_for_status()
     payload = response.json()
-    if not isinstance(payload, dict) or "eventJson" not in payload:
-        raise RuntimeError("Current event response has an invalid shape")
-    current_event = payload["eventJson"]
-    if current_event is not None and not isinstance(current_event, dict):
-        raise RuntimeError("Current event payload must be an object or null")
+    # Validate the current-event boundary (eventJson presence, event identity
+    # and timing fields) first. Validation raises before any module-level state
+    # is assigned, so a malformed payload never overwrites last-known-good state.
+    try:
+        current_event = validate_current_event_response(
+            payload, expected_region=pjsk_region
+        )
+    except ResponseValidationError as error:
+        raise RuntimeError(f"Invalid current event response: {error}") from error
+
+    # Fetch and validate the version_info boundary before assigning it. Both the
+    # current-event payload and the version_info are fully validated before any
+    # of ``event_data``/``_world_blooms_cache``/``version_info`` is overwritten,
+    # so if either fails the last-known-good values are preserved.
+    raw_version_info = jsonrpc_client.request("version_info")
+    try:
+        validated_version_info = validate_version_info(
+            raw_version_info, require_cdn_version=pjsk_region in ("cn", "tw", "kr")
+        )
+    except ResponseValidationError as error:
+        raise RuntimeError(f"Invalid version info response: {error}") from error
+
+    global event_data
     event_data = current_event
 
     global _world_blooms_cache
     _world_blooms_cache = None
 
     global version_info
-    version_info = jsonrpc_client.request("version_info")
+    version_info = validated_version_info
     return version_info
 
 
@@ -426,18 +449,21 @@ def track_event_scores(curr_time):
 
     collection_started = time.monotonic()
     snapshot = jsonrpc_client.request("fetch_event_rank_snapshot", [event_id])
-    if not isinstance(snapshot, dict):
-        raise RuntimeError("Event ranking snapshot response must be an object")
-    first100_data = snapshot.get("first100")
-    if not isinstance(first100_data, dict):
-        raise RuntimeError("Event ranking snapshot is incomplete")
+    # Validate the combined ranking snapshot (first100/border shapes, ranking
+    # identity and value ranges). ``border`` is optional: when present it must
+    # match the expected shape. Validation raises before any ranking data is
+    # enqueued, so a malformed snapshot never overwrites the last-known-good
+    # delivery state.
+    try:
+        validate_event_ranking_snapshot(snapshot)
+    except ResponseValidationError as error:
+        raise RuntimeError(f"Invalid event ranking snapshot: {error}") from error
+    first100_data = snapshot["first100"]
     _record_stage("game_snapshot", collection_started)
     if first100_data["isEventAggregate"]:
         logger.debug("[track_event_scores] event is aggregating, skipping...")
         return
-    border_data = snapshot.get("border")
-    if not isinstance(border_data, dict):
-        raise RuntimeError("Event ranking snapshot is incomplete")
+    border_data = snapshot["border"]
     ranking_data["first100"] = first100_data["rankings"]
     ranking_data["border"] = [
         x for x in border_data["borderRankings"] if x["rank"] > 100

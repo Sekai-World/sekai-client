@@ -432,9 +432,9 @@ UNINITIALIZED
 - [x] Scheduler 使用 `max_instances=1` 和 `coalesce=True`。
 - [x] 移除通过删除、重新添加 job 处理慢任务的逻辑。
 - [x] 记录任务执行时间和 outbox 状态/积压；精确调度延迟指标保留在性能 roadmap 阶段 0。
-- [ ] 从登录响应开始引入明确的响应模型和边界校验（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。
-- [ ] 依次覆盖版本、活动、ranking 和 master 数据响应（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。
-- [ ] schema 错误不得破坏当前有效客户端状态（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。
+- [x] 从登录响应开始引入明确的响应模型和边界校验（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。
+- [x] 依次覆盖版本、活动、ranking 和 master 数据响应（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。
+- [x] schema 错误不得破坏当前有效客户端状态（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。
 
 ### 验收条件
 
@@ -451,12 +451,42 @@ UNINITIALIZED
 - `tests/test_event_tracker.py`：覆盖单一 coalescing scheduler job、先持久化、携带幂等键投递和独立投递状态日志。
 - 客户端 outbox 已完成；已部署的接收 API 会持久化并强制执行
   `Idempotency-Key`，覆盖 crash-after-remote-commit 边界的端到端去重。
-- 待填写：响应 schema 异常测试（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）
+- 响应模型与边界校验已实现（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）：新增
+  `response_models.py`，对登录（`auth/login`）、`version_info`、``/system``
+  版本/系统、`current-event`（eventJson 与活动身份/时间字段）、排名快照
+  （`first100`/`border` 形状与排名身份/区间）、``/information`` 与 master 数据
+  （对象/列表形状、i18n 表 `id` 类型）做显式校验；校验在覆盖模块级状态前
+  抛出清晰、可诊断的 `ResponseValidationError`（含来源、字段、期望/实际类型），
+  因此解析失败不会覆盖当前有效客户端状态。current-event 时间字段额外强制
+  `startAt <= aggregateAt <= rankingAnnounceAt <= closedAt` 且非负；current-event `id`
+  必须为正整数（拒绝 `bool`/零/负数）；`system_data` 中嵌套于 `appVersions` 的 `cdnVersion`
+  同样按 `str`/`int`（拒绝 `bool`/`float`）一致校验；current-event 可选的 `region`/`regionCode`
+  字段仅当调用方显式传入期望区域时才做大小写不敏感比对，且从不要求该字段存在；`cdnVersion`
+  在 cn/tw/kr 的登录与 version 数据中按 `str`/`int`（拒绝 `bool`/`float` 且
+  缺失即报错）一致校验；`refresh_version` 显式 candidate 与 `event_tracker.refresh_version`
+  均在赋值前完成两项校验以保留 last-known-good。回归测试见 `tests/test_response_models.py`。
+
+### 验收证据（响应模型与边界校验，#56）
+
+- `tests/test_response_models.py`：覆盖每个校验面的畸形、部分与类型不兼容响应
+  （auth 缺 `sessionToken`/空串/缺 `appVersion`/`multiPlayVersion` 类型错误/缺
+  `cdnVersion`；`version_info` 缺字段；`/system` 缺 `maintenanceStatus`/`appVersions`/
+  子项类型错误；current-event 缺 `eventJson`/非对象/缺 `id`/`eventType` 或时间字段
+  类型错误；排名快照缺 `first100`/`isEventAggregate` 非 bool/`rankings` 非列表/排名
+  `rank` 越界/`score` 负值/border 形状错误；`/information` 列表字段类型错误；master
+  数据非列表/记录非对象/i18n 记录缺 `id`）；并覆盖 event_tracker 在收到畸形
+  current-event 与排名快照时保留 last-known-good 状态且不入队。
+- 既有单测同步更新为有效响应形状（`test_game_auth`、`test_game_services`、
+  `test_remote_account_provider`、`test_check_update`、`test_account_registration`），
+  公共返回 dict 兼容性与端点构造不变。
+- 验证：`ruff format --check` 与 `ruff check` 对改动文件均通过；受影响的
+  `test_game_auth`/`test_game_services`/`test_check_update`/`test_event_tracker`/
+  `test_api_client`/`test_account_registration` 等聚焦测试及全仓 `pytest` 通过。
 
 ### 执行记录
 
 - 2026-08-18：event ranking SQLite outbox 通过 [PR #40](https://github.com/Sekai-World/sekai-client/pull/40) 合并。实现先持久化后投递、`(region, event_id, timestamp, data_type)` 幂等键、`pending`/`sending`/`sent`/`failed` 状态、有界 drain 预算与单请求超时、terminal 记录保留期清理、重启恢复与过期 claim 恢复；scheduler 改为单一 coalescing job，不再删除重建慢任务。同日 [PR #41](https://github.com/Sekai-World/sekai-client/pull/41) 进一步降低事件追踪请求开销。验证：`tests/test_event_outbox.py` 与 `tests/test_event_tracker.py` 覆盖上述行为。
-- 未完成：上游 API 响应模型与边界校验（登录→版本→活动→ranking→master 数据），跟踪于 [#56](https://github.com/Sekai-World/sekai-client/issues/56)。
+- 2026-08-27：上游 API 响应模型与边界校验通过 `response_models.py` 实现（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。覆盖登录→版本→活动→ranking→master 数据响应：auth/login、`version_info`、``/system``、`current-event`（eventJson 与活动身份/时间字段）、排名快照（`first100`/`border` 形状与排名身份/区间）、``/information`` 与 master 数据（对象/列表形状、i18n 表 `id` 类型）均做显式校验；校验在覆盖模块级状态前抛出清晰、可诊断的 `ResponseValidationError`，故解析失败不会破坏当前有效客户端状态。回归测试见 `tests/test_response_models.py`，既有单测同步更新为有效响应形状。验证：`ruff format --check` 与 `ruff check` 对改动文件通过，聚焦测试与全仓 `pytest` 通过。
 
 ## PR 拆分
 
@@ -470,7 +500,7 @@ UNINITIALIZED
 | 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[-]` | 未提交阶段 5 工作；无 PR |
 | 7 | `refactor: enforce request deadlines and retry policy` | Deadline、重试、取消、队列 | `[x]` | PRs [#21](https://github.com/Sekai-World/sekai-client/pull/21)、[#22](https://github.com/Sekai-World/sekai-client/pull/22)、[#23](https://github.com/Sekai-World/sekai-client/pull/23)、[#24](https://github.com/Sekai-World/sekai-client/pull/24) merged |
 | 8 | `feat: persist event tracker delivery outbox` | SQLite outbox 与 scheduler | `[x]` | [#40](https://github.com/Sekai-World/sekai-client/pull/40) merged |
-| 9 | `refactor: validate upstream api responses` | 关键 API 响应模型 | `[ ]` | [#56](https://github.com/Sekai-World/sekai-client/issues/56) |
+| 9 | `refactor: validate upstream api responses` | 关键 API 响应模型 | `[-]` 代码已实现于分支，待提交 PR | [#56](https://github.com/Sekai-World/sekai-client/issues/56) |
 
 ## 发布与回滚原则
 

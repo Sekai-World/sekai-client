@@ -18,10 +18,28 @@ def test_user_service_owns_user_endpoint_construction():
 
 def test_public_service_owns_non_user_endpoints():
     caller = Mock()
-    caller.call_pjsk_api.return_value = {"maintenanceStatus": "none"}
+    caller.call_pjsk_api.return_value = {
+        "maintenanceStatus": "none",
+        "appVersions": [
+            {
+                "appVersion": "1.0.0",
+                "dataVersion": "1.0.0",
+                "assetVersion": "1.0.0",
+                "appVersionStatus": "available",
+            }
+        ],
+    }
 
     assert PublicGameAPIService(caller).fetch_system_data() == {
-        "maintenanceStatus": "none"
+        "maintenanceStatus": "none",
+        "appVersions": [
+            {
+                "appVersion": "1.0.0",
+                "dataVersion": "1.0.0",
+                "assetVersion": "1.0.0",
+                "appVersionStatus": "available",
+            }
+        ],
     }
     caller.call_pjsk_api.assert_called_once_with("/system")
 

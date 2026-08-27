@@ -8,12 +8,23 @@ from accounts import AccountRegion, JpEnCredential, TwKrCredential
 from game_auth import GameAuthenticationService
 
 
+def _valid_auth_response(**overrides):
+    response = {
+        "sessionToken": "session",
+        "appVersion": "1.0.0",
+        "dataVersion": "1.0.0",
+        "assetVersion": "1.0.0",
+        "multiPlayVersion": "1.0.0",
+    }
+    response.update(overrides)
+    return response
+
+
 def test_jp_authentication_returns_session_metadata():
     transport = Mock()
-    transport.call_pjsk_api.return_value = {
-        "sessionToken": "session",
-        "suiteMasterSplitPath": ["master/a"],
-    }
+    transport.call_pjsk_api.return_value = _valid_auth_response(
+        suiteMasterSplitPath=["master/a"],
+    )
     credential = JpEnCredential(AccountRegion.JP, "user", "credential", "signature")
 
     result = GameAuthenticationService(transport).authenticate(credential)
@@ -28,7 +39,7 @@ def test_jp_authentication_returns_session_metadata():
 
 def test_kr_authentication_uses_access_token():
     transport = Mock()
-    transport.call_pjsk_api.return_value = {"sessionToken": "session"}
+    transport.call_pjsk_api.return_value = _valid_auth_response()
     credential = TwKrCredential(
         AccountRegion.KR,
         "open-id",
@@ -87,7 +98,16 @@ def test_tw_kr_auth_sets_device_id_header_on_transport():
         "deviceModel": "lease-device-model",
         "osVersion": "lease-os-version",
     }
-    client.call_pjsk_api = Mock(return_value={"sessionToken": "game-session"})
+    client.call_pjsk_api = Mock(
+        return_value={
+            "sessionToken": "game-session",
+            "appVersion": "1.0.0",
+            "dataVersion": "1.0.0",
+            "assetVersion": "1.0.0",
+            "multiPlayVersion": "1.0.0",
+            "cdnVersion": "20240101",
+        }
+    )
 
     client._authenticate()
 
