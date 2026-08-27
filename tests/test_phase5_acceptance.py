@@ -153,6 +153,45 @@ def test_loopback_bind_accepts_only_127_0_0_1():
     assert not _bind_ok("[::1]:39390")
 
 
+def test_validate_processes_duplicate_name_fails():
+    # Two entries sharing one expected process name must fail the expected-process
+    # checks rather than silently overwriting each other.
+    dup_entries = [
+        _proc("sharedApiClient-jp", bind="127.0.0.1:39390"),
+        _proc("sharedApiClient-jp", bind="127.0.0.1:39390"),
+        _proc("sharedApiClient-en", bind="127.0.0.1:39392"),
+        _proc("sharedApiClient-tw", bind="127.0.0.1:39391"),
+        _proc("sharedApiClient-kr", bind="127.0.0.1:39393"),
+    ]
+    proc = phase5.validate_processes(phase5.parse_pm2_jlist(json.dumps(dup_entries)))
+    assert proc["pm2"]["status"] == "fail"
+    assert proc["gunicorn"]["status"] == "fail"
+    assert proc["duplicate_count"] >= 1
+    # Only four unique expected names are visible, so the duplicate is hidden
+    # unless explicitly detected.
+    assert proc["missing_count"] == 0
+
+
+def test_run_acceptance_reports_duplicate_count():
+    dup_entries = [
+        _proc("sharedApiClient-jp"),
+        _proc("sharedApiClient-jp"),
+        _proc("sharedApiClient-en", bind="127.0.0.1:39392"),
+        _proc("sharedApiClient-tw", bind="127.0.0.1:39391"),
+        _proc("sharedApiClient-kr", bind="127.0.0.1:39393"),
+    ]
+    with mock.patch.object(
+        phase5.subprocess,
+        "run",
+        return_value=mock.Mock(stdout=json.dumps(dup_entries), stderr=""),
+    ):
+        _, report = phase5.run_acceptance(
+            health_base_url="https://api.example.com",
+            get=lambda url, timeout: (200, "{}"),
+        )
+    assert report["sections"]["duplicate_count"] == 1
+
+
 def test_validate_process_config_missing():
     entries = phase5.parse_pm2_jlist(
         json.dumps([_proc("sharedApiClient-jp", config="other_conf.py")])
@@ -208,6 +247,54 @@ def test_validate_health_rejects_non_http_scheme():
     assert health["status"] == "fail"
     assert health["live"] == "fail"
     assert health["ready"] == "fail"
+
+
+def test_validate_health_requires_https_and_rejects_local_addresses():
+    # Network must never be reached for any rejected URL.
+    def fake_get(url, timeout):
+        raise AssertionError(f"network request must not occur for {url}")
+
+    loopback_and_private = [
+        "http://host.example",  # not HTTPS
+        "https://127.0.0.1",  # loopback literal
+        "https://127.0.0.1:8080",  # loopback literal with port
+        "https://[::1]",  # IPv6 loopback literal
+        "https://10.0.0.1",  # RFC1918 private
+        "https://192.168.1.1",  # RFC1918 private
+        "https://172.16.5.5",  # RFC1918 private
+        "https://169.254.1.1",  # link-local
+        "https://0.0.0.0",  # unspecified
+        "https://localhost",  # obvious localhost name
+        "https://host.localhost",  # localhost suffix
+        "https://host.local",  # mDNS local name
+    ]
+    for case in loopback_and_private:
+        health = phase5.validate_health(case, get=fake_get)
+        assert health["status"] == "fail", case
+        assert health["live"] == "fail", case
+        assert health["ready"] == "fail", case
+
+
+def test_validate_health_local_success_still_fails():
+    # Even a successful local response must fail: the URL is rejected before any
+    # request, so `get` is never invoked.
+    def fake_get(url, timeout):
+        raise AssertionError("get must not be called for a rejected URL")
+
+    health = phase5.validate_health("https://127.0.0.1/health", get=fake_get)
+    assert health["status"] == "fail"
+    assert health["live"] == "fail"
+    assert health["ready"] == "fail"
+
+
+def test_validate_health_public_hostname_passes():
+    def fake_get(url, timeout):
+        return 200, '{"status":"success"}'
+
+    health = phase5.validate_health("https://api.example.com", get=fake_get)
+    assert health["status"] == "pass"
+    assert health["live"] == "pass"
+    assert health["ready"] == "pass"
 
 
 def test_validate_health_rejects_sensitive_or_malformed_urls():
@@ -268,11 +355,17 @@ def test_redacted_output_never_leaks_url_or_paths():
     def fake_get(url, timeout):
         return 200, body_with_secret
 
-    exit_code, report = phase5.run_acceptance(
-        health_base_url=secret_url,
-        get=fake_get,
-        # pm2 will fail because subprocess is patched below
-    )
+    # Ensure no real PM2 process is ever invoked; return an empty jlist so the
+    # pm2/gunicorn sections are exercised deterministically without side effects.
+    with mock.patch.object(
+        phase5.subprocess,
+        "run",
+        return_value=mock.Mock(stdout="[]", stderr=""),
+    ):
+        exit_code, report = phase5.run_acceptance(
+            health_base_url=secret_url,
+            get=fake_get,
+        )
     for fmt in ("text", "json"):
         rendered = phase5.format_report(report, fmt)
         assert secret_url not in rendered

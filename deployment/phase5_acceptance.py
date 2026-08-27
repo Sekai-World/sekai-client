@@ -23,6 +23,7 @@ Run ``--help`` for options.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -150,7 +151,25 @@ def validate_shared_client_process(name: str, entry: dict) -> dict[str, str]:
 
 
 def validate_processes(entries: list[dict]) -> dict:
-    """Aggregate PM2 and Gunicorn validation across formal shared clients."""
+    """Aggregate PM2 and Gunicorn validation across formal shared clients.
+
+    Duplicate expected process names are detected and cause validation to fail:
+    ``select_shared_client_processes`` keys on the process name, so duplicates
+    would otherwise overwrite each other and silently pass the expected-process
+    checks.
+    """
+    expected_present = [
+        _process_name(entry)
+        for entry in entries
+        if _process_name(entry) in EXPECTED_PROCESS_NAMES
+    ]
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for name in expected_present:
+        if name in seen:
+            duplicates.add(name)
+        seen.add(name)
+
     selected = select_shared_client_processes(entries)
     per_region = {
         name: validate_shared_client_process(name, entry)
@@ -162,13 +181,19 @@ def validate_processes(entries: list[dict]) -> dict:
     bind_ok = sum(1 for r in per_region.values() if r["bind"] == "pass")
     config_ok = sum(1 for r in per_region.values() if r["config"] == "pass")
 
+    has_duplicates = bool(duplicates)
     all_present = checked == len(EXPECTED_PROCESS_NAMES)
-    pm2_status = "pass" if (all_present and online_ok == checked) else "fail"
+    pm2_status = (
+        "pass"
+        if (all_present and online_ok == checked and not has_duplicates)
+        else "fail"
+    )
     gunicorn_ok = (
         all_present
         and workers_ok == checked
         and bind_ok == checked
         and config_ok == checked
+        and not has_duplicates
     )
     gunicorn_status = "pass" if gunicorn_ok else "fail"
     return {
@@ -186,6 +211,7 @@ def validate_processes(entries: list[dict]) -> dict:
             "config_ok": config_ok,
         },
         "missing_count": len(EXPECTED_PROCESS_NAMES) - checked,
+        "duplicate_count": len(duplicates),
     }
 
 
@@ -203,6 +229,35 @@ def http_get(url: str, timeout: float) -> tuple[int, str]:
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.getcode(), resp.read().decode("utf-8", "replace")
+
+
+def _health_url_acceptable(base_url: str) -> bool:
+    """Return True only if ``base_url`` is a safe, public HTTPS health base.
+
+    Rejects non-HTTPS schemes, missing netloc, embedded credentials, query or
+    fragment, obvious localhost names, and literal loopback/private/link-local/
+    reserved addresses. Uses only the standard library; no DNS or network
+    resolution is performed, so a non-literal public hostname is accepted.
+    """
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme != "https":
+        return False
+    if not parsed.netloc:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.query or parsed.fragment:
+        return False
+    host = parsed.hostname
+    if host is None:
+        return False
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return ip.is_global
 
 
 def validate_health(
@@ -223,14 +278,7 @@ def validate_health(
             "ready": "not_run",
         }
 
-    parsed = urllib.parse.urlparse(base_url)
-    if parsed.scheme not in ("http", "https"):
-        return {"status": "fail", "live": "fail", "ready": "fail"}
-    if not parsed.netloc:
-        return {"status": "fail", "live": "fail", "ready": "fail"}
-    if parsed.username is not None or parsed.password is not None:
-        return {"status": "fail", "live": "fail", "ready": "fail"}
-    if parsed.query or parsed.fragment:
+    if not _health_url_acceptable(base_url):
         return {"status": "fail", "live": "fail", "ready": "fail"}
 
     base = base_url.rstrip("/")
@@ -289,6 +337,7 @@ def _fail_process_sections() -> dict:
             "config_ok": 0,
         },
         "missing_count": len(EXPECTED_PROCESS_NAMES),
+        "duplicate_count": 0,
     }
 
 
@@ -321,6 +370,7 @@ def run_acceptance(
     report["sections"]["pm2"] = proc["pm2"]
     report["sections"]["gunicorn"] = proc["gunicorn"]
     report["sections"]["missing_count"] = proc["missing_count"]
+    report["sections"]["duplicate_count"] = proc["duplicate_count"]
 
     health = validate_health(health_base_url, health_timeout, get=get)
     report["sections"]["health"] = {

@@ -147,6 +147,8 @@ After running the tool in production:
 - In the public roadmap, record only that the run was performed and its aggregate
   outcome; never paste URLs, bodies, credentials, process IDs, paths, exact
   timestamps, or detailed counters.
-- Mark Phase 5 production acceptance complete only when both the controlled
+- Mark Phase 5 production acceptance complete only when the controlled
   PM2/Gunicorn checks and the public health verification pass in the real
-  environment, and the one-region canary/rollback gates are satisfied.
+  environment, the deployment monitoring acceptance gates are met (the
+  acceptance signal is wired into monitoring and alerts on any section failure),
+  and the one-region canary/rollback gates are satisfied.
