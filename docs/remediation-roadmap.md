@@ -313,6 +313,8 @@ UNINITIALIZED
 
 以下边界仍未完成：不把兼容性的纯 `bootstrap()` 入口误记为生产 bootstrap 验收；尚未完成受控 PM2/Gunicorn 验证、单区域 canary/rollout、真实公共部署与监控检查。阶段 5 之外的 bootstrap 任务，以及阶段 6/7 项目，也不因本次代码切片而变更状态。
 
+受控 PM2/Gunicorn 验证现已具备可重复的验收路径：新增 `deployment/phase5_acceptance.py`（只读、聚合且脱敏，仅调用 `pm2 jlist` 与只读 `/health/live`、`/health/ready`，绝不变更进程或调用可变端点）及配套运行手册 `docs/phase5-production-acceptance.md`。本阶段仍标记为进行中；生产验收证据只能由运维在实际环境运行该工具后记录（仅保留聚合状态与小计，不得公开 URL、响应体、凭据、进程 ID、路径、精确时间戳或详细计数），路线图与运行手册本身不包含任何生产验收证据。
+
 ### 验收条件
 
 - [x] 一个区域失败不会阻塞其他区域。
@@ -321,7 +323,7 @@ UNINITIALIZED
 - [x] 同一区域不会同时运行两次初始化。
 - [x] readiness 能准确返回每个区域不可用原因。
 
-生产验收条件仍未完成：受控 PM2/Gunicorn 验证、单区域 canary/rollout、实际公共入口/部署监控检查。
+生产验收条件仍未完成：受控 PM2/Gunicorn 验证、单区域 canary/rollout、实际公共入口/部署监控检查。可重复验收工具已就位，但完成判定仍以运维在实际环境运行 `deployment/phase5_acceptance.py` 并记录聚合证据为准，本路线图不预先宣称完成。
 
 ### 验收证据
 
@@ -591,3 +593,4 @@ and test-count records above are retained as execution history.
 | 2026-08-27 | 5 | Remote-provider rollout is complete for TW and KR. | Prepare and activate EN and JP one region at a time, retaining rollback paths and observation gates. |
 | 2026-08-25 | ops | All production processes migrated from the legacy release branch onto the current main line; data repositories moved with the checkout and the GitHub App credential helper repointed. Two incidents during the window were resolved: a stale git index.lock left by a killed process blocked one daily cycle, and a JSON-RPC method-version mismatch between the event tracker and a stale shared-client instance raised -32601 until restart. Final health: all regions READY. | Observe the next scheduled daily cycle before retiring the legacy checkout and failure-artifact directories. |
 | 2026-08-26 | roadmap | Current audit reconciled: event-tracker client and receiver idempotency/outbox work is complete; Dashboard desktop/mobile browser acceptance is complete; remaining work is upstream response validation, Phase 5 public endpoint/monitoring acceptance, legacy checkout retirement, and one-region rollout. | Track [#55](https://github.com/Sekai-World/sekai-client/issues/55), [#56](https://github.com/Sekai-World/sekai-client/issues/56), [#57](https://github.com/Sekai-World/sekai-client/issues/57), and [#58](https://github.com/Sekai-World/sekai-client/issues/58). |
+| 2026-08-27 | 5 | Added a repeatable, read-only Phase 5 acceptance tool (`deployment/phase5_acceptance.py`) and runbook (`docs/phase5-production-acceptance.md`). The tool performs aggregate, redacted PM2/Gunicorn and public-health validation without mutating services; it does not contain or claim any production acceptance evidence. Phase 5 remains in progress. | Operators run the tool in production and record only aggregate acceptance evidence (no URLs, bodies, credentials, IDs, paths, exact timestamps, or detailed counters) before marking Phase 5 complete; continue one-region canary/rollout. |

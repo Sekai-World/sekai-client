@@ -225,6 +225,14 @@ The repository contains a dedicated TW remote-provider PM2 template and
 accepted; the next-region rollout remains gated by the evidence requirements
 below.
 
+Phase 5 remains in progress. A repeatable, read-only acceptance path now exists:
+`deployment/phase5_acceptance.py` validates the formal shared-client PM2/Gunicorn
+topology (presence, online status, one worker, loopback bind, `--config
+gunicorn_conf.py`) and, optionally, the public `/health/live` and `/health/ready`
+endpoints, emitting only aggregate, redacted outcomes. Production acceptance
+evidence must be recorded by operators only after running that tool against the
+real environment; this roadmap does not claim Phase 5 complete.
+
 - [x] Deploy the account service before enabling remote acquisition in clients.
 - [x] Canary one region and one consumer.
 - [ ] Expand one region at a time after inventory, token, and rollback gates
@@ -264,7 +272,9 @@ in [remediation-roadmap.md](remediation-roadmap.md):
 - Phase 1 required CI enforcement. The repository is intended to become public;
   public-release hardening and ruleset activation complete this prerequisite.
 - Phase 3 desktop/mobile dashboard acceptance.
-- Phase 5 PM2/Gunicorn, canary, public endpoint, and monitoring acceptance.
+- Phase 5 PM2/Gunicorn, canary, public endpoint, and monitoring acceptance
+  (now with a repeatable read-only acceptance tool; evidence recorded only
+  after operators run it in production).
 - Phase 6 end-to-end RPC deadlines, cancellation, idempotent retry policy, and
   queue metrics. This is a prerequisite for the remote provider.
 - Phase 7 event-tracker outbox and upstream response-schema validation.
