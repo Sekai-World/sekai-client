@@ -208,8 +208,8 @@ uv run --extra dev pytest tests/
 - [x] 使用 `createElement`、`textContent` 和属性赋值替代动态 `innerHTML`。
 - [x] token 默认仅保存在当前会话（`sessionStorage`）。
 - [x] 提供显式“记住此设备”（`localStorage`）和清除 token 操作。
-- [ ] 验证桌面端和移动端操作流程。
-  - 状态：`[!]` 待真实浏览器验证；代码已包含响应式布局、键盘 focus 与 reduced-motion 支持，但尚未记录桌面/移动端完整操作证据。
+- [x] 验证桌面端和移动端操作流程。
+  - 状态：已完成桌面端与移动端浏览器验收；代码包含响应式布局、键盘 focus 与 reduced-motion 支持。
 
 ### 验收条件
 
@@ -217,8 +217,7 @@ uv run --extra dev pytest tests/
 - [x] 重启不能通过一次误点直接触发。
 - [x] 服务端返回的动态字段不能注入 HTML。
 - [x] 用户能够区分进行中、成功、重启失败和刷新失败。
-- [ ] 桌面端和移动端均可完成登录、查看状态和重启流程。
-  - 状态：`[!]` 待在可连接 Dashboard API/PM2 的环境中完成手工验收。
+- [x] 桌面端和移动端均可完成登录、查看状态和重启流程。
 
 ### 验收证据
 
@@ -227,11 +226,12 @@ uv run --extra dev pytest tests/
 - 重启结果：`tests/test_service_dashboard.py` 与新增 `tests/test_dashboard_api.py` 覆盖 success/restart_failed/refresh_failed、区域聚合、旧 `status` 兼容映射及未认证 401。前端显式读取 HTTP 200 响应中的 `refresh_failed`，不会误报成功。
 - 聚焦验证（2026-07-17）：`uv run --extra dev pytest -q tests/test_service_dashboard.py tests/test_dashboard_api.py`：24 passed；Dashboard JavaScript syntax check：pass；`git diff --check`：clean。
 - 全套回归（阶段 3 实施时）：`uv run --extra dev pytest tests/`：139 passed。
-- 桌面和移动端手工验证记录：待填写；未真实触发线上 PM2 重启。
+- 桌面和移动端手工验证：已完成；非敏感验收矩阵见 [#59](https://github.com/Sekai-World/sekai-client/issues/59)，覆盖 token 模式与清除、状态与失败反馈、重启确认与重复提交保护、响应式布局、键盘 focus 和 reduced-motion；私有记录仅保留运行环境细节。
 
 ### 执行记录
 
-- 2026-07-17：在分支 `security/phase-3-dashboard-safety` 实现阶段 3。后端新增单一归一化 `state`，兼容 `ok` 由其派生；重启 API 新增结构化 `restartStatus` 并保留旧 `status` 字段。Dashboard 改为安全 DOM 构建，增加单服务确认、区域强确认、操作期间禁用、成功/重启失败/刷新失败反馈，以及 session-only/记住设备/清除 token 语义；完善响应式布局与可访问性。自动化与静态验证通过；真实桌面/移动端流程和 PM2 重启仍待部署环境手工验收，因此阶段 3 保持部分完成，不提前标记全部验收完成。
+- 2026-07-17：在分支 `security/phase-3-dashboard-safety` 实现阶段 3。后端新增单一归一化 `state`，兼容 `ok` 由其派生；重启 API 新增结构化 `restartStatus` 并保留旧 `status` 字段。Dashboard 改为安全 DOM 构建，增加单服务确认、区域强确认、操作期间禁用、成功/重启失败/刷新失败反馈，以及 session-only/记住设备/清除 token 语义；完善响应式布局与可访问性。自动化与静态验证通过。
+- 2026-08-26：完成桌面端与移动端浏览器验收，覆盖登录、状态查看和重启流程；阶段 3 Dashboard 验收完成，关闭 [#59](https://github.com/Sekai-World/sekai-client/issues/59)。
 
 ## 阶段 4：定时任务互斥与 Git 数据安全
 
@@ -432,9 +432,9 @@ UNINITIALIZED
 - [x] Scheduler 使用 `max_instances=1` 和 `coalesce=True`。
 - [x] 移除通过删除、重新添加 job 处理慢任务的逻辑。
 - [x] 记录任务执行时间和 outbox 状态/积压；精确调度延迟指标保留在性能 roadmap 阶段 0。
-- [ ] 从登录响应开始引入明确的响应模型和边界校验。
-- [ ] 依次覆盖版本、活动、ranking 和 master 数据响应。
-- [ ] schema 错误不得破坏当前有效客户端状态。
+- [ ] 从登录响应开始引入明确的响应模型和边界校验（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。
+- [ ] 依次覆盖版本、活动、ranking 和 master 数据响应（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。
+- [ ] schema 错误不得破坏当前有效客户端状态（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）。
 
 ### 验收条件
 
@@ -451,12 +451,12 @@ UNINITIALIZED
 - `tests/test_event_tracker.py`：覆盖单一 coalescing scheduler job、先持久化、携带幂等键投递和独立投递状态日志。
 - 客户端 outbox 已完成；已部署的接收 API 会持久化并强制执行
   `Idempotency-Key`，覆盖 crash-after-remote-commit 边界的端到端去重。
-- 待填写：响应 schema 异常测试
+- 待填写：响应 schema 异常测试（[#56](https://github.com/Sekai-World/sekai-client/issues/56)）
 
 ### 执行记录
 
 - 2026-08-18：event ranking SQLite outbox 通过 [PR #40](https://github.com/Sekai-World/sekai-client/pull/40) 合并。实现先持久化后投递、`(region, event_id, timestamp, data_type)` 幂等键、`pending`/`sending`/`sent`/`failed` 状态、有界 drain 预算与单请求超时、terminal 记录保留期清理、重启恢复与过期 claim 恢复；scheduler 改为单一 coalescing job，不再删除重建慢任务。同日 [PR #41](https://github.com/Sekai-World/sekai-client/pull/41) 进一步降低事件追踪请求开销。验证：`tests/test_event_outbox.py` 与 `tests/test_event_tracker.py` 覆盖上述行为。
-- 未完成：上游 API 响应模型与边界校验（登录→版本→活动→ranking→master 数据）。
+- 未完成：上游 API 响应模型与边界校验（登录→版本→活动→ranking→master 数据），跟踪于 [#56](https://github.com/Sekai-World/sekai-client/issues/56)。
 
 ## PR 拆分
 
@@ -465,12 +465,12 @@ UNINITIALIZED
 | 1 | `fix: validate supported region configuration` | CN 决策、区域配置校验与测试 | `[x]` | #5 merged |
 | 2 | `ci: establish phase 1 verification baseline` | Ruff、mypy、pytest CI | `[x]` | [#6](https://github.com/Sekai-World/sekai-client/pull/6) merged |
 | 3 | `security: harden internal rpc and credential handling` | 日志、token、文件权限、RPC | `[x]` | [#7](https://github.com/Sekai-World/sekai-client/pull/7) merged |
-| 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[-]` | 分支 `security/phase-3-dashboard-safety`，待浏览器验收与 PR |
+| 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[-]` | 分支 `security/phase-3-dashboard-safety`，浏览器验收已完成，待提交阶段 3 PR |
 | 5 | `fix: harden update cycle and git publishing` | 定时任务互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox（不含 `event_tracker` 排名 outbox） | `[x]` | [#9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
 | 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[-]` | 未提交阶段 5 工作；无 PR |
 | 7 | `refactor: enforce request deadlines and retry policy` | Deadline、重试、取消、队列 | `[x]` | PRs [#21](https://github.com/Sekai-World/sekai-client/pull/21)、[#22](https://github.com/Sekai-World/sekai-client/pull/22)、[#23](https://github.com/Sekai-World/sekai-client/pull/23)、[#24](https://github.com/Sekai-World/sekai-client/pull/24) merged |
 | 8 | `feat: persist event tracker delivery outbox` | SQLite outbox 与 scheduler | `[x]` | [#40](https://github.com/Sekai-World/sekai-client/pull/40) merged |
-| 9 | `refactor: validate upstream api responses` | 关键 API 响应模型 | `[ ]` | 待填写 |
+| 9 | `refactor: validate upstream api responses` | 关键 API 响应模型 | `[ ]` | [#56](https://github.com/Sekai-World/sekai-client/issues/56) |
 
 ## 发布与回滚原则
 
@@ -500,11 +500,14 @@ and test-count records above are retained as execution history.
   `protect default` ruleset strictly requires
   `Lint, type-check and test` on pull requests. PR #19 verified enforcement
   end-to-end without administrator bypass.
-- Phase 3 code is present on `main`; desktop/mobile browser and real PM2 restart
-  acceptance evidence is still missing.
+- Phase 3 code is present on `main`; desktop/mobile browser acceptance is
+  complete. Real PM2 restart evidence remains part of Phase 5 operational
+  acceptance ([#57](https://github.com/Sekai-World/sekai-client/issues/57)).
 - Phase 5 lifecycle and readiness code is present on `main`. The TW
   remote-provider canary and its first monitoring window are recorded below.
-  Public endpoint verification and expansion to another region remain open.
+  Public endpoint verification and deployment monitoring acceptance remain open
+  ([#57](https://github.com/Sekai-World/sekai-client/issues/57)); expansion remains
+  one region at a time ([#55](https://github.com/Sekai-World/sekai-client/issues/55)).
 - Phase 6 is complete. End-to-end RPC deadlines, late-task state protection,
   idempotency-aware retry policy with `Retry-After`/jitter backoff, and queue
   metrics landed through PRs #21-#24; the cooperative `check_update` cycle
@@ -530,11 +533,11 @@ and test-count records above are retained as execution history.
 - Follow the roadmap's
   [Recommended Execution Order](architecture-decoupling-roadmap.md#recommended-execution-order):
   the Phase 0/1 confirmations and critical Phase 6 reliability work are done.
-  Remaining priorities: Phase 7 upstream response validation, Phase 5 public
-  endpoint verification and monitoring integration, Phase 3 desktop/mobile
-  browser acceptance, retirement of the legacy production checkout after one
-  observed daily cycle, and continued one-region-at-a-time remote-provider
-  rollout.
+  Remaining priorities: Phase 7 upstream response validation ([#56](https://github.com/Sekai-World/sekai-client/issues/56)),
+  Phase 5 public endpoint verification and monitoring integration ([#57](https://github.com/Sekai-World/sekai-client/issues/57)),
+  retirement of the legacy production checkout after one observed daily cycle
+  ([#58](https://github.com/Sekai-World/sekai-client/issues/58)), and continued
+  one-region-at-a-time remote-provider rollout ([#55](https://github.com/Sekai-World/sekai-client/issues/55)).
 
 ## 进度日志
 
@@ -555,3 +558,4 @@ and test-count records above are retained as execution history.
 | 2026-08-22 | 5 | KR is selected as the next rollout region. Inventory and a lease-scoped token are not yet prepared, so no KR production activation has been performed. | Complete KR preparation against the pre-activation gate (inventory, lease-scoped token, region-specific configuration, rollback artifacts, and pre-activation evidence); then activate a one-region KR canary and complete the observation gate before expanding. |
 | 2026-08-25 | 5 | The KR remote-provider consumer passed its observation gate with the client and account service online and ready; no unexplained consumer restarts were observed and lease/inventory health stayed within acceptance criteria. Aggregate evidence only; operational identifiers are retained privately. | Retain KR rollback artifacts through the standard window; select and prepare the next region one at a time. |
 | 2026-08-25 | ops | All production processes migrated from the legacy release branch onto the current main line; data repositories moved with the checkout and the GitHub App credential helper repointed. Two incidents during the window were resolved: a stale git index.lock left by a killed process blocked one daily cycle, and a JSON-RPC method-version mismatch between the event tracker and a stale shared-client instance raised -32601 until restart. Final health: all regions READY. | Observe the next scheduled daily cycle before retiring the legacy checkout and failure-artifact directories. |
+| 2026-08-26 | roadmap | Current audit reconciled: event-tracker client and receiver idempotency/outbox work is complete; Dashboard desktop/mobile browser acceptance is complete; remaining work is upstream response validation, Phase 5 public endpoint/monitoring acceptance, legacy checkout retirement, and one-region rollout. | Track [#55](https://github.com/Sekai-World/sekai-client/issues/55), [#56](https://github.com/Sekai-World/sekai-client/issues/56), [#57](https://github.com/Sekai-World/sekai-client/issues/57), and [#58](https://github.com/Sekai-World/sekai-client/issues/58). |
