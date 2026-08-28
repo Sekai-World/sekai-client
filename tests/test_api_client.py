@@ -240,6 +240,23 @@ def test_auth_endpoint_426_skips_recursive_login(monkeypatch):
     assert request.call_count == 1
 
 
+def test_426_recovery_aborts_nested_version_recovery(monkeypatch):
+    """Regression: JP/EN version recovery must not recurse on a nested 426."""
+    client = APIClient(region="jp")
+    response = Mock(status_code=426, headers={}, content=b"")
+    original_handler = client._handle_http_error_retry
+    nested_result = {}
+
+    def _recover(*, endpoint=None):
+        nested_result["handled"] = original_handler(response, None, endpoint=endpoint)
+
+    client._update_version_after_426 = _recover
+
+    assert original_handler(response, None, endpoint="/system") is True
+    assert nested_result["handled"] is False
+    assert client._recovering_426 is False
+
+
 def test_tw_kr_426_refreshes_asset_and_data_versions(monkeypatch):
     """Regression: TW/KR 426 must refresh data/asset headers, not only app."""
     client = APIClient(region="kr")

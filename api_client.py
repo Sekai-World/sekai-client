@@ -123,6 +123,7 @@ class APIClient:
         self.headers = deepcopy(initial_api_headers[region])
         self.protocol = GameProtocolTransport(region, self.headers, logger)
         self.rate_limited = False
+        self._recovering_426 = False
 
     @property
     def account_info(self) -> dict[str, Any]:
@@ -327,16 +328,25 @@ class APIClient:
             return True
 
         if response is not None and response.status_code == 426:
+            if self._recovering_426:
+                self.logger.warning(
+                    "%s nested 426 during version recovery; aborting nested recovery",
+                    self.region,
+                )
+                return False
             self.logger.warning("%s server should update version info", self.region)
             transaction_id: int | None = None
             if self.account_info:
                 transaction_id = self._begin_auth_transition()
+            self._recovering_426 = True
             try:
                 self._update_version_after_426(endpoint=endpoint)
             except Exception as error:
                 if transaction_id is not None:
                     self._finish_auth_transition(transaction_id, error)
                 raise
+            finally:
+                self._recovering_426 = False
             if transaction_id is not None:
                 self._finish_auth_transition(transaction_id)
             return True
@@ -469,6 +479,12 @@ class APIClient:
 
     def _authenticate(self) -> dict[str, Any]:
         self.headers.pop("x-session-token", None)
+        credential_type = "jp_en" if self.region in ("jp", "en") else "other"
+        self.logger.info(
+            "authentication request started region=%s credential_type=%s",
+            self.region,
+            credential_type,
+        )
         credential: AccountCredential
         if self.region in ("jp", "en"):
             credential = JpEnCredential(
@@ -495,6 +511,11 @@ class APIClient:
 
         result = GameAuthenticationService(self).authenticate(credential)
         auth_data = result.data
+        self.logger.info(
+            "authentication response accepted region=%s credential_type=%s",
+            self.region,
+            credential_type,
+        )
         # TW/KR (non-suite) login responses must also carry a cdnVersion of the
         # correct type; the region-agnostic auth service only validates the common
         # fields, so re-run validation requiring cdnVersion (rejecting bool/float
