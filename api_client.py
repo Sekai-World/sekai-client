@@ -768,7 +768,7 @@ class APIClient:
                     "body=%s, status=%s",
                     endpoint,
                     method,
-                    body,
+                    "<redacted>",
                     status_code,
                 )
 
