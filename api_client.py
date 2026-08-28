@@ -40,6 +40,7 @@ from response_models import (
     ResponseValidationError,
     validate_auth_response,
     validate_system_data,
+    validate_version_info,
 )
 from utils.constants import (
     app_id_regions,
@@ -509,6 +510,7 @@ class APIClient:
         )
         credential: AccountCredential
         if self.region in ("jp", "en"):
+            self._refresh_suite_version_headers()
             credential = JpEnCredential(
                 AccountRegion(self.region),
                 str(self.account_info["userId"]),
@@ -552,6 +554,36 @@ class APIClient:
         # split paths on the client.
         self.master_split_paths = list(result.master_split_paths)
         return auth_data
+
+    def _refresh_suite_version_headers(self) -> None:
+        """Use the current suite client fingerprint before authenticating."""
+        fetch_version = get_app_ver_and_hash_jp
+        if self.region == "en":
+            fetch_version = get_app_ver_and_hash_en
+
+        try:
+            version = validate_version_info(fetch_version())
+            for source_key, header_key in (
+                ("appVersion", "x-app-version"),
+                ("dataVersion", "x-data-version"),
+                ("assetVersion", "x-asset-version"),
+                ("appHash", "x-app-hash"),
+            ):
+                value = version.get(source_key)
+                if isinstance(value, (str, int)) and not isinstance(value, bool):
+                    self.headers[header_key] = str(value)
+            self.logger.info(
+                "refreshed suite version headers before authentication region=%s "
+                "app_version=%s",
+                self.region,
+                self.headers.get("x-app-version"),
+            )
+        except Exception as error:  # noqa: BLE001 - retain last-known-good headers
+            self.logger.warning(
+                "suite version refresh before authentication failed region=%s: %s",
+                self.region,
+                error,
+            )
 
     def _validate_tw_kr_account_info(self) -> TwKrCredential:
         required_keys = (
@@ -744,7 +776,7 @@ class APIClient:
             endpoint,
             normalized_method,
             request_id,
-            body,
+            "<redacted>" if body else "",
             len(data) if data is not None else None,
         )
         attempt = 0

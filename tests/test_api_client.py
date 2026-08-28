@@ -726,6 +726,30 @@ def test_tw_kr_auth_rejects_missing_key_and_does_not_mutate_headers(missing_key)
     assert client.headers == original_headers
 
 
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_suite_auth_refreshes_current_version_headers(monkeypatch, region):
+    client = APIClient(region=region)
+    current = {
+        "appVersion": "6.8.0",
+        "dataVersion": "6.8.0.12",
+        "assetVersion": "6.8.0.10",
+        "appHash": "current-hash",
+    }
+    fetch = Mock(return_value=current)
+    if region == "jp":
+        monkeypatch.setattr(api_client, "get_app_ver_and_hash_jp", fetch)
+    else:
+        monkeypatch.setattr(api_client, "get_app_ver_and_hash_en", fetch)
+
+    client._refresh_suite_version_headers()
+
+    assert client.headers["x-app-version"] == current["appVersion"]
+    assert client.headers["x-data-version"] == current["dataVersion"]
+    assert client.headers["x-asset-version"] == current["assetVersion"]
+    assert client.headers["x-app-hash"] == current["appHash"]
+    fetch.assert_called_once_with()
+
+
 @pytest.mark.parametrize("bad_device_id", [None, 0, False, "", 123])
 def test_tw_kr_auth_rejects_malformed_device_id_and_does_not_mutate_headers(
     bad_device_id,
