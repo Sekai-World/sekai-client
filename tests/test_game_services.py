@@ -16,6 +16,15 @@ def test_user_service_owns_user_endpoint_construction():
     caller.call_pjsk_api.assert_called_once_with("/user/self-user/target-user/profile")
 
 
+def test_user_service_includes_account_id_in_suite_user_endpoint():
+    caller = Mock()
+    caller.call_pjsk_api.return_value = {"userId": "self-user"}
+    service = GameAPIService(caller, "self-user")
+
+    assert service.fetch_suite_user() == {"userId": "self-user"}
+    caller.call_pjsk_api.assert_called_once_with("/suite/user/self-user")
+
+
 def test_public_service_owns_non_user_endpoints():
     caller = Mock()
     caller.call_pjsk_api.return_value = {
