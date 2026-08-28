@@ -30,11 +30,47 @@ _I18N_ID_TABLES = frozenset(
 )
 
 # Tables whose master-data value is a single object/dict singleton rather than a
-# list of records. JP/EN master splits expose ``mysekaiStaminaRecovery`` as one
-# object (keys: ``id``/``boostQuantity``/``recoveryBoostStamina``), so it is the
-# only explicitly named exception to the top-level "must be a list" rule. Unknown
-# dict-typed top-level tables are intentionally still rejected.
-_DICT_SINGLETON_TABLES = frozenset({"mysekaiStaminaRecovery"})
+# list of records. JP/EN master splits expose the following five tables as
+# objects; they are the only explicitly named exceptions to the top-level "must
+# be a list" rule. Unknown dict-typed top-level tables are intentionally still
+# rejected.
+#
+# Each schema lists the *required* typed fields for that singleton: ``id`` is
+# optional in every table but, when present, must be an ``int`` (``bool``
+# rejected, being a subclass of ``int``); the other fields are required and
+# validated per the ``int``/``float`` spec. ``float`` accepts a real ``float``
+# or an ``int`` (a JSON number without a fractional part) but never a ``bool``.
+_DICT_SINGLETON_SCHEMAS: dict[str, dict[str, tuple[str, ...]]] = {
+    "mysekaiStaminaRecovery": {
+        "int": ("boostQuantity", "recoveryBoostStamina"),
+        "float": (),
+    },
+    "mysekaiColorfulPass": {
+        "int": ("expireDays", "mysekaiSiteHousingPresetSlotExpireDays"),
+        "float": ("mysekaiConvertFixtureConvertMinutesDecreaseRate",),
+    },
+    "mysekaiConvertFixtureSlot": {
+        "int": (
+            "slotNoLowerLimit",
+            "slotNoUpperLimit",
+            "slotNoUpperLimitForMysekaiColorfulPass",
+        ),
+        "float": (),
+    },
+    "mysekaiFixtureGameCharacterPerformanceBonusLimit": {
+        "int": ("bonusRateLimit",),
+        "float": (),
+    },
+    "mysekaiSiteHousingPreset": {
+        "int": (
+            "slotNoLowerLimit",
+            "slotNoUpperLimit",
+            "slotNoUpperLimitForMysekaiColorfulPass",
+        ),
+        "float": (),
+    },
+}
+_DICT_SINGLETON_TABLES = frozenset(_DICT_SINGLETON_SCHEMAS)
 
 
 class ResponseValidationError(ValueError):
@@ -105,6 +141,14 @@ def _require_int(value: Any, source: str, field: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ResponseValidationError.invalid_type(source, field, "int", value)
     return value
+
+
+def _require_float(value: Any, source: str, field: str) -> float:
+    # Accept a real ``float`` or a JSON integer (no fractional part); reject
+    # ``bool`` (a subclass of ``int``) and any non-numeric type.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ResponseValidationError.invalid_type(source, field, "float", value)
+    return float(value)
 
 
 def _require_positive_int(value: Any, source: str, field: str) -> int:
@@ -486,20 +530,25 @@ def validate_information(data: object) -> dict[str, Any]:
     return d
 
 
-def _validate_mysekai_stamina_recovery(value: Any, source: str, table: str) -> None:
-    """Validate the ``mysekaiStaminaRecovery`` dict singleton.
+def _validate_dict_singleton(value: Any, source: str, table: str) -> None:
+    """Validate a dict-singleton master table against its explicit schema.
 
-    The value must be an object (not a list). The fields the client consumes —
-    ``boostQuantity`` and ``recoveryBoostStamina`` — are required and must be
-    ``int`` (``bool`` is rejected, being a subclass of ``int``). ``id`` is
-    optional but, when present, must also be an ``int``.
+    The value must be an object (not a list). The required typed fields from
+    ``_DICT_SINGLETON_SCHEMAS[table]`` must be present with the correct type
+    (``bool`` is rejected for both ``int`` and ``float`` fields). ``id`` is
+    optional but, when present, must be an ``int`` (``bool`` rejected).
     """
     if not isinstance(value, dict):
         raise ResponseValidationError.invalid_type(source, table, "object", value)
-    for field in ("boostQuantity", "recoveryBoostStamina"):
+    schema = _DICT_SINGLETON_SCHEMAS[table]
+    for field in schema["int"]:
         if field not in value:
             raise ResponseValidationError.missing_field(source, f"{table}.{field}")
         _require_int(value[field], source, f"{table}.{field}")
+    for field in schema["float"]:
+        if field not in value:
+            raise ResponseValidationError.missing_field(source, f"{table}.{field}")
+        _require_float(value[field], source, f"{table}.{field}")
     if "id" in value:
         _require_int(value["id"], source, f"{table}.id")
 
@@ -515,9 +564,12 @@ def validate_master_data(
     to carry an integer ``id`` so the i18n writers fail with a precise diagnostic
     rather than a bare ``KeyError``.
 
-    A small, explicitly named set of tables (``mysekaiStaminaRecovery`` in JP/EN
-    master splits) is a single object/dict singleton instead of a list; such
-    tables are validated by ``_validate_mysekai_stamina_recovery``. Every other
+    A small, explicitly named set of tables (``mysekaiStaminaRecovery``,
+    ``mysekaiColorfulPass``, ``mysekaiConvertFixtureSlot``,
+    ``mysekaiFixtureGameCharacterPerformanceBonusLimit``, and
+    ``mysekaiSiteHousingPreset`` in JP/EN master splits) is a single object/dict
+    singleton instead of a list; such tables are validated by
+    ``_validate_dict_singleton`` against their explicit field schema. Every other
     table must remain a list — unknown dict-typed top-level tables are still
     rejected to avoid silently accepting a malformed split.
     """
@@ -526,7 +578,7 @@ def validate_master_data(
         # Explicitly named dict singletons are the only exception to the
         # top-level "must be a list" rule.
         if table in _DICT_SINGLETON_TABLES:
-            _validate_mysekai_stamina_recovery(records, source, table)
+            _validate_dict_singleton(records, source, table)
             continue
         if not isinstance(records, list):
             raise ResponseValidationError.invalid_type(source, table, "list", records)

@@ -419,6 +419,114 @@ def test_validate_master_data_rejects_invalid_mysekai_stamina_recovery(singleton
 
 
 # --------------------------------------------------------------------------- #
+# dict-singleton master tables: explicit whitelist (5 tables)
+# --------------------------------------------------------------------------- #
+
+
+# Valid (id-free) field sets for every explicitly whitelisted singleton table.
+_VALID_SINGLETONS = {
+    "mysekaiStaminaRecovery": {
+        "boostQuantity": 10,
+        "recoveryBoostStamina": 20,
+    },
+    "mysekaiColorfulPass": {
+        "expireDays": 30,
+        "mysekaiConvertFixtureConvertMinutesDecreaseRate": 0.5,
+        "mysekaiSiteHousingPresetSlotExpireDays": 7,
+    },
+    "mysekaiConvertFixtureSlot": {
+        "slotNoLowerLimit": 1,
+        "slotNoUpperLimit": 10,
+        "slotNoUpperLimitForMysekaiColorfulPass": 20,
+    },
+    "mysekaiFixtureGameCharacterPerformanceBonusLimit": {
+        "bonusRateLimit": 100,
+    },
+    "mysekaiSiteHousingPreset": {
+        "slotNoLowerLimit": 1,
+        "slotNoUpperLimit": 10,
+        "slotNoUpperLimitForMysekaiColorfulPass": 20,
+    },
+}
+
+
+@pytest.mark.parametrize("table", list(_VALID_SINGLETONS))
+def test_validate_master_data_accepts_dict_singleton_with_id(table):
+    validate_master_data({table: {**_VALID_SINGLETONS[table], "id": 1}})
+
+
+@pytest.mark.parametrize("table", list(_VALID_SINGLETONS))
+def test_validate_master_data_accepts_dict_singleton_without_id(table):
+    # ``id`` is optional in every singleton table.
+    validate_master_data({table: dict(_VALID_SINGLETONS[table])})
+
+
+@pytest.mark.parametrize("table", list(_VALID_SINGLETONS))
+def test_validate_master_data_rejects_missing_required_field_singleton(table):
+    for field in _VALID_SINGLETONS[table]:
+        bad = dict(_VALID_SINGLETONS[table])
+        del bad[field]
+        with pytest.raises(ResponseValidationError):
+            validate_master_data({table: bad})
+
+
+@pytest.mark.parametrize(
+    "table,field,bad",
+    [
+        # int fields reject bool (subclass of int) and str
+        ("mysekaiStaminaRecovery", "boostQuantity", True),
+        ("mysekaiStaminaRecovery", "recoveryBoostStamina", "x"),
+        # a float passed to an int field is rejected
+        ("mysekaiConvertFixtureSlot", "slotNoUpperLimit", 1.5),
+        ("mysekaiFixtureGameCharacterPerformanceBonusLimit", "bonusRateLimit", False),
+        ("mysekaiSiteHousingPreset", "slotNoUpperLimitForMysekaiColorfulPass", None),
+        # float field rejects bool and str (int is accepted, see dedicated test)
+        (
+            "mysekaiColorfulPass",
+            "mysekaiConvertFixtureConvertMinutesDecreaseRate",
+            True,
+        ),
+        ("mysekaiColorfulPass", "mysekaiConvertFixtureConvertMinutesDecreaseRate", "x"),
+        ("mysekaiColorfulPass", "expireDays", "thirty"),
+    ],
+)
+def test_validate_master_data_rejects_wrong_type_singleton(table, field, bad):
+    payload = dict(_VALID_SINGLETONS[table])
+    payload[field] = bad
+    with pytest.raises(ResponseValidationError):
+        validate_master_data({table: payload})
+
+
+@pytest.mark.parametrize("table", list(_VALID_SINGLETONS))
+def test_validate_master_data_rejects_wrong_type_id_singleton(table):
+    for bad in (True, "1", 1.5):
+        payload = {**_VALID_SINGLETONS[table], "id": bad}
+        with pytest.raises(ResponseValidationError):
+            validate_master_data({table: payload})
+
+
+@pytest.mark.parametrize("table", list(_VALID_SINGLETONS))
+def test_validate_master_data_rejects_non_dict_singleton(table):
+    for bad in ("not-a-dict", ["a", "list"], 5):
+        with pytest.raises(ResponseValidationError):
+            validate_master_data({table: bad})
+
+
+def test_validate_master_data_accepts_int_for_float_singleton_field():
+    # A JSON integer is a valid float value; the float field must not reject it.
+    validate_master_data(
+        {
+            "mysekaiColorfulPass": {
+                "id": 1,
+                "expireDays": 30,
+                "mysekaiConvertFixtureConvertMinutesDecreaseRate": 1,
+                "mysekaiSiteHousingPresetSlotExpireDays": 7,
+            }
+        }
+    )
+
+
+# --------------------------------------------------------------------------- #
 # last-known-good state preservation in consumers
 # --------------------------------------------------------------------------- #
 
