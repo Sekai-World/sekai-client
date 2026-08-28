@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from time import sleep
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -75,12 +76,18 @@ def main() -> None:
     scheduler = BlockingScheduler(timezone="Asia/Tokyo")
     scheduler.add_job(
         run_once,
-        CronTrigger(minute="*/30", timezone="Asia/Tokyo"),
+        CronTrigger(
+            minute=update.getenv("USER_INFORMATION_SCHEDULE_MINUTE", "*/30"),
+            timezone="Asia/Tokyo",
+        ),
         name="update_user_information",
         max_instances=1,
         coalesce=True,
     )
     try:
+        initial_delay = float(update.getenv("USER_INFORMATION_START_DELAY", "0"))
+        if initial_delay > 0:
+            sleep(initial_delay)
         run_once()
     except Exception:
         logger.exception("[user_information] initial run failed")
