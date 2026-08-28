@@ -420,3 +420,43 @@ def test_validate_information_rejects_missing_informations_field(monkeypatch):
     for response in ({}, {"userHomeBanners": []}, {"userInformations": []}):
         with pytest.raises(check_update.ResponseValidationError):
             check_update.validate_information(response)
+
+
+def test_get_splitted_master_data_passes_mysekai_stamina_recovery_singleton(
+    monkeypatch,
+):
+    """The JP/EN ``mysekaiStaminaRecovery`` dict singleton must survive the
+    master-data boundary in check_update (no list coercion, no rejection)."""
+    monkeypatch.setattr(check_update, "pjsk_region", "jp")
+    mono = {
+        "id": 1,
+        "boostQuantity": 10,
+        "recoveryBoostStamina": 20,
+    }
+    client = Mock()
+    client.request.side_effect = [
+        ["master/path"],  # master_split_paths
+        {"cards": [{"id": 1}], "mysekaiStaminaRecovery": mono},  # fetch_master_split
+    ]
+    monkeypatch.setattr(check_update, "jsonrpc_client", client)
+
+    master_data = check_update.get_splitted_master_data()
+
+    assert master_data["mysekaiStaminaRecovery"] == mono
+    # Ordinary list tables keep behaving as before through the boundary.
+    assert master_data["cards"] == [{"id": 1}]
+
+
+def test_get_splitted_master_data_rejects_unknown_dict_top_level_table(monkeypatch):
+    """The fix must not relax to "any dict": an unknown dict-typed top-level
+    table is still rejected at the master-data boundary."""
+    monkeypatch.setattr(check_update, "pjsk_region", "jp")
+    client = Mock()
+    client.request.side_effect = [
+        ["master/path"],
+        {"unknownTable": {"x": 1}},
+    ]
+    monkeypatch.setattr(check_update, "jsonrpc_client", client)
+
+    with pytest.raises(RuntimeError):
+        check_update.get_splitted_master_data()

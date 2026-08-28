@@ -353,11 +353,69 @@ def test_validate_master_data_accepts_valid():
         {"cards": [{"no_id": 1}]},
         {"cards": [{"id": "string"}]},
         {"events": ["not-an-object"]},
+        # A dict-typed top-level table that is NOT the explicitly named singleton
+        # is still rejected (the fix must not relax to "any dict").
+        {"unknownTable": {"x": 1}},
+        {"unknownTable": {"id": 1, "boostQuantity": 2, "recoveryBoostStamina": 3}},
     ],
 )
 def test_validate_master_data_rejects_invalid(data):
     with pytest.raises(ResponseValidationError):
         validate_master_data(data)
+
+
+def test_validate_master_data_accepts_mysekai_stamina_recovery_singleton():
+    # Required fields present as int; id optional but accepted.
+    validate_master_data(
+        {
+            "cards": [{"id": 1}],
+            "mysekaiStaminaRecovery": {
+                "id": 1,
+                "boostQuantity": 10,
+                "recoveryBoostStamina": 20,
+            },
+        }
+    )
+
+
+def test_validate_master_data_accepts_mysekai_stamina_recovery_without_id():
+    # ``id`` is optional; the two required int fields are enough.
+    validate_master_data(
+        {
+            "mysekaiStaminaRecovery": {
+                "boostQuantity": 10,
+                "recoveryBoostStamina": 20,
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "singleton",
+    [
+        "not-a-dict",  # must be an object, not a list/scalar
+        [
+            {"id": 1, "boostQuantity": 10, "recoveryBoostStamina": 20}
+        ],  # must not be a list
+        {"boostQuantity": 10},  # missing recoveryBoostStamina
+        {"recoveryBoostStamina": 20},  # missing boostQuantity
+        {
+            "boostQuantity": True,
+            "recoveryBoostStamina": 20,
+        },  # bool rejected (int subclass)
+        {"boostQuantity": 10, "recoveryBoostStamina": False},  # bool rejected
+        {"boostQuantity": "10", "recoveryBoostStamina": 20},  # wrong type
+        {
+            "boostQuantity": 10,
+            "recoveryBoostStamina": 20,
+            "id": True,
+        },  # id bool rejected
+        {"boostQuantity": 10, "recoveryBoostStamina": 20, "id": "1"},  # id wrong type
+    ],
+)
+def test_validate_master_data_rejects_invalid_mysekai_stamina_recovery(singleton):
+    with pytest.raises(ResponseValidationError):
+        validate_master_data({"mysekaiStaminaRecovery": singleton})
 
 
 # --------------------------------------------------------------------------- #

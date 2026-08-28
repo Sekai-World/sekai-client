@@ -29,6 +29,13 @@ _I18N_ID_TABLES = frozenset(
     }
 )
 
+# Tables whose master-data value is a single object/dict singleton rather than a
+# list of records. JP/EN master splits expose ``mysekaiStaminaRecovery`` as one
+# object (keys: ``id``/``boostQuantity``/``recoveryBoostStamina``), so it is the
+# only explicitly named exception to the top-level "must be a list" rule. Unknown
+# dict-typed top-level tables are intentionally still rejected.
+_DICT_SINGLETON_TABLES = frozenset({"mysekaiStaminaRecovery"})
+
 
 class ResponseValidationError(ValueError):
     """Raised when an upstream response fails boundary validation.
@@ -479,6 +486,24 @@ def validate_information(data: object) -> dict[str, Any]:
     return d
 
 
+def _validate_mysekai_stamina_recovery(value: Any, source: str, table: str) -> None:
+    """Validate the ``mysekaiStaminaRecovery`` dict singleton.
+
+    The value must be an object (not a list). The fields the client consumes —
+    ``boostQuantity`` and ``recoveryBoostStamina`` — are required and must be
+    ``int`` (``bool`` is rejected, being a subclass of ``int``). ``id`` is
+    optional but, when present, must also be an ``int``.
+    """
+    if not isinstance(value, dict):
+        raise ResponseValidationError.invalid_type(source, table, "object", value)
+    for field in ("boostQuantity", "recoveryBoostStamina"):
+        if field not in value:
+            raise ResponseValidationError.missing_field(source, f"{table}.{field}")
+        _require_int(value[field], source, f"{table}.{field}")
+    if "id" in value:
+        _require_int(value["id"], source, f"{table}.id")
+
+
 def validate_master_data(
     data: object, *, source: str = "master-data"
 ) -> dict[str, Any]:
@@ -489,9 +514,20 @@ def validate_master_data(
     ``virtualLives``/``eventStories``/``stamps``) additionally require each record
     to carry an integer ``id`` so the i18n writers fail with a precise diagnostic
     rather than a bare ``KeyError``.
+
+    A small, explicitly named set of tables (``mysekaiStaminaRecovery`` in JP/EN
+    master splits) is a single object/dict singleton instead of a list; such
+    tables are validated by ``_validate_mysekai_stamina_recovery``. Every other
+    table must remain a list — unknown dict-typed top-level tables are still
+    rejected to avoid silently accepting a malformed split.
     """
     d = _require_dict(data, source)
     for table, records in d.items():
+        # Explicitly named dict singletons are the only exception to the
+        # top-level "must be a list" rule.
+        if table in _DICT_SINGLETON_TABLES:
+            _validate_mysekai_stamina_recovery(records, source, table)
+            continue
         if not isinstance(records, list):
             raise ResponseValidationError.invalid_type(source, table, "list", records)
         if table in _I18N_ID_TABLES:
