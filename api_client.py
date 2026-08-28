@@ -230,15 +230,9 @@ class APIClient:
 
     def _update_version_after_426(self, *, endpoint: str | None = None) -> None:
         if self.region in ["jp"]:
-            ver_data = get_app_ver_and_hash_jp()
-            self.headers["x-app-version"] = ver_data["appVersion"]
-            self.headers["x-app-hash"] = ver_data["appHash"]
-            self.version_info["appHash"] = ver_data["appHash"]
+            self._refresh_suite_version_headers()
         elif self.region in ["en"]:
-            ver_data = get_app_ver_and_hash_en()
-            self.headers["x-app-version"] = ver_data["appVersion"]
-            self.headers["x-app-hash"] = ver_data["appHash"]
-            self.version_info["appHash"] = ver_data["appHash"]
+            self._refresh_suite_version_headers()
         else:
             ver_text = get_app_ver_qooapp(app_id_regions[self.region])
             self.headers["x-app-version"] = ver_text

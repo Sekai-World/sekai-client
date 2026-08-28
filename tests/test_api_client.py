@@ -444,7 +444,14 @@ def test_auth_endpoint_426_skips_login_jp_en(monkeypatch, auth_endpoint):
     monkeypatch.setattr(
         api_client,
         "get_app_ver_and_hash_jp",
-        Mock(return_value={"appVersion": "100.0", "appHash": "abc"}),
+        Mock(
+            return_value={
+                "appVersion": "100.0",
+                "dataVersion": "100.0",
+                "assetVersion": "100.0",
+                "appHash": "abc",
+            }
+        ),
     )
 
     with pytest.raises(RuntimeError, match="HTTP 426"):
@@ -477,7 +484,14 @@ def test_non_auth_426_still_calls_login_when_account_present(monkeypatch):
     monkeypatch.setattr(
         api_client,
         "get_app_ver_and_hash_jp",
-        Mock(return_value={"appVersion": "100.0", "appHash": "abc"}),
+        Mock(
+            return_value={
+                "appVersion": "100.0",
+                "dataVersion": "100.0",
+                "assetVersion": "100.0",
+                "appHash": "abc",
+            }
+        ),
     )
 
     with pytest.raises(RuntimeError, match="HTTP 426"):
