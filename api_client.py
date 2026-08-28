@@ -266,7 +266,10 @@ class APIClient:
         try:
             try:
                 system_data = self.call_pjsk_api(
-                    "/system", "get", retry_policy=RetryPolicy.NEVER
+                    "/system",
+                    "get",
+                    retry_policy=RetryPolicy.NEVER,
+                    bypass_error_recovery=True,
                 )
                 system_data = validate_system_data(system_data)
             except Exception as error:  # noqa: BLE001 - best-effort refresh
@@ -280,7 +283,7 @@ class APIClient:
                 return
             curr_app_ver = self.headers["x-app-version"]
             try:
-                curr_ver_info, _ = self._find_current_version_info(
+                curr_ver_info, fallback_selected = self._find_current_version_info(
                     all_ver_infos, curr_app_ver
                 )
             except Exception as error:  # noqa: BLE001 - best-effort refresh
@@ -294,6 +297,13 @@ class APIClient:
                 self.version_info["dataVersion"] = curr_ver_info["dataVersion"]
             self.headers["x-asset-version"] = curr_ver_info["assetVersion"]
             self.version_info["assetVersion"] = curr_ver_info["assetVersion"]
+            if fallback_selected:
+                # The QooApp version was unavailable (or in maintenance), so the
+                # probe fell back to a different available version. Synchronize
+                # the app version fields so the retried request carries a
+                # coherent version set rather than a stale app version.
+                self.headers["x-app-version"] = curr_ver_info["appVersion"]
+                self.version_info["appVersion"] = curr_ver_info["appVersion"]
         finally:
             self._refreshing_426_system = False
 
@@ -640,6 +650,8 @@ class APIClient:
         method: str = "get",
         body: str | dict = "",
         retry_policy: RetryPolicy | None = None,
+        *,
+        bypass_error_recovery: bool = False,
     ) -> APIResponse:
         """
         Make an encrypted API call to the PJSK game server.
@@ -654,6 +666,10 @@ class APIClient:
             body: Request body (string or dict, will be encrypted)
             retry_policy: Explicit retry safety. Defaults to IDEMPOTENT for GET
                 and NEVER for methods that can have side effects.
+            bypass_error_recovery: When True, HTTP error responses are not
+                routed through ``_handle_http_error_retry`` (e.g. cookie refresh,
+                the 426 version recovery that can trigger a re-login). Used by
+                internal probes that must not recurse into recovery side effects.
 
         Returns:
             Decrypted response data (bytes or dict)
@@ -713,7 +729,12 @@ class APIClient:
                     status_code,
                 )
 
-                handled = self._handle_http_error_retry(r, res_data, endpoint=endpoint)
+                if bypass_error_recovery:
+                    handled = False
+                else:
+                    handled = self._handle_http_error_retry(
+                        r, res_data, endpoint=endpoint
+                    )
                 should_retry = policy is RetryPolicy.IDEMPOTENT and handled
 
                 transient = r is not None and (
