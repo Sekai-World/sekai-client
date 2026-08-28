@@ -37,6 +37,24 @@ def test_refresh_master_split_paths_rejects_regions_without_split_data():
         raise AssertionError("Expected split path refresh to reject cn")
 
 
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_auth_metadata_preserves_app_hash_for_version_document(region):
+    client = APIClient(region=region)
+    client.headers["x-app-hash"] = "current-app-hash"
+
+    client._apply_auth_headers_and_version_info(
+        {
+            "sessionToken": "session-token",
+            "appVersion": "1.0.0",
+            "dataVersion": "1.0.0.1",
+            "assetVersion": "1.0.0.1",
+            "multiPlayVersion": "miku",
+        }
+    )
+
+    assert client.version_info["appHash"] == "current-app-hash"
+
+
 def test_jp_403_refreshes_cookie_and_retries_without_xml_content_type(monkeypatch):
     client = APIClient(region="jp")
     rejected = Mock(spec=requests.Response)

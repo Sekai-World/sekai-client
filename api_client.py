@@ -583,6 +583,9 @@ class APIClient:
         self.version_info["appVersion"] = app_ver
         self.version_info["assetVersion"] = asset_ver
         self.version_info["dataVersion"] = data_ver
+        # Keep the version document complete. JP/EN auth responses do not carry
+        # appHash, but the request headers already contain the validated value.
+        self.version_info["appHash"] = self.headers.get("x-app-hash", "")
         self.version_info["assetHash"] = asset_hash
         self.version_info["multiPlayVersion"] = multi_play_ver
 
