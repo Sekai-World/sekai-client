@@ -578,6 +578,28 @@ def test_jp_session_error_reauthenticates_instead_of_refreshing_cookie():
     client.init_cookie.assert_not_called()
 
 
+def test_session_error_during_login_skips_recursive_reauthentication(caplog):
+    client = APIClient(region="en")
+    client._authenticating = True
+    response = Mock(status_code=403)
+
+    assert not client._handle_http_error_retry(
+        response, {"errorCode": "session_error"}, endpoint="/suite/user/account"
+    )
+    assert "endpoint_kind=suite_user" in caplog.text
+    assert "skipping recursive login" in caplog.text
+
+
+def test_login_clears_authentication_guard_after_failure():
+    client = APIClient(region="en")
+    client._authenticate = Mock(side_effect=RuntimeError("auth failed"))
+
+    with pytest.raises(RuntimeError, match="auth failed"):
+        client.login()
+
+    assert client._authenticating is False
+
+
 def test_hidden_auth_outcomes_are_paired_and_not_emitted_without_account():
     client = APIClient(region="jp")
     callback = Mock()

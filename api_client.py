@@ -124,6 +124,7 @@ class APIClient:
         self.protocol = GameProtocolTransport(region, self.headers, logger)
         self.rate_limited = False
         self._recovering_426 = False
+        self._authenticating = False
 
     @property
     def account_info(self) -> dict[str, Any]:
@@ -377,6 +378,27 @@ class APIClient:
             and response.status_code == 403
             and error_code == "session_error"
         ):
+            endpoint_path = (endpoint or "").split("?", 1)[0]
+            endpoint_kind = (
+                "suite_user"
+                if endpoint_path.startswith("/suite/user/")
+                else "auth"
+                if self._is_auth_endpoint(endpoint_path)
+                else "other"
+            )
+            self.logger.warning(
+                "auth-related failure region=%s endpoint_kind=%s status=403 "
+                "error_code=session_error",
+                self.region,
+                endpoint_kind,
+            )
+            if self._authenticating:
+                self.logger.warning(
+                    "authentication session rejected during active login; "
+                    "skipping recursive login region=%s",
+                    self.region,
+                )
+                return False
             transaction_id = None
             if self.account_info:
                 transaction_id = self._begin_auth_transition()
@@ -910,21 +932,27 @@ class APIClient:
         Returns:
             User profile dictionary
         """
-        self.logger.info("simulate login process")
-        self.logger.debug("do auth")
-        auth_data = self._authenticate()
-        self._apply_auth_headers_and_version_info(auth_data)
+        if self._authenticating:
+            raise RuntimeError("authentication already in progress")
+        self._authenticating = True
+        try:
+            self.logger.info("simulate login process")
+            self.logger.debug("do auth")
+            auth_data = self._authenticate()
+            self._apply_auth_headers_and_version_info(auth_data)
 
-        self.logger.debug("get suite user")
-        user_id = self.account_info["userId"]
-        user_info = self.fetch_suite_user()
+            self.logger.debug("get suite user")
+            user_id = self.account_info["userId"]
+            user_info = self.fetch_suite_user()
 
-        self.logger.debug("check and skip tutorial")
-        self._complete_tutorial_if_needed(user_id, user_info)
-        self._post_login_refresh(user_id)
+            self.logger.debug("check and skip tutorial")
+            self._complete_tutorial_if_needed(user_id, user_info)
+            self._post_login_refresh(user_id)
 
-        self.user_info = user_info
-        return user_info
+            self.user_info = user_info
+            return user_info
+        finally:
+            self._authenticating = False
 
     def refresh_master_split_paths(self) -> list[str]:
         """Refresh authentication metadata without running post-login user requests."""
