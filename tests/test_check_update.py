@@ -18,6 +18,7 @@ def test_jp_refresh_updates_split_paths_without_full_relogin(monkeypatch):
             "appVersion": "1.0",
             "dataVersion": "1.0",
             "assetVersion": "1.0",
+            "appHash": "hash-valid",
         },
     ]
     monkeypatch.setattr(check_update, "jsonrpc_client", client)
@@ -30,6 +31,7 @@ def test_jp_refresh_updates_split_paths_without_full_relogin(monkeypatch):
         "appVersion": "1.0",
         "dataVersion": "1.0",
         "assetVersion": "1.0",
+        "appHash": "hash-valid",
     }
     assert client.request.call_args_list == [
         call("is_login"),
@@ -47,6 +49,7 @@ def test_jp_refresh_logs_in_when_client_has_no_session(monkeypatch):
             "appVersion": "1.0",
             "dataVersion": "1.0",
             "assetVersion": "1.0",
+            "appHash": "hash-valid",
         },
     ]
     monkeypatch.setattr(check_update, "jsonrpc_client", client)
@@ -59,6 +62,7 @@ def test_jp_refresh_logs_in_when_client_has_no_session(monkeypatch):
         "appVersion": "1.0",
         "dataVersion": "1.0",
         "assetVersion": "1.0",
+        "appHash": "hash-valid",
     }
     assert client.request.call_args_list == [
         call("is_login"),
@@ -269,115 +273,6 @@ def test_commit_i18n_files_failed_when_repo_missing(monkeypatch):
 
     assert result.outcome is GitOutcome.FAILED
     assert result.reason == "repo_missing"
-
-
-def test_post_strapi_ids_does_not_post_during_generation(tmp_path, monkeypatch):
-    import check_update as cu
-
-    posts: list[object] = []
-
-    def fake_post(*args, **kwargs):
-        posts.append((args, kwargs))
-        raise AssertionError("generation must not POST to Strapi")
-
-    outbox_path = tmp_path / "outbox.json"
-    monkeypatch.setattr(cu, "_STRAPI_OUTBOX_PATH", str(outbox_path))
-    monkeypatch.setattr(cu, "strapi_base_url", "http://strapi:3000")
-    monkeypatch.setattr(cu, "strapi_token", "SECRET")
-    monkeypatch.setattr(cu.requests, "post", fake_post)
-    monkeypatch.setattr(cu, "_ACTIVE_TXN_ID", "txn-generation")
-
-    cu._post_strapi_ids("cards/fromDB", [501, 502])
-
-    assert posts == []
-    payload = json.loads(outbox_path.read_text())
-    assert len(payload["records"]) == 1
-    record = next(iter(payload["records"].values()))
-    assert record["endpoint"] == "cards/fromDB"
-    assert record["ids"] == [501, 502]
-    assert record["ready"] is False
-    assert record["transaction_id"] == "txn-generation"
-
-
-def test_strapi_outbox_drain_success_returns_and_uses_headers(tmp_path):
-    from utils.strapi_outbox import StrapiOutbox
-
-    outbox = StrapiOutbox(str(tmp_path / "outbox.json"))
-    outbox.enqueue("cards/fromDB", [502, 501], transaction_id="txn-ready")
-    assert outbox.mark_transaction_ready("txn-ready") == 1
-
-    posts: list[dict] = []
-
-    def fake_post(url, **kwargs):
-        posts.append(
-            {
-                "url": url,
-                "json": kwargs.get("json"),
-                "headers": kwargs.get("headers"),
-                "timeout": kwargs.get("timeout"),
-            }
-        )
-        response = Mock()
-        response.raise_for_status.return_value = None
-        return response
-
-    result = outbox.drain(
-        base_url="http://strapi:3000/",
-        token="SECRET",
-        post=fake_post,
-    )
-
-    assert result == {"sent": 1, "failed": 0, "retained": 0}
-    assert outbox.pending_count() == 0
-    assert posts == [
-        {
-            "url": "http://strapi:3000/cards/fromDB",
-            "json": [501, 502],
-            "headers": {
-                "Authorization": "Bearer SECRET",
-                "X-Strapi-Token": "SECRET",
-            },
-            "timeout": 60,
-        }
-    ]
-    assert "SECRET" not in posts[0]["url"]
-    assert "token=" not in posts[0]["url"]
-
-
-def test_readiness_failure_retains_recovery_checkpoint_then_retries(monkeypatch):
-    """A local readiness write failure cannot strand a pushed transaction."""
-    import check_update as cu
-
-    class Journal:
-        transaction_id = "txn-ready-retry"
-        push_order = []
-        repos = {}
-        phase = None
-        deleted = False
-
-        def set_phase(self, phase):
-            self.phase = phase
-
-        def delete(self):
-            self.deleted = True
-
-    journal = Journal()
-    calls = []
-
-    def mark_ready(transaction_id):
-        calls.append(transaction_id)
-        if len(calls) == 1:
-            raise cu.StrapiOutboxError("injected readiness fsync failure")
-
-    monkeypatch.setattr(cu, "_mark_strapi_transaction_ready", mark_ready)
-    monkeypatch.setattr(cu, "_clear_staging_dir_safe", lambda *args: None)
-
-    assert cu._recover_push(journal) == "strapi_readiness_failed"
-    assert journal.deleted is False
-
-    assert cu._recover_push(journal) is None
-    assert journal.deleted is True
-    assert calls == ["txn-ready-retry", "txn-ready-retry"]
 
 
 def test_get_splitted_master_data_uses_fetch_master_split(monkeypatch):

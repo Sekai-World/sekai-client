@@ -2,7 +2,6 @@
 #
 # Generate a real deployment file with envsubst, e.g.:
 #   export INTERNAL_RPC_TOKEN='...'  AES_KEY='...'  REMOTE_GIT_BASE_URL='https://github.com/Sekai-World'
-#   export STRAPI_BASE_URL='...'  STRAPI_TOKEN='...'
 #   envsubst < checkUpdateJP.yaml.example > /root/pm2/checkUpdateJP.yaml
 #
 # Sensitive values are ${VARIABLE_NAME} placeholders. Production does not set
@@ -25,6 +24,4 @@ apps:
       JSONRPC_PORT: "39390"
       LOGLEVEL: DEBUG
       REMOTE_GIT_BASE_URL: https://github.com/Sekai-World
-      STRAPI_BASE_URL: ${STRAPI_BASE_URL}
-      STRAPI_TOKEN: ${STRAPI_TOKEN}
       INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}

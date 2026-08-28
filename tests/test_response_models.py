@@ -443,6 +443,23 @@ def test_validate_version_info_rejects_bool_float_optional_cdn_version():
             validate_version_info({**base, "appHash": bad, "assetHash": bad})
 
 
+def test_validate_version_info_requires_non_empty_app_hash_for_jp_en():
+    base = {"appVersion": "1", "dataVersion": "1", "assetVersion": "1"}
+    # missing appHash when required -> rejected
+    with pytest.raises(ResponseValidationError):
+        validate_version_info(base, require_app_hash=True)
+    # empty-string appHash when required -> rejected
+    with pytest.raises(ResponseValidationError):
+        validate_version_info({**base, "appHash": ""}, require_app_hash=True)
+    # non-str appHash when required -> rejected
+    with pytest.raises(ResponseValidationError):
+        validate_version_info({**base, "appHash": 123}, require_app_hash=True)
+    # valid non-empty appHash when required -> accepted
+    validate_version_info({**base, "appHash": "deadbeef"}, require_app_hash=True)
+    # appHash is not required when the flag is not set -> missing accepted
+    validate_version_info(base)
+
+
 def test_validate_auth_response_requires_cdn_version_type_for_region():
     base = _valid_auth()
     # missing cdnVersion when required -> rejected

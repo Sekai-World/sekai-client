@@ -221,18 +221,23 @@ def _require_present_str_or_int(d: dict[str, Any], source: str, field: str) -> N
         raise ResponseValidationError.invalid_type(source, field, "str|int", d[field])
 
 
-def validate_version_info(
-    data: object, *, require_cdn_version: bool = False
+def validate_version_info(  # noqa: C901 - narrow field-by-field boundary validation
+    data: object,
+    *,
+    require_cdn_version: bool = False,
+    require_app_hash: bool = False,
 ) -> dict[str, Any]:
     """Validate the client ``version_info`` mapping.
 
     Every consumer reads ``appVersion``/``dataVersion``/``assetVersion`` (str).
     ``cdnVersion`` is required (and must be ``str``/``int``, never ``bool`` or
-    ``float``) when *require_cdn_version* is set (cn/tw/kr version data). The
-    other optional fields (``appVersionStatus``, ``multiPlayVersion``,
-    ``cdnVersion``/``appHash``/``assetHash``) are type-checked when present so a
-    corrupt value surfaces clearly instead of raising a bare
-    ``KeyError``/``TypeError`` later.
+    ``float``) when *require_cdn_version* is set (cn/tw/kr version data).
+    ``appHash`` is required to be a non-empty string when *require_app_hash* is
+    set (JP/EN version data) so the published ``version_info`` always carries a
+    usable app hash. The other optional fields (``appVersionStatus``,
+    ``multiPlayVersion``, ``cdnVersion``/``appHash``/``assetHash``) are
+    type-checked when present so a corrupt value surfaces clearly instead of
+    raising a bare ``KeyError``/``TypeError`` later.
     """
     src = "version_info"
     d = _require_dict(data, src)
@@ -247,6 +252,13 @@ def validate_version_info(
         raise ResponseValidationError.invalid_type(
             src, "multiPlayVersion", "str|int", d["multiPlayVersion"]
         )
+    if require_app_hash:
+        if "appHash" not in d:
+            raise ResponseValidationError.missing_field(src, "appHash")
+        if not isinstance(d["appHash"], str) or d["appHash"] == "":
+            raise ResponseValidationError.invalid_type(
+                src, "appHash", "non-empty str", d["appHash"]
+            )
     if require_cdn_version:
         _require_present_str_or_int(d, src, "cdnVersion")
     for field in ("cdnVersion", "appHash", "assetHash"):

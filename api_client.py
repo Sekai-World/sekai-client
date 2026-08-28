@@ -478,17 +478,19 @@ class APIClient:
             self.headers["x-data-version"] = curr_ver_info["dataVersion"]
         self.headers["x-asset-version"] = curr_ver_info["assetVersion"]
         self.headers["x-app-version"] = curr_ver_info["appVersion"]
+        new_app_hash = curr_ver_info.get("appHash")
         if (
             self.headers.get("x-app-hash", None) is not None
-            and "appHash" in curr_ver_info
+            and isinstance(new_app_hash, str)
+            and new_app_hash != ""
         ):
-            self.headers["x-app-hash"] = curr_ver_info["appHash"]
-        elif self.region in ["jp"]:
+            self.headers["x-app-hash"] = new_app_hash
+        elif self.headers.get("x-app-hash", None) is None and self.region == "jp":
             ver_data = get_app_ver_and_hash_jp()
             self.headers["x-app-version"] = ver_data["appVersion"]
             self.headers["x-app-hash"] = ver_data["appHash"]
             self.version_info["appHash"] = ver_data["appHash"]
-        elif self.region in ["en"]:
+        elif self.headers.get("x-app-hash", None) is None and self.region == "en":
             ver_data = get_app_ver_and_hash_en()
             self.headers["x-app-version"] = ver_data["appVersion"]
             self.headers["x-app-hash"] = ver_data["appHash"]
@@ -556,7 +558,7 @@ class APIClient:
             fetch_version = get_app_ver_and_hash_en
 
         try:
-            version = validate_version_info(fetch_version())
+            version = validate_version_info(fetch_version(), require_app_hash=True)
             for source_key, header_key in (
                 ("appVersion", "x-app-version"),
                 ("dataVersion", "x-data-version"),
@@ -664,7 +666,9 @@ class APIClient:
         self.version_info["dataVersion"] = data_ver
         # Keep the version document complete. JP/EN auth responses do not carry
         # appHash, but the request headers already contain the validated value.
-        self.version_info["appHash"] = self.headers.get("x-app-hash", "")
+        app_hash = self.headers.get("x-app-hash")
+        if isinstance(app_hash, str) and app_hash != "":
+            self.version_info["appHash"] = app_hash
         self.version_info["assetHash"] = asset_hash
         self.version_info["multiPlayVersion"] = multi_play_ver
 
@@ -923,7 +927,17 @@ class APIClient:
             )
 
         for key in curr_ver_info:
-            self.version_info[key] = curr_ver_info[key]
+            value = curr_ver_info[key]
+            # Preserve an already-valid appHash. Upstream system data for JP/EN
+            # may omit or empty ``appHash``; do not let that clobber the
+            # validated hash carried in the request headers.
+            if key == "appHash" and (
+                not isinstance(value, str) or value == ""
+            ) and isinstance(self.version_info.get("appHash"), str) and (
+                self.version_info.get("appHash") != ""
+            ):
+                continue
+            self.version_info[key] = value
 
         if input_ver_info:
             res["maintenance"] = self.version_info["appVersionStatus"] == "maintenance"

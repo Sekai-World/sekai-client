@@ -55,7 +55,6 @@ with measured scheduler and upstream latency evidence.
   `userHomeBanners.json` and `userInformations.json`; keep
   `ENABLE_SEKAI_UPDATE_USER_INFO` disabled on all `checkUpdate-*` processes.
 - `API_TOKEN` belongs only to the public API/Dashboard process.
-- `STRAPI_TOKEN` belongs only to the JP check-update process.
 - Do not set `ALLOW_INSECURE_INTERNAL_RPC` or `ENABLE_UNSAFE_PJSK_RPC` in
   production.
 - Never embed a GitHub personal access token in `REMOTE_GIT_BASE_URL`. Production

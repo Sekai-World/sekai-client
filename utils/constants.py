@@ -115,7 +115,6 @@ local_git_folder_names = {
 remote_git_url_base = getenv("REMOTE_GIT_BASE_URL", "https://github.com/Sekai-World")
 
 strapi_base_url = getenv("STRAPI_BASE_URL", "http://localhost:3000")
-strapi_token = getenv("STRAPI_TOKEN", "")
 
 sekai_api_key = getenv("SEKAI_API_KEY", "")
 

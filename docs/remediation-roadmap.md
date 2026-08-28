@@ -150,7 +150,7 @@ uv run --extra dev pytest tests/
 - [x] 实现集中式日志脱敏（`utils/redaction.py`：`SecretRedactingFilter` 递归脱敏 dict/list 与文本脱敏；`logging_config.configure_logging` 默认安装，`attach_redaction` 供 gunicorn 入口复用）。
 - [x] 屏蔽 `authorization`/`cookie`/`set-cookie`/`x-session-token`/`credential`/`signature`/`accessToken`/`access_token`/`token`/`api_key`/`x-api-token`/`x-api-key`/`device_id`/`x-install-id` 等键与 `Bearer`/header-like/URL query（`[REDACTED]` 替换）。
 - [x] `shared_client` 请求/错误日志面显式缩小：`run_job` 在把错误 `data` 序列化回内部调用方前先脱敏。
-- [x] `check_update._post_strapi_ids`：URL 不再含 token；改用 `Authorization: Bearer` 与 `X-Strapi-Token` header，并调用 `raise_for_status` 后捕获 `requests.RequestException` 记录错误继续，避免辅助 Strapi 故障阻断主数据更新；移除 legacy query fallback。
+- [x] （历史实现）`check_update._post_strapi_ids`：URL 不再含 token；改用 `Authorization: Bearer` 与 `X-Strapi-Token` header，并调用 `raise_for_status` 后捕获 `requests.RequestException` 记录错误继续。该 check-update Strapi ID 发布链路现已移除。
 - [x] `service_dashboard._scan_logs` 的 `recentErrors` 在返回前脱敏。
 - [x] 凭据 YAML 原子写入（`shared_client._write_account_yaml_atomic`：同目录临时文件、`0600`、`flush`/`fsync`/`os.replace`/异常清理、`yaml.safe_dump`）。
 - [x] 内部 RPC 鉴权（`Config.get_internal_rpc_token` / `ALLOW_INSECURE_INTERNAL_RPC` 动态读取；header `x-internal-rpc-token`；`compare_digest` 常量时间比较；默认 token 缺失 500，错误 token 401；仅 `ALLOW_INSECURE_INTERNAL_RPC=true` 且 loopback 才 bypass，非 loopback 一律 401；未认证请求不启动 scheduler）。
@@ -172,7 +172,7 @@ uv run --extra dev pytest tests/
 
 - 日志脱敏：`tests/test_redaction.py`（结构/文本/Bearer/header/URL query/日志 filter 单测，断言 secret 不出现在输出）。`configure_logging` 默认安装 filter；`shared_client.run_job` 对错误 `data` 脱敏；`service_dashboard._scan_logs` 对 `recentErrors` 脱敏。
 - 内部 RPC 鉴权：`tests/test_internal_rpc_auth.py` 覆盖 server 端（缺 token→500、错 token→401、正确 token→通过、loopback dev bypass、非 loopback→401、未认证不启动 scheduler）与 client 端（自动加 token header、缺 token 本地 RuntimeError、HTTP 错误先 raise）。`tests/test_jsonrpc_client.py` 增加 autouse fixture 提供 dev token。
-- Strapi：`tests/test_check_update.py::test_post_strapi_ids_uses_authorization_header_not_query` 与 `..._logs_and_continues_on_http_error`（header 化、无 query token、调用 `raise_for_status`，HTTP 错误不传播）。
+- Strapi（历史证据）：`tests/test_check_update.py::test_post_strapi_ids_uses_authorization_header_not_query` 与 `..._logs_and_continues_on_http_error`；check-update Strapi ID 发布链路现已移除。
 - YAML 原子性：`tests/test_shared_client.py::test_write_account_yaml_atomic_mode_0600_and_cleanup_on_failure`（0600、替换、失败清理临时文件，不真实碰用户文件）。
 - account_info 字段：`tests/test_shared_client.py::test_account_info_rpc_returns_only_userid_and_region`（仅 userId/region）。
 - request_and_decrypt 白名单：`tests/test_api_client.py` 4 例（允许名单 URL、拒绝非 GET/非 https/错误 host/traversal/bad filename）。
@@ -239,7 +239,7 @@ uv run --extra dev pytest tests/
 
 防止 04:00 定时任务重叠、部分数据发布和 push 失败导致的数据丢失。
 
-阶段 4 已完成 Strapi ID 持久化 outbox。`event_tracker` 的排名 outbox 不属于本阶段，仍是阶段 7 的未实现工作。
+阶段 4 的历史实现曾包含 Strapi ID 持久化 outbox；该 check-update 链路现已移除，`event_tracker` 的当前活动读取和排名 outbox 独立保留。
 
 ### 任务
 
@@ -267,7 +267,7 @@ uv run --extra dev pytest tests/
 - `tests/test_git_safety.py`、`tests/test_two_repo_publish_integration.py`：临时 bare remote 上的 fast-forward/ahead/diverged 状态、push 失败保留本地 SHA、双仓库 commit-all、部分 push 停止和同 SHA 恢复。
 - `tests/test_update_staging_integration.py`：真实 suite-user/information、compact alias、i18n handler、JSON 校验和 `read_bytes()` 正式树快照。
 - 阶段验证（2026-07-18）：Phase 4 聚焦/集成测试 112 passed；全套 `uv run pytest -q`：244 passed；`uv run ruff check`：pass；`git diff --check`：clean。
-- Gate 5 验收证据（2026-07-22）：Oracle **APPROVE**。调度器显式使用 `Asia/Tokyo` 触发；持久化 Tokyo daily due marker 覆盖迟到、合并、重启和重叠触发，并仅在成功且日期匹配时完成标记。仓库采用 clone/open `flock`；仅实现 Strapi ID outbox（**不包含 `event_tracker`**），投递前持久化，只有 Git 事务完成或可恢复 readiness checkpoint 后才进入 ready，随后执行 Git 后 HTTP 投递；使用 header auth，并支持去重与重试。验证：`uv run pytest -q` **377 passed**；聚焦测试 **120 passed**；Ruff 与 `git diff --check` 均 clean。
+- Gate 5 验收证据（2026-07-22，历史记录）：Oracle **APPROVE**。调度器显式使用 `Asia/Tokyo` 触发；持久化 Tokyo daily due marker 覆盖迟到、合并、重启和重叠触发，并仅在成功且日期匹配时完成标记。仓库采用 clone/open `flock`；当时实现了 check-update 的 Strapi ID outbox（**不包含 `event_tracker`**），投递前持久化，只有 Git 事务完成或可恢复 readiness checkpoint 后才进入 ready，随后执行 Git 后 HTTP 投递；使用 header auth，并支持去重与重试。验证：`uv run pytest -q` **377 passed**；聚焦测试 **120 passed**；Ruff 与 `git diff --check` 均 clean。该 check-update 链路随后已移除。
 
 ### 执行记录
 
@@ -275,8 +275,8 @@ uv run --extra dev pytest tests/
 - 2026-07-18：生成流程改为 repository-adjacent staging、JSON 重新解析校验、文件级 `os.replace` 发布；所有 master 非版本文件和 i18n 文件完成后，最后发布 master `versions.json`，仅成功后推进 published `version_info`。publication 失败清理两个 staging root，但保留已替换的 dirty 工作树供诊断；明确接受这不是多文件事务或跨仓库 2PC。
 - 2026-07-18：commit 仅使用 cycle manifest；所有仓库先 commit 再按固定顺序 push，首个 push 失败停止后续 push，保留所有 pending local SHA。通过本地 bare remote、spawn 锁和真实 staging 路径完成验收；未访问生产仓库或外部网络。
 - 2026-07-18：为后续“一小时硬期限与 04:00 daily 抢占”增加严格 owner metadata 基础（尚未接入生产）：包含 canonical schema、Linux `/proc` 身份字段、0600 原子 owner 文件、完整 metadata matched-delete、多锁写失败回滚和持有 `flock` 期间的 cleanup 协议。该提交不创建或终止 worker，不改变 scheduler 行为；owner/watchdog、进程树终止和 daily 抢占必须在 Linux CI/隔离环境完成真实信号验证后另行接入。
-- 2026-07-22：完成 Gate 5 Phase 4 执行记录并获 Oracle **APPROVE**。新增显式 `Asia/Tokyo` scheduler trigger、可持久化且按日期绑定的 Tokyo daily due marker（覆盖 late/coalesced/restart/overlap，成功后才完成），clone/open `flock`，以及仅限 Strapi ID 的持久化 outbox：Git 事务完成或可恢复 readiness checkpoint 后 ready，Git 后 HTTP、header auth、dedupe/retry。`event_tracker` outbox 仍属于阶段 7，未宣称完成。全套 `uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。
-- 2026-07-23：阶段 4 通过 [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) 合并到目标分支。PR #9 包含更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；`event_tracker` 排名 outbox 仍未实现，保留在阶段 7。
+- 2026-07-22：完成 Gate 5 Phase 4 执行记录并获 Oracle **APPROVE**。新增显式 `Asia/Tokyo` scheduler trigger、可持久化且按日期绑定的 Tokyo daily due marker（覆盖 late/coalesced/restart/overlap，成功后才完成），clone/open `flock`，以及当时的 check-update Strapi ID 持久化 outbox。该历史 outbox 后续已移除；`event_tracker` 的 ranking outbox 独立保留。
+- 2026-07-23：阶段 4 通过 [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) 合并到目标分支。PR #9 的更新周期互斥、Git 发布恢复、staging 原子发布和协作式普通周期 deadline 仍然保留；其中 check-update Strapi ID 发布链路后续已移除。
 
 ## 阶段 5：区域 Bootstrap 与客户端状态机
 
@@ -498,7 +498,7 @@ UNINITIALIZED
 | 2 | `ci: establish phase 1 verification baseline` | Ruff、mypy、pytest CI | `[x]` | [#6](https://github.com/Sekai-World/sekai-client/pull/6) merged |
 | 3 | `security: harden internal rpc and credential handling` | 日志、token、文件权限、RPC | `[x]` | [#7](https://github.com/Sekai-World/sekai-client/pull/7) merged |
 | 4 | `fix: harden dashboard rendering and restart actions` | 状态、确认、DOM、token | `[-]` | 分支 `security/phase-3-dashboard-safety`，浏览器验收已完成，待提交阶段 3 PR |
-| 5 | `fix: harden update cycle and git publishing` | 定时任务互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox（不含 `event_tracker` 排名 outbox） | `[x]` | [#9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
+| 5 | `fix: harden update cycle and git publishing` | 定时任务互斥、Git 发布恢复、staging 原子发布和协作式普通周期 deadline；历史上包含 check-update Strapi ID outbox，后续已移除 | `[x]` | [#9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
 | 6 | `refactor: model per-region client lifecycle` | 区域状态机、bootstrap、readiness | `[-]` | 未提交阶段 5 工作；无 PR |
 | 7 | `refactor: enforce request deadlines and retry policy` | Deadline、重试、取消、队列 | `[x]` | PRs [#21](https://github.com/Sekai-World/sekai-client/pull/21)、[#22](https://github.com/Sekai-World/sekai-client/pull/22)、[#23](https://github.com/Sekai-World/sekai-client/pull/23)、[#24](https://github.com/Sekai-World/sekai-client/pull/24) merged |
 | 8 | `feat: persist event tracker delivery outbox` | SQLite outbox 与 scheduler | `[x]` | [#40](https://github.com/Sekai-World/sekai-client/pull/40) merged |
@@ -544,13 +544,14 @@ and test-count records above are retained as execution history.
   idempotency-aware retry policy with `Retry-After`/jitter backoff, and queue
   metrics landed through PRs #21-#24; the cooperative `check_update` cycle
   deadline from Phase 4 remains in place.
-- Phase 7 is partially complete. The event-ranking SQLite outbox merged through
-  PR #40: snapshots persist before delivery, drains are time-bounded, terminal
-  records expire by retention, and pending deliveries resume after restart;
-  the scheduler no longer removes and recreates slow jobs. PR #41 further
-  reduced event-tracker request overhead. The deployed receiver now persists
-  and enforces `Idempotency-Key`; upstream response models and boundary
-  validation remain open.
+- Phase 7 is complete in the current working tree. The event-ranking SQLite
+  outbox merged through PR #40: snapshots persist before delivery, drains are
+  time-bounded, terminal records expire by retention, and pending deliveries
+  resume after restart; the scheduler no longer removes and recreates slow
+  jobs. PR #41 further reduced event-tracker request overhead. The deployed
+  receiver persists and enforces `Idempotency-Key`; upstream response models
+  and boundary validation are implemented in `response_models.py`, including
+  the JP/EN non-empty `appHash` publication requirement.
 - Production Git authentication migration is prepared in-repository: the
   repository-scoped GitHub App is restricted to approved generated-data
   repositories, and the credential helper replaces long-lived PATs with
@@ -566,8 +567,8 @@ and test-count records above are retained as execution history.
 - Follow the roadmap's
   [Recommended Execution Order](architecture-decoupling-roadmap.md#recommended-execution-order):
   the Phase 0/1 confirmations and critical Phase 6 reliability work are done.
-  Remaining priorities: Phase 7 upstream response validation ([#56](https://github.com/Sekai-World/sekai-client/issues/56)),
-  Phase 5 public endpoint verification and monitoring integration ([#57](https://github.com/Sekai-World/sekai-client/issues/57)),
+  Remaining priorities: Phase 5 public endpoint verification and monitoring
+  integration ([#57](https://github.com/Sekai-World/sekai-client/issues/57)),
   retirement of the legacy production checkout after one observed daily cycle
   ([#58](https://github.com/Sekai-World/sekai-client/issues/58)), and continued
   one-region-at-a-time remote-provider rollout ([#55](https://github.com/Sekai-World/sekai-client/issues/55)).
@@ -582,8 +583,8 @@ and test-count records above are retained as execution history.
 | 2026-07-16 | 1 | 新增 CI（`.github/workflows/ci.yml`，read-only，Python 3.12 + uv）。机械 lint 修复与 5 个回归测试完成；依赖后续阶段的任务保持 deferred。验证：format/check/mypy/pytest 全绿，`git diff --check` clean。PR #6 已合并；required status check 的仓库设置仍待确认。 | 阶段 2；运维核对阶段 0 生产事实和分支保护 |
 | 2026-07-16 | 2 | 实现最小安全设计：日志脱敏、Strapi header 化、凭据 YAML 原子写入 0600、内部 RPC 鉴权、请求白名单、受限 master split RPC、account_info 缩权、PM2 env 传递及安全 PM2 示例。最终验证全绿。PR #7 已合并。**延期（未伪称完成）**：secret store、mTLS/Unix socket、完整 capability model；Dashboard token 存储转入阶段 3。 | 阶段 3 Dashboard 安全与交互 |
 | 2026-07-17 | 3 | 已实现统一状态模型、安全 DOM 渲染、重启确认与防重复、结构化 restartStatus、session-only/记住设备/清除 token。聚焦测试 24 passed，实施时全套测试 139 passed，JavaScript syntax 与 diff check 通过。真实桌面/移动端流程和 PM2 重启尚未手工验证。 | 完成浏览器验收，更新证据后提交阶段 3 PR |
-| 2026-07-22 | 4 | Gate 5 Oracle **APPROVE**：显式 `Asia/Tokyo` scheduler trigger；持久化 Tokyo daily due marker 覆盖 late/coalesced/restart/overlap，且仅成功并完成日期绑定时清除/完成；clone/open `flock`；仅 Strapi ID outbox（不含 `event_tracker`），先持久化，Git 事务完成或可恢复 readiness checkpoint 后 ready，再 Git 后 HTTP，header auth、dedupe/retry。验证：`uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。 | 阶段 5；阶段 7 event_tracker outbox 仍未完成 |
-| 2026-07-23 | 4 | PR [#9](https://github.com/Sekai-World/sekai-client/pull/9) 已合并。合并范围为更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及仅限 Strapi ID 的持久化 outbox；不包含 `event_tracker` 排名 outbox。 | 阶段 5；阶段 7 event_tracker outbox 与 API 响应校验仍未完成 |
+| 2026-07-22 | 4 | Gate 5 Oracle **APPROVE**（历史记录）：显式 `Asia/Tokyo` scheduler trigger、持久化 Tokyo daily due marker、clone/open `flock`，以及当时的 check-update Strapi ID outbox。验证：`uv run pytest -q` 377 passed，聚焦 120 passed，Ruff 与 `git diff --check` clean。check-update Strapi ID outbox 后续已移除。 | 阶段 5；阶段 7 event-tracker outbox 当时仍未完成 |
+| 2026-07-23 | 4 | PR [#9](https://github.com/Sekai-World/sekai-client/pull/9) 已合并。合并范围为更新周期互斥、Git 发布恢复、staging 原子发布、协作式普通周期 deadline，以及当时的 check-update Strapi ID outbox；该 outbox 后续已移除。 | 阶段 5；阶段 7 event-tracker outbox 与 API 响应校验当时仍未完成 |
 | 2026-07-23 | 5 | 阶段 5 代码切片实现固定区域生命周期、序列化状态变更、readiness、目标区域 `ensure_ready`、脱敏 503/`Retry-After`、health 兼容和正式区域 PM2 单 worker 拓扑。Oracle Gate 1/2 均 **APPROVE**；全套测试和静态检查通过。 | 受控 PM2/Gunicorn、单区域 canary/rollout、真实公共入口与部署监控检查；未实现的 bootstrap、阶段 6/7 保持待办 |
 | 2026-08-13 | 6 | Phase 6 四个 PR 切片全部合并（PRs #21–#24）：端到端 RPC deadline 与预算传递、迟到任务状态提交保护、幂等感知重试策略（GET 可重试、写默认不重试）、429/`Retry-After` 与指数退避+jitter、队列 envelope 与指标快照。各切片验证：Ruff、scoped Mypy、pytest 全绿。 | 阶段 7 排名 outbox 与响应校验 |
 | 2026-08-16/17 | 5 | The first TW remote-provider consumer passed the 24-hour gate with the client and account service online and ready, without observed process or container restarts. Lease and inventory health stayed within acceptance criteria; no account-service error, failure, or quarantine signal was observed in the operator snapshot. Exact operational identifiers and counters are retained privately. The event-ranking SQLite outbox was not part of this canary. | TW gate accepted. Verify the next region's inventory and configuration before one-region-at-a-time rollout; retain rollback artifacts through the later of 24 hours after activation or one scheduled update cycle. |
@@ -594,3 +595,4 @@ and test-count records above are retained as execution history.
 | 2026-08-25 | ops | All production processes migrated from the legacy release branch onto the current main line; data repositories moved with the checkout and the GitHub App credential helper repointed. Two incidents during the window were resolved: a stale git index.lock left by a killed process blocked one daily cycle, and a JSON-RPC method-version mismatch between the event tracker and a stale shared-client instance raised -32601 until restart. Final health: all regions READY. | Observe the next scheduled daily cycle before retiring the legacy checkout and failure-artifact directories. |
 | 2026-08-26 | roadmap | Current audit reconciled: event-tracker client and receiver idempotency/outbox work is complete; Dashboard desktop/mobile browser acceptance is complete; remaining work is upstream response validation, Phase 5 public endpoint/monitoring acceptance, legacy checkout retirement, and one-region rollout. | Track [#55](https://github.com/Sekai-World/sekai-client/issues/55), [#56](https://github.com/Sekai-World/sekai-client/issues/56), [#57](https://github.com/Sekai-World/sekai-client/issues/57), and [#58](https://github.com/Sekai-World/sekai-client/issues/58). |
 | 2026-08-27 | 5 | Added a repeatable, read-only Phase 5 acceptance tool (`deployment/phase5_acceptance.py`) and runbook (`docs/phase5-production-acceptance.md`). The tool performs aggregate, redacted PM2/Gunicorn and public-health validation without mutating services; it does not contain or claim any production acceptance evidence. Phase 5 remains in progress. | Operators run the tool in production and record only aggregate acceptance evidence (no URLs, bodies, credentials, IDs, paths, exact timestamps, or detailed counters) before marking Phase 5 complete; continue one-region canary/rollout. |
+| 2026-08-28 | 7 | Removed the check-update Strapi ID publication/outbox path and its deployment configuration. Preserved event-tracker Strapi current-event reads and ranking delivery outbox. JP/EN version validation now requires a non-empty `appHash`, and valid hashes are not overwritten by empty upstream values. Verification: full `pytest` 777 passed; Ruff and `git diff --check` clean. | Deploy only after the normal review/rollback gate; no production changes were made in this worktree. |

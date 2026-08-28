@@ -42,8 +42,6 @@ from utils.constants import (
     nuverse_master_data_base_url,
     pjsk_region,
     remote_git_url_base,
-    strapi_base_url,
-    strapi_token,
     update_options,
 )
 from utils.crypto import decrypt_msgpack
@@ -60,7 +58,6 @@ from utils.git_lock import (
     repo_file_locks,
 )
 from utils.jsonrpc_client import JSONRPCClient
-from utils.strapi_outbox import StrapiOutbox, StrapiOutboxError
 from utils.update_transaction import (
     FileEntry,
     JournalError,
@@ -146,9 +143,6 @@ _DAILY_DUE_HOUR = 4
 # Kept outside the transaction journal so recovery ambiguity cannot clear it.
 _DAILY_DUE_STATE_PATH = path.join(
     path.dirname(path.abspath(__file__)), ".check_update_daily_due.json"
-)
-_STRAPI_OUTBOX_PATH = path.join(
-    path.dirname(path.abspath(__file__)), ".check_update_strapi_outbox.json"
 )
 
 
@@ -358,72 +352,7 @@ def _write_i18n_json(filename: str, payload: dict) -> None:
     _write_i18n_file(filename, payload)
 
 
-def _strapi_outbox_path() -> str:
-    return _STRAPI_OUTBOX_PATH
 
-
-def _strapi_outbox() -> StrapiOutbox:
-    return StrapiOutbox(_strapi_outbox_path())
-
-
-def _post_strapi_ids(endpoint: str, ids: list[int]) -> None:
-    """Persist a deferred Strapi notification instead of posting in generation.
-
-    The historical helper name is kept for the i18n generation call sites, but
-    its side effect is now durable local enqueue only. Delivery is unlocked later
-    by the Git publication transaction id after commit/push success.
-    """
-    try:
-        _strapi_outbox().enqueue(
-            endpoint,
-            ids,
-            transaction_id=_ACTIVE_TXN_ID,
-        )
-    except StrapiOutboxError:
-        # Fail closed for malformed local state: do not drop diagnostics or post
-        # directly, and do not continue generation as if Strapi state were safely
-        # recorded.
-        logger.exception("[_post_strapi_ids] failed to persist Strapi outbox record")
-        raise
-
-
-def _mark_strapi_transaction_ready(transaction_id: str | None) -> None:
-    if not transaction_id:
-        return
-    try:
-        _strapi_outbox().mark_transaction_ready(transaction_id)
-    except Exception as err:  # noqa: BLE001 - readiness must fail closed
-        logger.exception("[strapi_outbox] failed to mark transaction ready")
-        # This is a durable checkpoint between Git success and journal
-        # deletion.  Callers must retain the journal so recovery can retry it.
-        if isinstance(err, StrapiOutboxError):
-            raise
-        raise StrapiOutboxError("failed to persist Strapi readiness") from err
-
-
-def _drain_ready_strapi_outbox() -> None:
-    try:
-        result = _strapi_outbox().drain(
-            base_url=strapi_base_url,
-            token=strapi_token,
-            timeout=60,
-        )
-    except StrapiOutboxError:
-        logger.exception("[strapi_outbox] malformed state; delivery disabled")
-        return
-    if result["sent"] or result["failed"]:
-        logger.info(
-            "[strapi_outbox] delivery sent=%s failed=%s retained=%s",
-            result["sent"],
-            result["failed"],
-            result["retained"],
-        )
-
-
-I18N_CARD_ID_THRESHOLD = 500
-I18N_MUSIC_ID_THRESHOLD = 290
-I18N_EVENT_ID_THRESHOLD = 70
-I18N_VIRTUAL_LIVE_ID_THRESHOLD = 180
 
 
 def _update_i18n_cards(data: list) -> None:
@@ -439,35 +368,19 @@ def _update_i18n_cards(data: list) -> None:
             if elem["gachaPhrase"] != "-"
         },
     )
-    _post_strapi_ids(
-        "cards/fromDB",
-        [elem["id"] for elem in data if elem["id"] > I18N_CARD_ID_THRESHOLD],
-    )
 
 
 def _update_i18n_musics(data: list) -> None:
     _write_i18n_json("music_titles.json", {elem["id"]: elem["title"] for elem in data})
-    _post_strapi_ids(
-        "musics/fromDB",
-        [elem["id"] for elem in data if elem["id"] > I18N_MUSIC_ID_THRESHOLD],
-    )
 
 
 def _update_i18n_events(data: list) -> None:
     _write_i18n_json("event_name.json", {elem["id"]: elem["name"] for elem in data})
-    _post_strapi_ids(
-        "events/fromDB",
-        [elem["id"] for elem in data if elem["id"] > I18N_EVENT_ID_THRESHOLD],
-    )
 
 
 def _update_i18n_virtual_lives(data: list) -> None:
     _write_i18n_json(
         "virtualLive_name.json", {elem["id"]: elem["name"] for elem in data}
-    )
-    _post_strapi_ids(
-        "virtual-lives/fromDB",
-        [elem["id"] for elem in data if elem["id"] > I18N_VIRTUAL_LIVE_ID_THRESHOLD],
     )
 
 
@@ -730,20 +643,30 @@ def _refresh_version_info_from_source() -> dict[str, Any]:
     return _validate_fetched_version_info(
         jsonrpc_client.request("version_info"),
         require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
+        require_app_hash=pjsk_region in ("jp", "en"),
     )
 
 
 def _validate_fetched_version_info(
-    raw: object, *, require_cdn_version: bool = False
+    raw: object,
+    *,
+    require_cdn_version: bool = False,
+    require_app_hash: bool = False,
 ) -> dict[str, Any]:
     """Validate the upstream ``version_info`` boundary before use.
 
     Raises a clear diagnostic error on malformed/partial version info so a bad
     candidate never advances the published ``version_info`` global. ``cdnVersion``
-    is required (and type-checked) for cn/tw/kr version data.
+    is required (and type-checked) for cn/tw/kr version data. ``appHash`` is
+    required to be a non-empty string for JP/EN version data so the published
+    ``version_info`` always carries a usable app hash.
     """
     try:
-        return validate_version_info(raw, require_cdn_version=require_cdn_version)
+        return validate_version_info(
+            raw,
+            require_cdn_version=require_cdn_version,
+            require_app_hash=require_app_hash,
+        )
     except ResponseValidationError as error:
         raise RuntimeError(f"Invalid version info response: {error}") from error
 
@@ -866,6 +789,7 @@ def refresh_version(candidate: dict[str, Any] | None = None) -> dict[str, Any]:
         candidate = _validate_fetched_version_info(
             candidate,
             require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
+            require_app_hash=pjsk_region in ("jp", "en"),
         )
     logger.debug("[refresh_version] using candidate version info: %s", candidate)
     _write_master_file("versions.json", candidate)
@@ -2655,13 +2579,6 @@ def _recover_push(journal: TransactionJournal) -> "str | None":
             # untouched and return a retryable status.
             return f"push_failed:{key}:{push_res.reason}"
     # All verified: mark completed, clean staging, delete journal.
-    try:
-        _mark_strapi_transaction_ready(journal.transaction_id)
-    except StrapiOutboxError:
-        # Git is complete, but readiness is not.  Keep the PUSHING journal as
-        # the durable retry checkpoint; a later recovery pass will promote the
-        # records before it is allowed to delete the journal.
-        return "strapi_readiness_failed"
     journal.set_phase(TxnPhase.COMPLETED)
     _clear_staging_dir_safe(_master_staging_parent())
     _clear_staging_dir_safe(_i18n_staging_parent())
@@ -3127,22 +3044,18 @@ def _run_update_cycle_locked(
     daily_due_date: str | None = None,
     daily_context: dict[str, str | None] | None = None,
 ) -> str:
-    """Run the locked cycle and always retry ready Strapi outbox records.
+    """Run the locked cycle body while all locks are held.
 
-    The inner body only marks current-transaction Strapi records ready after Git
-    success. This finally block therefore can safely run on any status: deferred
-    in-flight records stay unsent, while previously-ready records get a recovery
-    drain even when this cycle has no new Strapi records.
+    The body owns every side effect (generation, publication, commit, push). Git
+    success completes the cycle normally; no external Strapi notification gates
+    or follows the update cycle.
     """
-    try:
-        return _run_update_cycle_locked_body(
-            daily,
-            deadline=deadline,
-            daily_due_date=daily_due_date,
-            daily_context=daily_context,
-        )
-    finally:
-        _drain_ready_strapi_outbox()
+    return _run_update_cycle_locked_body(
+        daily,
+        deadline=deadline,
+        daily_due_date=daily_due_date,
+        daily_context=daily_context,
+    )
 
 
 def _run_update_cycle_locked_body(  # noqa: C901
@@ -3305,13 +3218,6 @@ def _run_update_cycle_locked_body(  # noqa: C901
     # Phase 2: all pushes succeeded — mark the journal COMPLETED, clean the
     # journal-owned staging, and delete the journal. (If no journal exists — e.g.
     # masterdb_diff_repo was None — there is nothing to clean.)
-    try:
-        _mark_strapi_transaction_ready(journal.transaction_id if journal else None)
-    except StrapiOutboxError:
-        # Do not delete the journal after Git success until local outbox
-        # readiness is durably promoted.  External HTTP delivery is still only
-        # attempted by the finally-block drain and cannot block Git completion.
-        return "strapi_readiness_failed"
     _complete_journal_after_push(journal)
     return "ok"
 

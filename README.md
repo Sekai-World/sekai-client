@@ -48,8 +48,7 @@ Some files need to have specific environment variables, listed below
 | `GIT_FOLDER_SEKAI_I18N` | sekai i18n git project name (default: sekai-i18n) | | ✅ | | |
 | `GIT_FOLDER_SEKAI_MASTER_DB_DIFF` | sekai master db diff git project name (default: sekai-master-db-diff) | | ✅ | | |
 | `REMOTE_GIT_BASE_URL` | git remote base url | | ✅ | | |
-| `STRAPI_BASE_URL` | strapi base url | | ✅ | ✅ | |
-| `STRAPI_TOKEN` | strapi access token | | ✅ | | |
+| `STRAPI_BASE_URL` | strapi base url | | | ✅ | |
 | `SEKAI_API_KEY` | sekai api key | | | ✅ | |
 | `JSONRPC_PORT` | Shared client jsonrpc port | | ✅ | ✅ | |
 | `INTERNAL_RPC_TOKEN` | Auth token for internal JSON-RPC between shared_client / check_update / event_tracker / api_public_server (required, loopback only) | ✅ | ✅ | ✅ | ✅ |
