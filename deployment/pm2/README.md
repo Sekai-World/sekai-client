@@ -50,6 +50,10 @@ with measured scheduler and upstream latency evidence.
   check-update workers, event trackers, and the public API.
 - The standalone `checkUpdate-cn` process does not use internal RPC and must not
   receive `INTERNAL_RPC_TOKEN`.
+- `updateUserInformation-{jp,en,tw,kr}` refreshes user information every 30
+  minutes without checking for a new game version. It owns only
+  `userHomeBanners.json` and `userInformations.json`; keep
+  `ENABLE_SEKAI_UPDATE_USER_INFO` disabled on all `checkUpdate-*` processes.
 - `API_TOKEN` belongs only to the public API/Dashboard process.
 - `STRAPI_TOKEN` belongs only to the JP check-update process.
 - Do not set `ALLOW_INSECURE_INTERNAL_RPC` or `ENABLE_UNSAFE_PJSK_RPC` in

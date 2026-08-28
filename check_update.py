@@ -1744,10 +1744,6 @@ def _generate_and_publish(  # noqa: C901
         _STAGING_MANIFEST = manifest
 
         candidate = refresh_version()
-        if not check_update_simple_mode and update_options["userInfo"]:
-            save_info_from_suite_user()
-        if update_options["userInfo"] and pjsk_region != "en":
-            refresh_information()
     except Exception:
         logger.exception("[cycle] generation/validation failed; discarding staging")
         _STAGING_MANIFEST = None

@@ -1,0 +1,13 @@
+# One-process-per-file PM2 YAML template for updateUserInformation-tw.
+apps:
+  - name: updateUserInformation-tw
+    script: uv run python update_user_information.py
+    cwd: /root/sekai-client
+    env:
+      SEKAI_REGION: tw
+      ENABLE_SEKAI_UPDATE_MASTER: "true"
+      GIT_FOLDER_SEKAI_MASTER_DB_DIFF: sekai-master-db-diff
+      JSONRPC_PORT: "39391"
+      LOGLEVEL: INFO
+      REMOTE_GIT_BASE_URL: https://github.com/Sekai-World
+      INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}
