@@ -931,10 +931,11 @@ class APIClient:
             # Preserve an already-valid appHash. Upstream system data for JP/EN
             # may omit or empty ``appHash``; do not let that clobber the
             # validated hash carried in the request headers.
-            if key == "appHash" and (
-                not isinstance(value, str) or value == ""
-            ) and isinstance(self.version_info.get("appHash"), str) and (
-                self.version_info.get("appHash") != ""
+            if (
+                key == "appHash"
+                and (not isinstance(value, str) or value == "")
+                and isinstance(self.version_info.get("appHash"), str)
+                and (self.version_info.get("appHash") != "")
             ):
                 continue
             self.version_info[key] = value

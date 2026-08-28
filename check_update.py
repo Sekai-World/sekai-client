@@ -352,9 +352,6 @@ def _write_i18n_json(filename: str, payload: dict) -> None:
     _write_i18n_file(filename, payload)
 
 
-
-
-
 def _update_i18n_cards(data: list) -> None:
     _write_i18n_json("card_prefix.json", {elem["id"]: elem["prefix"] for elem in data})
     _write_i18n_json(
