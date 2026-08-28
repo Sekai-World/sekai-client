@@ -260,8 +260,8 @@ def validate_system_data(data: object) -> dict[str, Any]:
     """Validate the ``/system`` version/system response.
 
     Required: ``maintenanceStatus`` (str) and ``appVersions`` (list of version
-    descriptors, each with ``appVersion``/``dataVersion``/``assetVersion`` /
-    ``appVersionStatus``).
+    descriptors, each with ``appVersion``/``assetVersion``/``appVersionStatus``).
+    ``dataVersion`` is optional because upstream version entries may omit it.
     """
     src = "system-data"
     d = _require_dict(data, src)
@@ -277,17 +277,14 @@ def validate_system_data(data: object) -> dict[str, Any]:
             raise ResponseValidationError.invalid_type(
                 src, f"appVersions[{i}]", "object", version
             )
-        for field in (
-            "appVersion",
-            "dataVersion",
-            "assetVersion",
-            "appVersionStatus",
-        ):
+        for field in ("appVersion", "assetVersion", "appVersionStatus"):
             if field not in version:
                 raise ResponseValidationError.missing_field(
                     src, f"appVersions[{i}].{field}"
                 )
             _require_str(version[field], src, f"appVersions[{i}].{field}")
+        if "dataVersion" in version:
+            _require_str(version["dataVersion"], src, f"appVersions[{i}].dataVersion")
         if "cdnVersion" in version and not _is_str_or_int(version["cdnVersion"]):
             raise ResponseValidationError.invalid_type(
                 src,

@@ -127,6 +127,13 @@ def test_validate_system_data_accepts_valid():
     validate_system_data(_valid_system())
 
 
+def test_validate_system_data_accepts_missing_optional_data_version():
+    response = _valid_system()
+    del response["appVersions"][0]["dataVersion"]
+
+    validate_system_data(response)
+
+
 @pytest.mark.parametrize(
     "response",
     [
