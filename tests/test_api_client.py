@@ -198,6 +198,8 @@ def test_auth_endpoint_426_skips_recursive_login(monkeypatch):
     client.login = login_mock
     check_versions_mock = Mock()
     client.check_versions = check_versions_mock
+    refresh_mock = Mock()
+    client._refresh_tw_kr_asset_data_versions = refresh_mock
 
     response = Mock(status_code=426, headers={}, content=b"")
     response.raise_for_status.side_effect = requests.HTTPError(response=response)
@@ -215,8 +217,101 @@ def test_auth_endpoint_426_skips_recursive_login(monkeypatch):
         client.call_pjsk_api("/user/auth", "post", {"userID": 0})
 
     check_versions_mock.assert_called_once()
+    refresh_mock.assert_called_once()
     login_mock.assert_not_called()
     assert request.call_count == 1
+
+
+def test_tw_kr_426_refreshes_asset_and_data_versions(monkeypatch):
+    """Regression: TW/KR 426 must refresh data/asset headers, not only app."""
+    client = APIClient(region="kr")
+    client.headers["x-data-version"] = "OLD_DATA"
+    client.headers["x-asset-version"] = "OLD_ASSET"
+    system_data = {
+        "maintenanceStatus": "normal",
+        "appVersions": [
+            {
+                "appVersion": "100.0",
+                "appVersionStatus": "available",
+                "dataVersion": "NEW_DATA",
+                "assetVersion": "NEW_ASSET",
+            },
+        ],
+    }
+    call_mock = Mock(return_value=system_data)
+    monkeypatch.setattr(client, "call_pjsk_api", call_mock)
+
+    client._refresh_tw_kr_asset_data_versions()
+
+    assert client.headers["x-data-version"] == "NEW_DATA"
+    assert client.headers["x-asset-version"] == "NEW_ASSET"
+    assert client.version_info["dataVersion"] == "NEW_DATA"
+    assert client.version_info["assetVersion"] == "NEW_ASSET"
+    call_mock.assert_called_once_with(
+        "/system", "get", retry_policy=RetryPolicy.NEVER
+    )
+
+
+def test_tw_kr_426_system_refresh_is_reentry_guarded(monkeypatch):
+    """The system probe must not recurse if re-entered during 426 recovery."""
+    client = APIClient(region="kr")
+    client._refreshing_426_system = True
+    spy = Mock()
+    monkeypatch.setattr(client, "call_pjsk_api", spy)
+
+    client._refresh_tw_kr_asset_data_versions()
+
+    spy.assert_not_called()
+
+
+def test_tw_kr_426_system_refresh_survives_missing_app_versions(monkeypatch):
+    """A malformed / no appVersions system response must not raise."""
+    client = APIClient(region="kr")
+    call_mock = Mock(return_value={"maintenanceStatus": "normal"})
+    monkeypatch.setattr(client, "call_pjsk_api", call_mock)
+
+    client._refresh_tw_kr_asset_data_versions()
+
+    call_mock.assert_called_once()
+
+
+def test_tw_kr_426_full_headers_refreshed_and_login_called(monkeypatch):
+    """Non-auth TW/KR 426 refreshes full headers then re-logs in once."""
+    client = APIClient(region="kr")
+    client.account_info = {"userId": "u"}
+    client.headers["x-data-version"] = "OLD_DATA"
+    client.headers["x-asset-version"] = "OLD_ASSET"
+    login_mock = Mock()
+    client.login = login_mock
+    check_versions_mock = Mock()
+    client.check_versions = check_versions_mock
+
+    system_data = {
+        "maintenanceStatus": "normal",
+        "appVersions": [
+            {
+                "appVersion": "100.0",
+                "appVersionStatus": "available",
+                "dataVersion": "NEW_DATA",
+                "assetVersion": "NEW_ASSET",
+            },
+        ],
+    }
+
+    def _fake_call(endpoint, method="get", body="", retry_policy=None):
+        if endpoint == "/system":
+            return system_data
+        raise AssertionError("unexpected call")
+
+    client.call_pjsk_api = Mock(side_effect=_fake_call)
+    monkeypatch.setattr(api_client, "get_app_ver_qooapp", Mock(return_value="100.0"))
+
+    client._update_version_after_426(endpoint="/user/profile")
+
+    assert client.headers["x-data-version"] == "NEW_DATA"
+    assert client.headers["x-asset-version"] == "NEW_ASSET"
+    check_versions_mock.assert_called_once()
+    login_mock.assert_called_once()
 
 
 @pytest.mark.parametrize(

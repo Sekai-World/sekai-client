@@ -2952,6 +2952,13 @@ def _complete_journal_after_push(journal: "TransactionJournal | None") -> None:
     if journal is None:
         return
     try:
+        # The journal-driven push path reloads its own authoritative journal and
+        # may complete/delete it before control returns here. Never validate a
+        # stale pre-push object a second time.
+        current = _load_bound_journal()
+        if current is None:
+            return
+        journal = current
         journal.set_phase(TxnPhase.COMPLETED)
         _clear_staging_dir_safe(_master_staging_parent())
         _clear_staging_dir_safe(_i18n_staging_parent())

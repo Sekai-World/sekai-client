@@ -36,7 +36,11 @@ from config import Config
 from game_auth import GameAuthenticationService
 from game_protocol import GameProtocolTransport
 from game_services import GameAPIService, PublicGameAPIService
-from response_models import ResponseValidationError, validate_auth_response
+from response_models import (
+    ResponseValidationError,
+    validate_auth_response,
+    validate_system_data,
+)
 from utils.constants import (
     app_id_regions,
     initial_api_headers,
@@ -235,9 +239,63 @@ class APIClient:
         else:
             ver_text = get_app_ver_qooapp(app_id_regions[self.region])
             self.headers["x-app-version"] = ver_text
+            # TW/KR: ``check_versions`` is intentionally a no-op for these
+            # regions, so the data/asset headers would otherwise stay stale
+            # after a 426. Refresh them explicitly from the public system
+            # endpoint so the retried request carries a complete version set.
+            self._refresh_tw_kr_asset_data_versions()
         self.check_versions()
         if self.account_info and not self._is_auth_endpoint(endpoint or ""):
             self.login()
+
+    def _refresh_tw_kr_asset_data_versions(self) -> None:
+        """Refresh ``x-data-version``/``x-asset-version`` for TW/KR after 426.
+
+        ``check_versions`` is a no-op for these regions, so derive the current
+        data/asset versions directly from the public ``/system`` endpoint. The
+        probe uses a Never retry policy so that a 426 on the probe cannot
+        re-enter this recovery path (which would recurse or trigger an
+        unintended login). Failures are non-fatal: the app version has already
+        been refreshed and the original request is retried regardless.
+        """
+        if getattr(self, "_refreshing_426_system", False):
+            # Re-entered while probing system data during 426 recovery; avoid
+            # recursing into another system probe.
+            return
+        self._refreshing_426_system = True
+        try:
+            try:
+                system_data = self.call_pjsk_api(
+                    "/system", "get", retry_policy=RetryPolicy.NEVER
+                )
+                system_data = validate_system_data(system_data)
+            except Exception as error:  # noqa: BLE001 - best-effort refresh
+                self.logger.warning(
+                    "TW/KR system data fetch failed during 426 recovery: %s", error
+                )
+                return
+
+            all_ver_infos = system_data.get("appVersions") or []
+            if not all_ver_infos:
+                return
+            curr_app_ver = self.headers["x-app-version"]
+            try:
+                curr_ver_info, _ = self._find_current_version_info(
+                    all_ver_infos, curr_app_ver
+                )
+            except Exception as error:  # noqa: BLE001 - best-effort refresh
+                self.logger.warning(
+                    "TW/KR version lookup failed during 426 recovery: %s", error
+                )
+                return
+
+            if "dataVersion" in curr_ver_info:
+                self.headers["x-data-version"] = curr_ver_info["dataVersion"]
+                self.version_info["dataVersion"] = curr_ver_info["dataVersion"]
+            self.headers["x-asset-version"] = curr_ver_info["assetVersion"]
+            self.version_info["assetVersion"] = curr_ver_info["assetVersion"]
+        finally:
+            self._refreshing_426_system = False
 
     def _handle_http_error_retry(  # noqa: C901 - established retry decision table
         self,
