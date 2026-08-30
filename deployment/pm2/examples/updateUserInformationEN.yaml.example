@@ -6,7 +6,7 @@ apps:
     env:
       SEKAI_REGION: en
       ENABLE_SEKAI_UPDATE_MASTER: "true"
-      GIT_FOLDER_SEKAI_MASTER_DB_DIFF: sekai-master-db-diff
+      GIT_FOLDER_SEKAI_MASTER_DB_DIFF: sekai-master-db-en-diff
       JSONRPC_PORT: "39392"
       USER_INFORMATION_SCHEDULE_MINUTE: "7,37"
       USER_INFORMATION_START_DELAY: "30"

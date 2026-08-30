@@ -54,6 +54,9 @@ with measured scheduler and upstream latency evidence.
   minutes without checking for a new game version. It owns only
   `userHomeBanners.json` and `userInformations.json`; keep
   `ENABLE_SEKAI_UPDATE_USER_INFO` disabled on all `checkUpdate-*` processes.
+  Each updater must use its regional master repository: JP uses
+  `sekai-master-db-diff`, EN uses `sekai-master-db-en-diff`, TW uses
+  `sekai-master-db-tc-diff`, and KR uses `sekai-master-db-kr-diff`.
 - `API_TOKEN` belongs only to the public API/Dashboard process.
 - Do not set `ALLOW_INSECURE_INTERNAL_RPC` or `ENABLE_UNSAFE_PJSK_RPC` in
   production.
