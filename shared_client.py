@@ -636,9 +636,7 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
                     _active_account_lease = replace(
                         _active_account_lease, expires_at=new_expires_at
                     )
-                    return credential_to_account_info(
-                        _active_account_lease.credential
-                    )
+                    return credential_to_account_info(_active_account_lease.credential)
                 except InvalidLeaseError:
                     logger.warning("Account lease renewal failed; reacquiring")
                 except AccountProviderError as error:

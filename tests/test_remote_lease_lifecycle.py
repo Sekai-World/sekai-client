@@ -131,9 +131,7 @@ def test_retryable_renewal_failure_keeps_cached_lease_without_reacquiring(
     assert restored == operation
 
 
-def test_renewal_persists_expiry_and_reuses_key_from_journal(
-    tmp_path, monkeypatch
-):
+def test_renewal_persists_expiry_and_reuses_key_from_journal(tmp_path, monkeypatch):
     lease = _lease(expires_at=datetime.now(UTC) + timedelta(minutes=30))
     provider = DurableProvider(lease)
     _prepare_active_lease(provider, monkeypatch, tmp_path, lease)

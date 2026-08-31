@@ -106,9 +106,7 @@ class FakeAccountService:
                 if self.headers.get("Authorization") != "Bearer service-token":
                     self._respond(401, {"detail": "unauthorized"})
                     return
-                status = (
-                    state.renew_statuses.pop(0) if state.renew_statuses else 200
-                )
+                status = state.renew_statuses.pop(0) if state.renew_statuses else 200
                 if status != 200:
                     self._respond(
                         status,
@@ -250,9 +248,7 @@ def test_renew_rejects_mismatched_lease_id():
         service.renew_lease_id = "another-lease"
         provider = RemoteAccountProvider(url, "service-token")
         with pytest.raises(AccountProviderError) as caught:
-            provider.renew(
-                "lease-tw", extend_seconds=30, idempotency_key="renew-one"
-            )
+            provider.renew("lease-tw", extend_seconds=30, idempotency_key="renew-one")
 
     assert caught.value.code == "invalid_service_response"
 
@@ -262,9 +258,7 @@ def test_renew_rejects_naive_expiry():
         service.renew_expires_at = "2099-01-02T00:00:00"
         provider = RemoteAccountProvider(url, "service-token")
         with pytest.raises(AccountProviderError) as caught:
-            provider.renew(
-                "lease-tw", extend_seconds=30, idempotency_key="renew-one"
-            )
+            provider.renew("lease-tw", extend_seconds=30, idempotency_key="renew-one")
 
     assert caught.value.code == "invalid_service_response"
 
@@ -282,9 +276,7 @@ def test_renew_maps_service_errors(status, expected):
         service.renew_statuses = [status]
         provider = RemoteAccountProvider(url, "service-token")
         with pytest.raises((InvalidLeaseError, AccountProviderError)) as caught:
-            provider.renew(
-                "lease-tw", extend_seconds=30, idempotency_key="renew-one"
-            )
+            provider.renew("lease-tw", extend_seconds=30, idempotency_key="renew-one")
 
     assert caught.value.code == expected
 
@@ -295,9 +287,7 @@ def test_renew_retries_unavailable_and_honors_retry_after():
         delays = []
         provider = RemoteAccountProvider(url, "service-token", sleep=delays.append)
         with pytest.raises(AccountUnavailableError) as caught:
-            provider.renew(
-                "lease-tw", extend_seconds=30, idempotency_key="renew-one"
-            )
+            provider.renew("lease-tw", extend_seconds=30, idempotency_key="renew-one")
 
     assert caught.value.retry_after == 2.0
     assert delays == [2.0, 2.0]
