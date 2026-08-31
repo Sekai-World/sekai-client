@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -16,6 +18,7 @@ from accounts import (
     AccountRegion,
     AccountUnavailableError,
     InvalidAccountReason,
+    InvalidLeaseError,
     JpEnCredential,
     RemoteAccountProvider,
     TwKrCredential,
@@ -25,8 +28,11 @@ from game_auth import GameAuthenticationService
 
 class FakeAccountService:
     def __init__(self) -> None:
-        self.requests = []
+        self.requests: list[Any] = []
         self.acquire_statuses: list[int] = []
+        self.renew_statuses: list[int] = []
+        self.renew_lease_id: str | None = None
+        self.renew_expires_at = "2099-01-02T00:00:00+00:00"
 
     def handler(self):  # noqa: C901 - fake server keeps its contract in one handler
         state = self
@@ -93,6 +99,29 @@ class FakeAccountService:
                     self._respond(401, {"detail": "unauthorized"})
                     return
                 self._respond(204, None)
+
+            def do_PATCH(self):
+                body = self._body()
+                state.requests.append(("PATCH", self.path, dict(self.headers), body))
+                if self.headers.get("Authorization") != "Bearer service-token":
+                    self._respond(401, {"detail": "unauthorized"})
+                    return
+                status = state.renew_statuses.pop(0) if state.renew_statuses else 200
+                if status != 200:
+                    self._respond(
+                        status,
+                        {"detail": "unavailable"},
+                        {"Retry-After": "2"},
+                    )
+                    return
+                self._respond(
+                    200,
+                    {
+                        "lease_id": state.renew_lease_id
+                        or self.path.rsplit("/", 1)[-1],
+                        "expires_at": state.renew_expires_at,
+                    },
+                )
 
             def _body(self):
                 length = int(self.headers.get("Content-Length", "0"))
@@ -193,6 +222,87 @@ def test_release_and_invalid_report_match_service_contract():
     assert service.requests[1][1] == "/v1/leases/lease-kr/invalid"
     assert service.requests[1][3] == {"reason": "authentication_failed"}
     assert service.requests[2][0:2] == ("DELETE", "/v1/leases/lease-kr")
+
+
+def test_renew_matches_service_contract_and_returns_expiry():
+    with fake_service() as (service, url):
+        service.renew_lease_id = "lease/with/slashes"
+        provider = RemoteAccountProvider(url, "service-token")
+        expires_at = provider.renew(
+            "lease/with/slashes",
+            extend_seconds=3600,
+            idempotency_key="renew-one",
+        )
+
+    request = service.requests[0]
+    assert request[0:2] == ("PATCH", "/v1/leases/lease%2Fwith%2Fslashes")
+    assert request[2]["Content-Type"] == "application/json"
+    assert request[2]["Idempotency-Key"] == "renew-one"
+    assert request[3] == {"extend_seconds": 3600}
+    assert expires_at == datetime.fromisoformat(service.renew_expires_at)
+    assert expires_at.tzinfo is UTC
+
+
+def test_renew_rejects_mismatched_lease_id():
+    with fake_service() as (service, url):
+        service.renew_lease_id = "another-lease"
+        provider = RemoteAccountProvider(url, "service-token")
+        with pytest.raises(AccountProviderError) as caught:
+            provider.renew("lease-tw", extend_seconds=30, idempotency_key="renew-one")
+
+    assert caught.value.code == "invalid_service_response"
+
+
+def test_renew_rejects_naive_expiry():
+    with fake_service() as (service, url):
+        service.renew_expires_at = "2099-01-02T00:00:00"
+        provider = RemoteAccountProvider(url, "service-token")
+        with pytest.raises(AccountProviderError) as caught:
+            provider.renew("lease-tw", extend_seconds=30, idempotency_key="renew-one")
+
+    assert caught.value.code == "invalid_service_response"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (404, "invalid_lease"),
+        (403, "account_service_unauthorized"),
+        (409, "idempotency_conflict"),
+    ],
+)
+def test_renew_maps_service_errors(status, expected):
+    with fake_service() as (service, url):
+        service.renew_statuses = [status]
+        provider = RemoteAccountProvider(url, "service-token")
+        with pytest.raises((InvalidLeaseError, AccountProviderError)) as caught:
+            provider.renew("lease-tw", extend_seconds=30, idempotency_key="renew-one")
+
+    assert caught.value.code == expected
+
+
+def test_renew_retries_unavailable_and_honors_retry_after():
+    with fake_service() as (service, url):
+        service.renew_statuses = [503, 503, 503]
+        delays = []
+        provider = RemoteAccountProvider(url, "service-token", sleep=delays.append)
+        with pytest.raises(AccountUnavailableError) as caught:
+            provider.renew("lease-tw", extend_seconds=30, idempotency_key="renew-one")
+
+    assert caught.value.retry_after == 2.0
+    assert delays == [2.0, 2.0]
+
+
+@pytest.mark.parametrize("extend_seconds", [29, 86401])
+def test_renew_rejects_out_of_range_extension_without_http_call(extend_seconds):
+    with fake_service() as (service, url):
+        provider = RemoteAccountProvider(url, "service-token")
+        with pytest.raises(ValueError, match="between 30 and 86400"):
+            provider.renew(
+                "lease-tw", extend_seconds=extend_seconds, idempotency_key="renew-one"
+            )
+
+    assert service.requests == []
 
 
 def test_acquire_retries_with_same_idempotency_key_then_succeeds():

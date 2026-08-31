@@ -92,6 +92,40 @@ class RemoteAccountProvider:
                 "invalid_service_response", retryable=False
             ) from None
 
+    def renew(
+        self,
+        lease_id: str,
+        *,
+        extend_seconds: int,
+        idempotency_key: str,
+    ) -> datetime:
+        if not 30 <= extend_seconds <= 86400:
+            raise ValueError("extend_seconds must be between 30 and 86400")
+        response = self._request(
+            "patch",
+            f"/v1/leases/{quote(lease_id, safe='')}",
+            json={"extend_seconds": extend_seconds},
+            headers={"Idempotency-Key": idempotency_key},
+            retry=True,
+        )
+        if response.status_code == 503:
+            raise AccountUnavailableError(self._retry_after(response))
+        if response.status_code == 404:
+            raise InvalidLeaseError
+        self._raise_for_status(response)
+        try:
+            payload = response.json()
+            if not isinstance(payload, dict) or payload["lease_id"] != lease_id:
+                raise ValueError
+            expires_at = datetime.fromisoformat(payload["expires_at"])
+            if expires_at.tzinfo is None:
+                raise ValueError
+            return expires_at
+        except (KeyError, TypeError, ValueError):
+            raise AccountProviderError(
+                "invalid_service_response", retryable=False
+            ) from None
+
     def release(self, lease_id: str) -> None:
         response = self._request(
             "delete", f"/v1/leases/{quote(lease_id, safe='')}", retry=True

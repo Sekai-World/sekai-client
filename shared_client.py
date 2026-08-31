@@ -19,7 +19,7 @@ import logging
 import queue
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from hmac import compare_digest
@@ -38,6 +38,7 @@ from pytz import timezone
 from accounts import (
     AccountLease,
     AccountProvider,
+    AccountProviderError,
     AccountRegion,
     AccountRegistrationAdapter,
     InvalidAccountReason,
@@ -78,6 +79,8 @@ _account_provider: AccountProvider | None = None
 _active_account_lease: AccountLease | None = None
 _active_lease_operation: LeaseOperation | None = None
 _account_lease_lock = Lock()
+_LEASE_RENEW_AHEAD = timedelta(hours=1)
+_lease_renewal_retry_until: datetime | None = None
 
 
 def configure_account_provider(provider: AccountProvider | None) -> None:
@@ -594,9 +597,10 @@ def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
     client.user_info = state["user_info"]
 
 
-def get_account_info() -> dict[str, Any]:
+def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branches
     """Acquire a lease and adapt it to the current game client payload."""
     global _account_provider, _active_account_lease, _active_lease_operation
+    global _lease_renewal_retry_until
 
     region = AccountRegion(_lifecycle.region)
     with _account_lease_lock:
@@ -605,7 +609,65 @@ def get_account_info() -> dict[str, Any]:
             and _active_account_lease.region is region
             and not _active_account_lease.is_expired()
         ):
-            return credential_to_account_info(_active_account_lease.credential)
+            operation = _active_lease_operation
+            if (
+                _account_provider is not None
+                and datetime.now(UTC)
+                >= _active_account_lease.expires_at - _LEASE_RENEW_AHEAD
+                and (
+                    _lease_renewal_retry_until is None
+                    or datetime.now(UTC) >= _lease_renewal_retry_until
+                )
+                and operation is not None
+                and operation.expires_at is not None
+                and getattr(_account_provider, "requires_durable_idempotency", False)
+                is True
+            ):
+                renew_key = (
+                    f"renew-{operation.idempotency_key}-"
+                    f"{operation.expires_at.astimezone(UTC).isoformat()}"
+                )
+                try:
+                    provider = _account_provider
+                    assert provider is not None
+                    new_expires_at = provider.renew(
+                        _active_account_lease.lease_id,
+                        extend_seconds=24 * 60 * 60,
+                        idempotency_key=renew_key,
+                    )
+                    journal = _remote_lease_journal(provider)
+                    assert journal is not None
+                    renewed_operation = journal.mark_renewed(operation, new_expires_at)
+                    if renewed_operation is None:
+                        logger.warning(
+                            "Account lease journal changed during renewal; reacquiring"
+                        )
+                    else:
+                        _active_lease_operation = renewed_operation
+                        _active_account_lease = replace(
+                            _active_account_lease, expires_at=new_expires_at
+                        )
+                        _lease_renewal_retry_until = None
+                        return credential_to_account_info(
+                            _active_account_lease.credential
+                        )
+                except InvalidLeaseError:
+                    logger.warning("Account lease renewal failed; reacquiring")
+                except AccountProviderError as error:
+                    logger.warning("Account lease renewal failed")
+                    if error.retryable:
+                        _lease_renewal_retry_until = datetime.now(UTC) + timedelta(
+                            seconds=(
+                                error.retry_after
+                                if error.retry_after is not None
+                                else 60
+                            )
+                        )
+                        return credential_to_account_info(
+                            _active_account_lease.credential
+                        )
+            else:
+                return credential_to_account_info(_active_account_lease.credential)
         if _account_provider is None:
             _account_provider = _build_account_provider()
         consumer = f"shared-client-{region.value}"
@@ -634,6 +696,7 @@ def get_account_info() -> dict[str, Any]:
             )
         _active_account_lease = lease
         _active_lease_operation = operation
+        _lease_renewal_retry_until = None
         return credential_to_account_info(lease.credential)
 
 
