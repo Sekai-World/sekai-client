@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from accounts.models import AccountLease, AccountRegion, InvalidAccountReason
@@ -47,6 +48,23 @@ class AccountProvider(Protocol):
         ttl_seconds: int,
         idempotency_key: str,
     ) -> AccountLease: ...
+
+    def renew(
+        self,
+        lease_id: str,
+        *,
+        extend_seconds: int,
+        idempotency_key: str,
+    ) -> datetime:
+        """Renew a remote lease without changing its lease ID.
+
+        Returns the renewed timezone-aware expiration. The lease ID is unchanged.
+        `idempotency_key` identifies one logical renewal and must be reused across
+        safe retries. A 404 maps to `InvalidLeaseError`. Implementers that do not
+        support renewal should raise `NotImplementedError`; local providers remain
+        reacquire-only.
+        """
+        ...
 
     def release(self, lease_id: str) -> None: ...
 

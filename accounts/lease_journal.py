@@ -97,6 +97,25 @@ class LeaseJournal:
             self._write(acquired)
         return acquired
 
+    def mark_renewed(
+        self, operation: LeaseOperation, expires_at: datetime
+    ) -> LeaseOperation:
+        if not operation.lease_id:
+            raise RuntimeError("cannot renew an unconfirmed lease")
+        if expires_at.tzinfo is None:
+            raise ValueError("lease expiry must be timezone-aware")
+        renewed = LeaseOperation(
+            operation.region,
+            operation.consumer,
+            operation.idempotency_key,
+            operation.lease_id,
+            expires_at.astimezone(UTC),
+            operation.release_pending,
+        )
+        with self._locked(self._path(operation.region, operation.consumer)):
+            self._write(renewed)
+        return renewed
+
     def mark_release_pending(self, operation: LeaseOperation) -> LeaseOperation:
         pending = LeaseOperation(
             operation.region,

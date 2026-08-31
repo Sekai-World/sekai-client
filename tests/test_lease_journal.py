@@ -36,6 +36,40 @@ def test_acquired_operation_and_release_intent_survive_restart(tmp_path):
     assert journal.load("tw", "worker") is None
 
 
+def test_renewed_operation_updates_expiry_and_survives_restart(tmp_path):
+    journal = LeaseJournal(tmp_path)
+    pending = journal.load_or_create("tw", "worker")
+    acquired = journal.mark_acquired(
+        pending, "lease-1", datetime.now(UTC) + timedelta(minutes=5)
+    )
+    renewed_expiry = datetime.now(UTC) + timedelta(hours=24)
+    renewed = journal.mark_renewed(acquired, renewed_expiry)
+
+    assert renewed.expires_at == renewed_expiry
+    restored = LeaseJournal(tmp_path).load("tw", "worker")
+    assert restored is not None
+    assert restored.expires_at == renewed_expiry
+
+
+def test_renewed_operation_requires_lease_id(tmp_path):
+    journal = LeaseJournal(tmp_path)
+    pending = journal.load_or_create("tw", "worker")
+
+    with pytest.raises(RuntimeError, match="unconfirmed lease"):
+        journal.mark_renewed(pending, datetime.now(UTC) + timedelta(hours=1))
+
+
+def test_renewed_operation_rejects_naive_expiry(tmp_path):
+    journal = LeaseJournal(tmp_path)
+    pending = journal.load_or_create("tw", "worker")
+    acquired = journal.mark_acquired(
+        pending, "lease-1", datetime.now(UTC) + timedelta(minutes=5)
+    )
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        journal.mark_renewed(acquired, datetime(2099, 1, 2))
+
+
 def test_expired_operation_gets_a_new_idempotency_key(tmp_path):
     journal = LeaseJournal(tmp_path)
     pending = journal.load_or_create("tw", "worker")

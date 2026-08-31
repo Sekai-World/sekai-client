@@ -101,6 +101,9 @@ def test_structural_provider_contract():
             assert idempotency_key == "request-1"
             return lease
 
+        def renew(self, lease_id, *, extend_seconds, idempotency_key):
+            raise NotImplementedError
+
         def release(self, lease_id):
             assert lease_id == "lease-1"
 

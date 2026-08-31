@@ -101,6 +101,16 @@ class LocalAccountProvider:
             self._idempotency[idempotency_key] = (region, consumer, lease)
             return lease
 
+    def renew(
+        self,
+        lease_id: str,
+        *,
+        extend_seconds: int,
+        idempotency_key: str,
+    ) -> datetime:
+        del lease_id, extend_seconds, idempotency_key
+        raise NotImplementedError("local account leases are reacquire-only")
+
     def release(self, lease_id: str) -> None:
         with self._lock:
             self._leases.pop(lease_id, None)

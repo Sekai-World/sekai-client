@@ -589,7 +589,7 @@ def test_tw_kr_auth_rejection_reports_and_discards_lease(
     lease = AccountLease(
         "lease-auth-rejected",
         f"shared-client-{region.value}",
-        datetime.now(UTC) + timedelta(hours=1),
+        datetime.now(UTC) + timedelta(hours=2),
         TwKrCredential(
             region,
             "open-id",
@@ -625,7 +625,7 @@ def test_tw_auth_rejection_discards_lease_when_journal_cleanup_fails(
     lease = AccountLease(
         "lease-tw",
         "shared-client-tw",
-        datetime.now(UTC) + timedelta(hours=1),
+        datetime.now(UTC) + timedelta(hours=2),
         TwKrCredential(
             AccountRegion.TW,
             "open-id",
