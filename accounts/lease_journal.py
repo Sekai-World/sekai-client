@@ -99,7 +99,8 @@ class LeaseJournal:
 
     def mark_renewed(
         self, operation: LeaseOperation, expires_at: datetime
-    ) -> LeaseOperation:
+    ) -> LeaseOperation | None:
+        """Guard against resurrecting a released lease before recording renewal."""
         if not operation.lease_id:
             raise RuntimeError("cannot renew an unconfirmed lease")
         if expires_at.tzinfo is None:
@@ -112,7 +113,16 @@ class LeaseJournal:
             expires_at.astimezone(UTC),
             operation.release_pending,
         )
-        with self._locked(self._path(operation.region, operation.consumer)):
+        target = self._path(operation.region, operation.consumer)
+        with self._locked(target):
+            current = self._load(target, operation.region, operation.consumer)
+            if (
+                current is None
+                or current.idempotency_key != operation.idempotency_key
+                or current.lease_id != operation.lease_id
+                or current.release_pending
+            ):
+                return None
             self._write(renewed)
         return renewed
 

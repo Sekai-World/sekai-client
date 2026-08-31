@@ -80,6 +80,7 @@ _active_account_lease: AccountLease | None = None
 _active_lease_operation: LeaseOperation | None = None
 _account_lease_lock = Lock()
 _LEASE_RENEW_AHEAD = timedelta(hours=1)
+_lease_renewal_retry_until: datetime | None = None
 
 
 def configure_account_provider(provider: AccountProvider | None) -> None:
@@ -599,6 +600,7 @@ def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
 def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branches
     """Acquire a lease and adapt it to the current game client payload."""
     global _account_provider, _active_account_lease, _active_lease_operation
+    global _lease_renewal_retry_until
 
     region = AccountRegion(_lifecycle.region)
     with _account_lease_lock:
@@ -612,6 +614,10 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
                 _account_provider is not None
                 and datetime.now(UTC)
                 >= _active_account_lease.expires_at - _LEASE_RENEW_AHEAD
+                and (
+                    _lease_renewal_retry_until is None
+                    or datetime.now(UTC) >= _lease_renewal_retry_until
+                )
                 and operation is not None
                 and operation.expires_at is not None
                 and getattr(_account_provider, "requires_durable_idempotency", False)
@@ -631,17 +637,32 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
                     )
                     journal = _remote_lease_journal(provider)
                     assert journal is not None
-                    operation = journal.mark_renewed(operation, new_expires_at)
-                    _active_lease_operation = operation
-                    _active_account_lease = replace(
-                        _active_account_lease, expires_at=new_expires_at
-                    )
-                    return credential_to_account_info(_active_account_lease.credential)
+                    renewed_operation = journal.mark_renewed(operation, new_expires_at)
+                    if renewed_operation is None:
+                        logger.warning(
+                            "Account lease journal changed during renewal; reacquiring"
+                        )
+                    else:
+                        _active_lease_operation = renewed_operation
+                        _active_account_lease = replace(
+                            _active_account_lease, expires_at=new_expires_at
+                        )
+                        _lease_renewal_retry_until = None
+                        return credential_to_account_info(
+                            _active_account_lease.credential
+                        )
                 except InvalidLeaseError:
                     logger.warning("Account lease renewal failed; reacquiring")
                 except AccountProviderError as error:
                     logger.warning("Account lease renewal failed")
                     if error.retryable:
+                        _lease_renewal_retry_until = datetime.now(UTC) + timedelta(
+                            seconds=(
+                                error.retry_after
+                                if error.retry_after is not None
+                                else 60
+                            )
+                        )
                         return credential_to_account_info(
                             _active_account_lease.credential
                         )
@@ -675,6 +696,7 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
             )
         _active_account_lease = lease
         _active_lease_operation = operation
+        _lease_renewal_retry_until = None
         return credential_to_account_info(lease.credential)
 
 

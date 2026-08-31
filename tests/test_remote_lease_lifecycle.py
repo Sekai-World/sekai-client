@@ -43,6 +43,11 @@ class DurableProvider:
         return self.renew_expiry
 
 
+@pytest.fixture(autouse=True)
+def reset_lease_renewal_retry_until(monkeypatch):
+    monkeypatch.setattr(shared_client, "_lease_renewal_retry_until", None)
+
+
 def _lease(lease_id="lease-1", *, expires_at=None):
     return AccountLease(
         lease_id,
@@ -129,6 +134,93 @@ def test_retryable_renewal_failure_keeps_cached_lease_without_reacquiring(
     assert provider.acquire_keys == []
     restored = shared_client.LeaseJournal(tmp_path).load("tw", "shared-client-tw")
     assert restored == operation
+
+
+def test_retryable_renewal_failure_honors_retry_after(tmp_path, monkeypatch):
+    lease = _lease(expires_at=datetime.now(UTC) + timedelta(minutes=30))
+    provider = DurableProvider(lease)
+    provider.renew_error = AccountProviderError(
+        "temporary", retryable=True, retry_after=30
+    )
+    _prepare_active_lease(provider, monkeypatch, tmp_path, lease)
+
+    first = shared_client.get_account_info()
+    second = shared_client.get_account_info()
+
+    assert first == second
+    assert len(provider.renew_calls) == 1
+    assert shared_client._lease_renewal_retry_until is not None
+
+    provider.renew_error = None
+    monkeypatch.setattr(
+        shared_client,
+        "_lease_renewal_retry_until",
+        datetime.now(UTC) - timedelta(seconds=1),
+    )
+    shared_client.get_account_info()
+
+    assert len(provider.renew_calls) == 2
+
+
+def test_retryable_renewal_failure_without_retry_after_uses_default_floor(
+    tmp_path, monkeypatch
+):
+    lease = _lease(expires_at=datetime.now(UTC) + timedelta(minutes=30))
+    provider = DurableProvider(lease)
+    provider.renew_error = AccountProviderError("temporary", retryable=True)
+    _prepare_active_lease(provider, monkeypatch, tmp_path, lease)
+
+    shared_client.get_account_info()
+    shared_client.get_account_info()
+
+    assert len(provider.renew_calls) == 1
+    assert shared_client._lease_renewal_retry_until is not None
+    assert shared_client._lease_renewal_retry_until >= datetime.now(UTC) + timedelta(
+        seconds=59
+    )
+
+
+def test_successful_renewal_clears_retry_deadline(tmp_path, monkeypatch):
+    lease = _lease(expires_at=datetime.now(UTC) + timedelta(minutes=30))
+    provider = DurableProvider(lease)
+    _prepare_active_lease(provider, monkeypatch, tmp_path, lease)
+    monkeypatch.setattr(
+        shared_client,
+        "_lease_renewal_retry_until",
+        datetime.now(UTC) + timedelta(minutes=5),
+    )
+    shared_client.get_account_info()
+    assert provider.renew_calls == []
+
+    monkeypatch.setattr(
+        shared_client,
+        "_lease_renewal_retry_until",
+        datetime.now(UTC) - timedelta(seconds=1),
+    )
+
+    shared_client.get_account_info()
+
+    assert shared_client._lease_renewal_retry_until is None
+
+
+def test_diverged_renewal_journal_reacquires(tmp_path, monkeypatch):
+    lease = _lease(expires_at=datetime.now(UTC) + timedelta(minutes=30))
+    replacement = _lease("lease-new")
+    provider = DurableProvider(replacement)
+    _prepare_active_lease(provider, monkeypatch, tmp_path, lease)
+    monkeypatch.setattr(
+        shared_client.LeaseJournal,
+        "mark_renewed",
+        lambda self, operation, expires_at: None,
+    )
+
+    result = shared_client.get_account_info()
+
+    assert result["userId"] == "open-id"
+    assert shared_client._active_account_lease is replacement
+    assert len(provider.acquire_keys) == 1
+    restored = shared_client.LeaseJournal(tmp_path).load("tw", "shared-client-tw")
+    assert restored is not None and restored.lease_id == replacement.lease_id
 
 
 def test_renewal_persists_expiry_and_reuses_key_from_journal(tmp_path, monkeypatch):
