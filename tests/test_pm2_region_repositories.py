@@ -18,13 +18,14 @@ ROOT = Path(__file__).parents[1]
     ],
 )
 def test_user_information_template_uses_regional_repository(region, repository):
-    template = ROOT / "deployment" / "pm2" / "examples" / (
-        f"updateUserInformation{region}.yaml.example"
+    template = (
+        ROOT
+        / "deployment"
+        / "pm2"
+        / "examples"
+        / (f"updateUserInformation{region}.yaml.example")
     )
 
     config = yaml.safe_load(template.read_text())
 
-    assert (
-        config["apps"][0]["env"]["GIT_FOLDER_SEKAI_MASTER_DB_DIFF"]
-        == repository
-    )
+    assert config["apps"][0]["env"]["GIT_FOLDER_SEKAI_MASTER_DB_DIFF"] == repository
