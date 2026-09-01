@@ -5,7 +5,6 @@ import posixpath
 import re
 import shutil
 import subprocess
-import sys
 import traceback
 from datetime import datetime
 from os import getenv, path
@@ -25,9 +24,11 @@ from pytz import timezone
 from logging_config import configure_logging
 from response_models import (
     ResponseValidationError,
-    validate_information,
     validate_master_data,
     validate_version_info,
+)
+from response_models import (
+    validate_information as _validate_information,
 )
 from utils.array_to_dict import (
     convert_array_to_dict,
@@ -57,6 +58,7 @@ from utils.git_lock import (
     RepoLockUnavailable,
     repo_file_locks,
 )
+from utils.git_publish import commit_diff, push_diff
 from utils.jsonrpc_client import JSONRPCClient
 from utils.update_transaction import (
     FileEntry,
@@ -74,10 +76,23 @@ from utils.update_transaction import (
     staging_dir_for,
     validate_journal_roots,
 )
+from utils.user_information import (
+    bootstrap_init_client,
+)
+from utils.user_information import (
+    refresh_information as _refresh_user_information,
+)
+from utils.user_information import (
+    save_info_from_suite_user as _save_user_information,
+)
 
 LOGLEVEL = getenv("LOGLEVEL", "INFO").upper()
 configure_logging(level=LOGLEVEL)
 logger = logging.getLogger(__name__)
+
+# Preserve the historical validation helper as a public/test-compatible entry
+# point while keeping the implementation in the shared response-model module.
+validate_information = _validate_information
 
 jsonrpc_client = JSONRPCClient(f"http://localhost:{getenv('JSONRPC_PORT', '3939')}/")
 
@@ -846,34 +861,11 @@ def refresh_version(candidate: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def save_info_from_suite_user():
-    suite_user = jsonrpc_client.request("login_user_info")
-
-    logger.debug("[save_info_from_suite_user] write user home banners")
-    _write_master_file("userHomeBanners.json", suite_user["userHomeBanners"])
-
-    if pjsk_region == "en":
-        refresh_information()
-    elif suite_user.get("userInformations", None):
-        logger.debug("[save_info_from_suite_user] write user informations")
-        _write_master_file("userInformations.json", suite_user["userInformations"])
-
-    logger.debug("[save_info_from_suite_user] finished")
-    return suite_user
+    return _save_user_information(jsonrpc_client, pjsk_region, _write_master_file)
 
 
 def refresh_information():
-    logger.debug("[refresh_information] get informations")
-    res = jsonrpc_client.request("fetch_information")
-    # Validate the /information object/list shape before writing so a scalar
-    # where a list is expected fails with a clear diagnostic instead of a bare
-    # ``KeyError``/``TypeError`` during file write.
-    try:
-        res = validate_information(res)
-    except ResponseValidationError as error:
-        raise RuntimeError(f"Invalid information response: {error}") from error
-
-    logger.debug("[refresh_information] write user informations")
-    _write_master_file("userInformations.json", res["informations"])
+    return _refresh_user_information(jsonrpc_client, _write_master_file)
 
 
 def _commit_diff(
@@ -907,68 +899,14 @@ def _commit_diff(
     here even though the published global stays ``None`` (master is disabled and
     never advances it).
     """
-    if repo is None:
-        logger.error("[%s] repository not initialized", operation)
-        return GitResult(
-            outcome=GitOutcome.FAILED,
-            reason="repo_missing",
-            operation=operation,
-        )
-    # Prefer the explicit candidate; fall back to the published global only for
-    # legacy/standalone callers. Never index a None global directly.
-    effective_version = version if version is not None else version_info
-    if effective_version is None:
-        logger.error("[%s] version info not available; cannot build commit", operation)
-        return GitResult(
-            outcome=GitOutcome.FAILED,
-            reason="version_info_missing",
-            operation=operation,
-        )
-
-    if not repo.is_dirty(untracked_files=True):
-        return GitResult(
-            outcome=GitOutcome.NOTHING_TO_DO,
-            reason="clean",
-            operation=operation,
-        )
-
-    # Explicit empty manifest: there is nothing for this repository to commit.
-    # Do not stage/commit, and crucially do not fall back to a broad add that
-    # would sweep unrelated dirty files into the commit. Only a ``None`` paths
-    # (legacy/standalone callers) uses the historical broad ``index.add("**")``.
-    if paths is not None and len(paths) == 0:
-        logger.debug(
-            "[%s] explicit empty path list; no staged changes to commit", operation
-        )
-        return GitResult(
-            outcome=GitOutcome.NOTHING_TO_DO,
-            reason="no_staged_paths",
-            operation=operation,
-        )
-
-    try:
-        logger.debug("[%s] add files to staged in %s", operation, folder_label)
-        if paths is not None and len(paths) > 0:
-            repo.index.add(paths)
-        else:
-            repo.index.add("**")
-
-        logger.debug("[%s] commit staged changes in %s", operation, folder_label)
-        repo.index.commit(commit_message, author=author)
-    except Exception as err:  # noqa: BLE001 - commit failure is its own contract
-        logger.exception("[%s] failed to stage/commit", operation)
-        return GitResult(
-            outcome=GitOutcome.FAILED,
-            reason="commit_failed",
-            operation=operation,
-            detail=str(err),
-        )
-
-    return GitResult(
-        outcome=GitOutcome.OK,
-        reason="committed",
-        operation=operation,
-        local_sha=_safe_head_sha(repo),
+    return commit_diff(
+        repo,
+        operation,
+        folder_label,
+        commit_message,
+        author,
+        paths,
+        version if version is not None else version_info,
     )
 
 
@@ -997,6 +935,15 @@ def _push_diff(
             outcome=GitOutcome.FAILED,
             reason="repo_missing",
             operation=operation,
+        )
+    if (
+        expected_sha is None
+        and old_remote_sha is None
+        and remote_endpoint_fingerprint is None
+        and remote_state is None
+    ):
+        return push_diff(
+            repo, operation, push_current_head_fn=push_current_head
         )
     remote_url = None
     if remote_endpoint_fingerprint is not None:
@@ -3294,11 +3241,7 @@ def _run_update_cycle(  # noqa: C901
 
 
 def _bootstrap_init_client() -> None:
-    if not jsonrpc_client.request("is_init") and not jsonrpc_client.request(
-        "init", [pjsk_region]
-    ):
-        sys.exit(1)
-    logger.info("[bootstrap] PJSK client inited")
+    bootstrap_init_client(jsonrpc_client, pjsk_region)
 
 
 def _bootstrap_prepare_repositories() -> None:
