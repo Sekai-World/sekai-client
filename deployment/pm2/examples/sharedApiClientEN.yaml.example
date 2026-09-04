@@ -15,10 +15,9 @@ apps:
       AES_IV: 7E856C907987F8AEC6AFC0C54738FC7E
       AES_KEY: ${AES_KEY}
       ALL_PROXY: ""
-      APP_HASH: 7ed71514-b4c2-4996-a75e-34140d4fc5e3
-      APP_VER: 4.1.5
-      ASSET_VER: 4.1.50.1
-      DATA_VER: 4.1.50.1
+      # EN app/data/asset versions and app hash are sourced at runtime from
+      # Team-Haruki's authoritative current_version.json.
+      # Set EN_CURRENT_VERSION_URL in the process environment to override it.
       HTTPS_PROXY: ""
       LOGLEVEL: DEBUG
       INTERNAL_RPC_TOKEN: ${INTERNAL_RPC_TOKEN}

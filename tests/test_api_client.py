@@ -812,6 +812,45 @@ def test_suite_auth_refreshes_current_version_headers(monkeypatch, region):
     fetch.assert_called_once_with()
 
 
+def test_en_426_retries_with_authoritative_version_headers(monkeypatch):
+    client = APIClient(region="en")
+    current = {
+        "appVersion": "6.8.0",
+        "dataVersion": "6.8.0.12",
+        "assetVersion": "6.8.0.10",
+        "appHash": "authoritative-hash",
+    }
+    fetch = Mock(return_value=current)
+    monkeypatch.setattr(api_client, "get_app_ver_and_hash_en", fetch)
+    client.check_versions = Mock()
+    monkeypatch.setattr(client, "_encrypt_request_body", lambda method, body: b"data")
+    monkeypatch.setattr(
+        client, "_decrypt_response_data", Mock(side_effect=[None, None])
+    )
+    monkeypatch.setattr(api_client, "sleep", Mock())
+
+    rejected = Mock(status_code=426, headers={}, content=b"")
+    rejected.raise_for_status.side_effect = requests.HTTPError(response=rejected)
+    accepted = Mock(status_code=200, headers={}, content=b"")
+    accepted.raise_for_status.return_value = None
+    request_headers = []
+
+    def fake_request(**kwargs):
+        request_headers.append(dict(kwargs["headers"]))
+        return rejected if len(request_headers) == 1 else accepted
+
+    monkeypatch.setattr(requests, "request", fake_request)
+
+    assert client.call_pjsk_api("/system") is None
+
+    assert len(request_headers) == 2
+    assert request_headers[1]["x-app-version"] == current["appVersion"]
+    assert request_headers[1]["x-app-hash"] == current["appHash"]
+    assert request_headers[1]["x-data-version"] == current["dataVersion"]
+    assert request_headers[1]["x-asset-version"] == current["assetVersion"]
+    fetch.assert_called_once_with()
+
+
 @pytest.mark.parametrize("bad_device_id", [None, 0, False, "", 123])
 def test_tw_kr_auth_rejects_malformed_device_id_and_does_not_mutate_headers(
     bad_device_id,

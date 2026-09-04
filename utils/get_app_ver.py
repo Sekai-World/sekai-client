@@ -6,9 +6,19 @@ import requests
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
+from response_models import validate_version_info
 from utils.deadline import bounded_timeout
 
 logger = logging.getLogger(__name__)
+
+EN_CURRENT_VERSION_URL = (
+    "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-en-master/"
+    "refs/heads/main/versions/current_version.json"
+)
+JP_CURRENT_VERSION_URL = (
+    "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-master/"
+    "refs/heads/main/versions/current_version.json"
+)
 
 
 def get_app_ver_qooapp(appid: str) -> str:
@@ -46,51 +56,20 @@ def get_app_ver_qooapp(appid: str) -> str:
 
 
 def get_app_ver_and_hash_jp() -> dict[str, Any]:
-    url = "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-master/refs/heads/main/versions/current_version.json"
+    url = environ.get("JP_CURRENT_VERSION_URL") or JP_CURRENT_VERSION_URL
     logger.debug("get_app_ver_and_hash_jp url=%s", url)
 
-    try:
-        r = requests.get(url, timeout=bounded_timeout(10))
-        logger.debug("get_app_ver_and_hash_jp status=%s", r.status_code)
-        r.raise_for_status()
-        data = r.json()
-    except (requests.RequestException, ValueError) as err:
-        logger.warning("Primary JP version endpoint failed: %s", err)
-        # try to get from github repo
-
-        url = "https://sekai-world.github.io/sekai-master-db-diff/versions.json"
-        logger.debug("get_app_ver_and_hash_jp fallback url=%s", url)
-        r = requests.get(url, timeout=bounded_timeout(10))
-        logger.debug("get_app_ver_and_hash_jp fallback status=%s", r.status_code)
-        r.raise_for_status()
-        data = r.json()
-
-    if not isinstance(data, dict):
-        raise RuntimeError("JP version endpoint returned invalid JSON data")
-    return data
+    r = requests.get(url, timeout=bounded_timeout(10))
+    logger.debug("get_app_ver_and_hash_jp status=%s", r.status_code)
+    r.raise_for_status()
+    return validate_version_info(r.json(), require_app_hash=True)
 
 
 def get_app_ver_and_hash_en() -> dict[str, Any]:
-    # url = 'https://storage.sekai.best/sekai-best-assets/app-en-app-hash.json'
-    url = "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-en-master/refs/heads/main/versions/current_version.json"
+    url = environ.get("EN_CURRENT_VERSION_URL") or EN_CURRENT_VERSION_URL
     logger.debug("get_app_ver_and_hash_en url=%s", url)
 
-    try:
-        r = requests.get(url, timeout=bounded_timeout(10))
-        logger.debug("get_app_ver_and_hash_en status=%s", r.status_code)
-        r.raise_for_status()
-        data = r.json()
-    except (requests.RequestException, ValueError) as err:
-        logger.warning("Primary EN version endpoint failed: %s", err)
-        # try to get from github repo
-
-        url = "https://sekai-world.github.io/sekai-master-db-en-diff/versions.json"
-        logger.debug("get_app_ver_and_hash_en fallback url=%s", url)
-        r = requests.get(url, timeout=bounded_timeout(10))
-        logger.debug("get_app_ver_and_hash_en fallback status=%s", r.status_code)
-        r.raise_for_status()
-        data = r.json()
-
-    if not isinstance(data, dict):
-        raise RuntimeError("EN version endpoint returned invalid JSON data")
-    return data
+    r = requests.get(url, timeout=bounded_timeout(10))
+    logger.debug("get_app_ver_and_hash_en status=%s", r.status_code)
+    r.raise_for_status()
+    return validate_version_info(r.json(), require_app_hash=True)
