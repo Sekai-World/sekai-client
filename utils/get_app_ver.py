@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 
 from response_models import validate_version_info
+from utils.constants import EN_FALLBACK_VERSION_INFO, JP_FALLBACK_VERSION_INFO
 from utils.deadline import bounded_timeout
 
 logger = logging.getLogger(__name__)
@@ -55,21 +56,36 @@ def get_app_ver_qooapp(appid: str) -> str:
     return var_text
 
 
+def _get_authoritative_version_info(
+    *, url: str, fallback: dict[str, Any], region: str
+) -> dict[str, Any]:
+    try:
+        logger.debug("get_app_ver_and_hash_%s url=%s", region, url)
+        response = requests.get(url, timeout=bounded_timeout(10))
+        logger.debug(
+            "get_app_ver_and_hash_%s status=%s", region, response.status_code
+        )
+        response.raise_for_status()
+        return validate_version_info(response.json(), require_app_hash=True)
+    except Exception as error:  # noqa: BLE001 - all upstream failures use fallback
+        logger.warning(
+            "get_app_ver_and_hash_%s authoritative fetch failed; "
+            "using local fallback error_type=%s",
+            region,
+            type(error).__name__,
+        )
+        return dict(fallback)
+
+
 def get_app_ver_and_hash_jp() -> dict[str, Any]:
     url = environ.get("JP_CURRENT_VERSION_URL") or JP_CURRENT_VERSION_URL
-    logger.debug("get_app_ver_and_hash_jp url=%s", url)
-
-    r = requests.get(url, timeout=bounded_timeout(10))
-    logger.debug("get_app_ver_and_hash_jp status=%s", r.status_code)
-    r.raise_for_status()
-    return validate_version_info(r.json(), require_app_hash=True)
+    return _get_authoritative_version_info(
+        url=url, fallback=JP_FALLBACK_VERSION_INFO, region="jp"
+    )
 
 
 def get_app_ver_and_hash_en() -> dict[str, Any]:
     url = environ.get("EN_CURRENT_VERSION_URL") or EN_CURRENT_VERSION_URL
-    logger.debug("get_app_ver_and_hash_en url=%s", url)
-
-    r = requests.get(url, timeout=bounded_timeout(10))
-    logger.debug("get_app_ver_and_hash_en status=%s", r.status_code)
-    r.raise_for_status()
-    return validate_version_info(r.json(), require_app_hash=True)
+    return _get_authoritative_version_info(
+        url=url, fallback=EN_FALLBACK_VERSION_INFO, region="en"
+    )

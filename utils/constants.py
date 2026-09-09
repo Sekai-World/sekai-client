@@ -1,13 +1,32 @@
 from os import getenv
 
 ### BEGIN api_client constants ###
+JP_FALLBACK_VERSION_INFO = {
+    "appVersion": "1.10.0",
+    "dataVersion": "1.7.3.1",
+    "assetVersion": "1.7.3.1",
+    "appHash": "a4afe2ff-8be2-4e6b-ebbc-75d32802351e",
+}
+
+EN_FALLBACK_VERSION_INFO = {
+    "appVersion": "3.6.0",
+    "dataVersion": "3.6.1.0",
+    "assetVersion": "3.6.1.0",
+    "appHash": "b65f9f33-8104-468f-9fa9-3c17379b4569",
+}
+
+
 initial_api_headers = {
     "jp": {
         "x-devicemodel": "iPad13,16",
-        "x-app-hash": getenv("APP_HASH", "a4afe2ff-8be2-4e6b-ebbc-75d32802351e"),
-        "x-app-version": getenv("APP_VER", "1.10.0"),
-        "x-asset-version": getenv("ASSET_VER", "1.7.3.1"),
-        "x-data-version": getenv("DATA_VER", "1.7.3.1"),
+        "x-app-hash": getenv("APP_HASH", JP_FALLBACK_VERSION_INFO["appHash"]),
+        "x-app-version": getenv("APP_VER", JP_FALLBACK_VERSION_INFO["appVersion"]),
+        "x-asset-version": getenv(
+            "ASSET_VER", JP_FALLBACK_VERSION_INFO["assetVersion"]
+        ),
+        "x-data-version": getenv(
+            "DATA_VER", JP_FALLBACK_VERSION_INFO["dataVersion"]
+        ),
         "x-if": "0b8db587-9eae-4569-8cd7-8335c8ceba9a",
         "x-install-id": "e5b245d2-e157-4664-b1b4-af881730d9c7",
         "x-kc": "a26272b1-1d9c-4c05-956c-7538b64eb451",
@@ -41,10 +60,14 @@ initial_api_headers = {
     },
     "en": {
         "x-devicemodel": "iPad13,16",
-        "x-app-hash": getenv("APP_HASH", "b65f9f33-8104-468f-9fa9-3c17379b4569"),
-        "x-app-version": getenv("APP_VER", "3.6.0"),
-        "x-asset-version": getenv("ASSET_VER", "3.6.1.0"),
-        "x-data-version": getenv("DATA_VER", "3.6.1.0"),
+        "x-app-hash": getenv("APP_HASH", EN_FALLBACK_VERSION_INFO["appHash"]),
+        "x-app-version": getenv("APP_VER", EN_FALLBACK_VERSION_INFO["appVersion"]),
+        "x-asset-version": getenv(
+            "ASSET_VER", EN_FALLBACK_VERSION_INFO["assetVersion"]
+        ),
+        "x-data-version": getenv(
+            "DATA_VER", EN_FALLBACK_VERSION_INFO["dataVersion"]
+        ),
         "x-if": "AB5D5811-551F-4590-A671-093BEB2381E2",
         "x-install-id": "5715782a-f05a-4fda-a853-35b1184e4912",
         "x-kc": "0bdf6de1-0a00-43e3-a632-c1af30b9484a",

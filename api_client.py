@@ -43,6 +43,8 @@ from response_models import (
     validate_version_info,
 )
 from utils.constants import (
+    EN_FALLBACK_VERSION_INFO,
+    JP_FALLBACK_VERSION_INFO,
     app_id_regions,
     initial_api_headers,
     nuverse_master_data_base_url,
@@ -554,11 +556,23 @@ class APIClient:
     def _refresh_suite_version_headers(self) -> None:
         """Use the current suite client fingerprint before authenticating."""
         fetch_version = get_app_ver_and_hash_jp
+        fallback_version = JP_FALLBACK_VERSION_INFO
         if self.region == "en":
             fetch_version = get_app_ver_and_hash_en
+            fallback_version = EN_FALLBACK_VERSION_INFO
 
         try:
             version = validate_version_info(fetch_version(), require_app_hash=True)
+        except Exception as error:  # noqa: BLE001 - retain a valid local fingerprint
+            logger.warning(
+                "suite version refresh before authentication failed region=%s; "
+                "using local fallback error_type=%s",
+                self.region,
+                type(error).__name__,
+            )
+            version = validate_version_info(fallback_version, require_app_hash=True)
+
+        try:
             for source_key, header_key in (
                 ("appVersion", "x-app-version"),
                 ("dataVersion", "x-data-version"),
@@ -574,11 +588,11 @@ class APIClient:
                 self.region,
                 self.headers.get("x-app-version"),
             )
-        except Exception as error:  # noqa: BLE001 - retain last-known-good headers
+        except Exception as error:  # noqa: BLE001 - preserve refresh error handling
             self.logger.warning(
-                "suite version refresh before authentication failed region=%s: %s",
+                "suite version header application failed region=%s error_type=%s",
                 self.region,
-                error,
+                type(error).__name__,
             )
 
     def _validate_tw_kr_account_info(self) -> TwKrCredential:

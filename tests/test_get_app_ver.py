@@ -4,6 +4,7 @@ import pytest
 import requests
 
 from utils import get_app_ver
+from utils.constants import EN_FALLBACK_VERSION_INFO, JP_FALLBACK_VERSION_INFO
 
 EN_CURRENT_VERSION_URL = (
     "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-en-master/"
@@ -140,7 +141,7 @@ def test_get_app_ver_and_hash_en_uses_environment_url_override(monkeypatch):
         },
     ],
 )
-def test_get_app_ver_and_hash_en_rejects_invalid_authoritative_response(
+def test_get_app_ver_and_hash_en_falls_back_for_invalid_authoritative_response(
     monkeypatch, version
 ):
     response = Mock(status_code=200)
@@ -148,20 +149,18 @@ def test_get_app_ver_and_hash_en_rejects_invalid_authoritative_response(
     request = Mock(return_value=response)
     monkeypatch.setattr(get_app_ver.requests, "get", request)
 
-    with pytest.raises(ValueError):
-        get_app_ver.get_app_ver_and_hash_en()
+    assert get_app_ver.get_app_ver_and_hash_en() == EN_FALLBACK_VERSION_INFO
 
     request.assert_called_once_with(EN_CURRENT_VERSION_URL, timeout=10)
 
 
-def test_get_app_ver_and_hash_en_does_not_fallback_on_malformed_json(monkeypatch):
+def test_get_app_ver_and_hash_en_falls_back_on_malformed_json(monkeypatch):
     response = Mock(status_code=200)
     response.json.side_effect = ValueError("malformed JSON")
     request = Mock(return_value=response)
     monkeypatch.setattr(get_app_ver.requests, "get", request)
 
-    with pytest.raises(ValueError, match="malformed JSON"):
-        get_app_ver.get_app_ver_and_hash_en()
+    assert get_app_ver.get_app_ver_and_hash_en() == EN_FALLBACK_VERSION_INFO
 
     request.assert_called_once_with(EN_CURRENT_VERSION_URL, timeout=10)
 
@@ -217,7 +216,7 @@ def test_get_app_ver_and_hash_jp_uses_environment_url_override(monkeypatch):
         },
     ],
 )
-def test_get_app_ver_and_hash_jp_rejects_invalid_authoritative_response(
+def test_get_app_ver_and_hash_jp_falls_back_for_invalid_authoritative_response(
     monkeypatch, version
 ):
     response = Mock(status_code=200)
@@ -226,20 +225,83 @@ def test_get_app_ver_and_hash_jp_rejects_invalid_authoritative_response(
     monkeypatch.delenv("JP_CURRENT_VERSION_URL", raising=False)
     monkeypatch.setattr(get_app_ver.requests, "get", request)
 
-    with pytest.raises(ValueError):
-        get_app_ver.get_app_ver_and_hash_jp()
+    assert get_app_ver.get_app_ver_and_hash_jp() == JP_FALLBACK_VERSION_INFO
 
     request.assert_called_once_with(JP_CURRENT_VERSION_URL, timeout=10)
 
 
-def test_get_app_ver_and_hash_jp_does_not_fallback_on_malformed_json(monkeypatch):
+def test_get_app_ver_and_hash_jp_falls_back_on_malformed_json(monkeypatch):
     response = Mock(status_code=200)
     response.json.side_effect = ValueError("malformed JSON")
     request = Mock(return_value=response)
     monkeypatch.delenv("JP_CURRENT_VERSION_URL", raising=False)
     monkeypatch.setattr(get_app_ver.requests, "get", request)
 
-    with pytest.raises(ValueError, match="malformed JSON"):
-        get_app_ver.get_app_ver_and_hash_jp()
+    assert get_app_ver.get_app_ver_and_hash_jp() == JP_FALLBACK_VERSION_INFO
 
     request.assert_called_once_with(JP_CURRENT_VERSION_URL, timeout=10)
+
+
+@pytest.mark.parametrize(
+    ("fetch", "url", "fallback", "url_env"),
+    [
+        (
+            get_app_ver.get_app_ver_and_hash_en,
+            EN_CURRENT_VERSION_URL,
+            EN_FALLBACK_VERSION_INFO,
+            "EN_CURRENT_VERSION_URL",
+        ),
+        (
+            get_app_ver.get_app_ver_and_hash_jp,
+            JP_CURRENT_VERSION_URL,
+            JP_FALLBACK_VERSION_INFO,
+            "JP_CURRENT_VERSION_URL",
+        ),
+    ],
+)
+def test_get_app_ver_and_hash_falls_back_on_network_error(
+    monkeypatch, fetch, url, fallback, url_env
+):
+    request = Mock(side_effect=requests.Timeout("timed out"))
+    monkeypatch.delenv(url_env, raising=False)
+    monkeypatch.setenv("APP_VER", "stale-app-version")
+    monkeypatch.setenv("APP_HASH", "stale-app-hash")
+    monkeypatch.setenv("DATA_VER", "stale-data-version")
+    monkeypatch.setenv("ASSET_VER", "stale-asset-version")
+    monkeypatch.setattr(get_app_ver.requests, "get", request)
+
+    assert fetch() == fallback
+
+    request.assert_called_once_with(url, timeout=10)
+
+
+@pytest.mark.parametrize(
+    ("fetch", "url", "fallback", "url_env"),
+    [
+        (
+            get_app_ver.get_app_ver_and_hash_en,
+            EN_CURRENT_VERSION_URL,
+            EN_FALLBACK_VERSION_INFO,
+            "EN_CURRENT_VERSION_URL",
+        ),
+        (
+            get_app_ver.get_app_ver_and_hash_jp,
+            JP_CURRENT_VERSION_URL,
+            JP_FALLBACK_VERSION_INFO,
+            "JP_CURRENT_VERSION_URL",
+        ),
+    ],
+)
+def test_get_app_ver_and_hash_falls_back_on_http_error(
+    monkeypatch, fetch, url, fallback, url_env
+):
+    response = Mock(status_code=503)
+    response.raise_for_status.side_effect = requests.HTTPError("service unavailable")
+    request = Mock(return_value=response)
+    monkeypatch.delenv(url_env, raising=False)
+    monkeypatch.setattr(get_app_ver.requests, "get", request)
+
+    assert fetch() == fallback
+
+    request.assert_called_once_with(url, timeout=10)
+    response.raise_for_status.assert_called_once_with()

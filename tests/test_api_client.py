@@ -8,6 +8,7 @@ import requests
 import api_client
 from api_client import APIClient, RetryPolicy
 from game_auth import AuthenticationResult
+from utils.constants import EN_FALLBACK_VERSION_INFO, JP_FALLBACK_VERSION_INFO
 
 
 def test_refresh_master_split_paths_only_applies_auth_metadata():
@@ -791,6 +792,14 @@ def test_tw_kr_auth_rejects_missing_key_and_does_not_mutate_headers(missing_key)
 @pytest.mark.parametrize("region", ["jp", "en"])
 def test_suite_auth_refreshes_current_version_headers(monkeypatch, region):
     client = APIClient(region=region)
+    client.headers.update(
+        {
+            "x-app-version": "stale-app-version",
+            "x-data-version": "stale-data-version",
+            "x-asset-version": "stale-asset-version",
+            "x-app-hash": "stale-app-hash",
+        }
+    )
     current = {
         "appVersion": "6.8.0",
         "dataVersion": "6.8.0.12",
@@ -809,6 +818,34 @@ def test_suite_auth_refreshes_current_version_headers(monkeypatch, region):
     assert client.headers["x-data-version"] == current["dataVersion"]
     assert client.headers["x-asset-version"] == current["assetVersion"]
     assert client.headers["x-app-hash"] == current["appHash"]
+    fetch.assert_called_once_with()
+
+
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_suite_auth_refresh_uses_local_fallback_when_fetch_fails(monkeypatch, region):
+    client = APIClient(region=region)
+    client.headers.update(
+        {
+            "x-app-version": "stale-app-version",
+            "x-data-version": "stale-data-version",
+            "x-asset-version": "stale-asset-version",
+            "x-app-hash": "stale-app-hash",
+        }
+    )
+    fetch = Mock(side_effect=requests.Timeout("timed out"))
+    if region == "jp":
+        fallback = JP_FALLBACK_VERSION_INFO
+        monkeypatch.setattr(api_client, "get_app_ver_and_hash_jp", fetch)
+    else:
+        fallback = EN_FALLBACK_VERSION_INFO
+        monkeypatch.setattr(api_client, "get_app_ver_and_hash_en", fetch)
+
+    client._refresh_suite_version_headers()
+
+    assert client.headers["x-app-version"] == fallback["appVersion"]
+    assert client.headers["x-data-version"] == fallback["dataVersion"]
+    assert client.headers["x-asset-version"] == fallback["assetVersion"]
+    assert client.headers["x-app-hash"] == fallback["appHash"]
     fetch.assert_called_once_with()
 
 
