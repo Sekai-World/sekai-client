@@ -33,9 +33,7 @@ _MASTER_FILES = ("userHomeBanners.json", "userInformations.json")
 masterdb_diff_folder_path = os.path.join(
     os.path.dirname(__file__), local_git_folder_names["masterDBDiff"]
 )
-jsonrpc_client = JSONRPCClient(
-    f"http://localhost:{os.getenv('JSONRPC_PORT', '3939')}/"
-)
+jsonrpc_client = JSONRPCClient(f"http://localhost:{os.getenv('JSONRPC_PORT', '3939')}/")
 
 
 def _write_master_file(relpath: str, data: object) -> None:

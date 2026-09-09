@@ -62,9 +62,7 @@ def _get_authoritative_version_info(
     try:
         logger.debug("get_app_ver_and_hash_%s url=%s", region, url)
         response = requests.get(url, timeout=bounded_timeout(10))
-        logger.debug(
-            "get_app_ver_and_hash_%s status=%s", region, response.status_code
-        )
+        logger.debug("get_app_ver_and_hash_%s status=%s", region, response.status_code)
         response.raise_for_status()
         return validate_version_info(response.json(), require_app_hash=True)
     except Exception as error:  # noqa: BLE001 - all upstream failures use fallback

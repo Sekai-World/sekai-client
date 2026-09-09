@@ -942,9 +942,7 @@ def _push_diff(
         and remote_endpoint_fingerprint is None
         and remote_state is None
     ):
-        return push_diff(
-            repo, operation, push_current_head_fn=push_current_head
-        )
+        return push_diff(repo, operation, push_current_head_fn=push_current_head)
     remote_url = None
     if remote_endpoint_fingerprint is not None:
         remote_url, actual_fingerprint = _remote_endpoint(repo, operation)
