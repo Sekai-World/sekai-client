@@ -191,11 +191,23 @@ class RemoteAccountProvider:
             )
             if not all(isinstance(value, str) and value for value in values):
                 raise ValueError
+            # Device fingerprint and ticket metadata ride along on refreshed
+            # registrations; legacy stored records return null fields. Missing
+            # or null values stay empty/None; a malformed value or a partial
+            # fingerprint is rejected by the credential model below.
             return JpEnCredential(
                 region,
                 payload["user_id"],
                 payload["credential"],
                 payload["signature"],
+                install_id=_optional_str(payload, "install_id"),
+                x_if=_optional_str(payload, "x_if"),
+                x_kc=_optional_str(payload, "x_kc"),
+                device_model=_optional_str(payload, "device_model"),
+                os_version=_optional_str(payload, "os_version"),
+                user_agent=_optional_str(payload, "user_agent"),
+                issued_at=_optional_timestamp(payload, "issued_at"),
+                expires_at=_optional_timestamp(payload, "expires_at"),
             )
         if payload.get("kind") != "tw_kr":
             raise ValueError
@@ -245,3 +257,21 @@ class RemoteAccountProvider:
             raise AccountProviderError("account_service_failure", retryable=True)
         if response.status_code >= 400:
             raise AccountProviderError("account_service_rejected", retryable=False)
+
+
+def _optional_str(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError
+    return value
+
+
+def _optional_timestamp(payload: dict[str, Any], key: str) -> datetime | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError
+    return datetime.fromisoformat(value)

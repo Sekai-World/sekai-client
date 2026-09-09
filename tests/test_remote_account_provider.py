@@ -62,6 +62,14 @@ class FakeAccountService:
                             "user_id": f"{region}-user",
                             "credential": f"{region}-credential",
                             "signature": f"{region}-signature",
+                            "install_id": f"{region}-install",
+                            "x_if": f"{region}-if",
+                            "x_kc": f"{region}-kc",
+                            "device_model": f"{region}-model",
+                            "os_version": f"{region}-os",
+                            "user_agent": f"{region}-agent",
+                            "issued_at": "2026-09-01T00:00:00+00:00",
+                            "expires_at": "2099-01-01T00:00:00+00:00",
                         }
                         if region in ("jp", "en")
                         else {
@@ -418,3 +426,134 @@ def test_tw_kr_payload_rejects_empty_fingerprint_field(empty_key):
     payload[empty_key] = ""
     with pytest.raises(ValueError):
         RemoteAccountProvider._credential(AccountRegion.TW, payload)
+
+
+def test_jp_en_lease_carries_fingerprint_and_ticket_metadata():
+    with fake_service() as (_service, url):
+        provider = RemoteAccountProvider(url, "service-token")
+        lease = provider.acquire(
+            AccountRegion.JP, "worker", ttl_seconds=60, idempotency_key="one"
+        )
+
+    credential = lease.credential
+    assert isinstance(credential, JpEnCredential)
+    assert credential.has_device_fingerprint is True
+    assert credential.install_id == "jp-install"
+    assert credential.x_if == "jp-if"
+    assert credential.x_kc == "jp-kc"
+    assert credential.device_model == "jp-model"
+    assert credential.os_version == "jp-os"
+    assert credential.user_agent == "jp-agent"
+    assert credential.issued_at == datetime(2026, 9, 1, tzinfo=UTC)
+    assert credential.expires_at == datetime(2099, 1, 1, tzinfo=UTC)
+    assert "jp-install" not in repr(credential)
+
+
+def test_jp_en_payload_without_fingerprint_fields_stays_legacy():
+    payload = {
+        "kind": "jp_en",
+        "user_id": "user",
+        "credential": "cred",
+        "signature": "sig",
+    }
+
+    credential = RemoteAccountProvider._credential(AccountRegion.JP, payload)
+
+    assert isinstance(credential, JpEnCredential)
+    assert credential.has_device_fingerprint is False
+    assert credential.issued_at is None
+    assert credential.expires_at is None
+
+
+def test_jp_en_payload_null_fingerprint_fields_stay_legacy():
+    payload = {
+        "kind": "jp_en",
+        "user_id": "user",
+        "credential": "cred",
+        "signature": "sig",
+        "install_id": None,
+        "x_if": None,
+        "x_kc": None,
+        "device_model": None,
+        "os_version": None,
+        "user_agent": None,
+        "issued_at": None,
+        "expires_at": None,
+    }
+
+    credential = RemoteAccountProvider._credential(AccountRegion.EN, payload)
+
+    assert isinstance(credential, JpEnCredential)
+    assert credential.has_device_fingerprint is False
+
+
+@pytest.mark.parametrize(
+    "partial_field",
+    ["install_id", "x_if", "x_kc", "device_model", "os_version", "user_agent"],
+)
+def test_jp_en_payload_partial_fingerprint_is_rejected(partial_field):
+    payload = {
+        "kind": "jp_en",
+        "user_id": "user",
+        "credential": "cred",
+        "signature": "sig",
+        "install_id": "install",
+        "x_if": "if",
+        "x_kc": "kc",
+        "device_model": "model",
+        "os_version": "os",
+        "user_agent": "agent",
+    }
+    payload[partial_field] = None
+
+    with pytest.raises(ValueError):
+        RemoteAccountProvider._credential(AccountRegion.JP, payload)
+
+
+@pytest.mark.parametrize(
+    "bad_field",
+    ["install_id", "x_if", "x_kc", "device_model", "os_version", "user_agent"],
+)
+def test_jp_en_payload_non_string_fingerprint_is_rejected(bad_field):
+    payload = {
+        "kind": "jp_en",
+        "user_id": "user",
+        "credential": "cred",
+        "signature": "sig",
+        "install_id": "install",
+        "x_if": "if",
+        "x_kc": "kc",
+        "device_model": "model",
+        "os_version": "os",
+        "user_agent": "agent",
+    }
+    payload[bad_field] = 123
+
+    with pytest.raises(ValueError):
+        RemoteAccountProvider._credential(AccountRegion.JP, payload)
+
+
+def test_jp_en_payload_invalid_ticket_timestamp_is_rejected():
+    payload = {
+        "kind": "jp_en",
+        "user_id": "user",
+        "credential": "cred",
+        "signature": "sig",
+        "issued_at": "not-a-timestamp",
+    }
+
+    with pytest.raises(ValueError):
+        RemoteAccountProvider._credential(AccountRegion.EN, payload)
+
+
+def test_jp_en_payload_naive_ticket_timestamp_is_rejected():
+    payload = {
+        "kind": "jp_en",
+        "user_id": "user",
+        "credential": "cred",
+        "signature": "sig",
+        "expires_at": "2099-01-01T00:00:00",
+    }
+
+    with pytest.raises(ValueError):
+        RemoteAccountProvider._credential(AccountRegion.EN, payload)

@@ -37,6 +37,10 @@ SENSITIVE_KEYS = {
     "install_id",
     "installid",
     "x-install-id",
+    "x_if",
+    "xif",
+    "x_kc",
+    "xkc",
     "x-internal-rpc-token",
     "internal_rpc_token",
     "x-strapi-token",
@@ -53,7 +57,7 @@ _URL_PARAM_RE = re.compile(
 _HEADER_RE = re.compile(
     r"(?i)\b("
     r"Authorization|Cookie|Set-Cookie|X-Session-Token|"
-    r"X-Api-Token|X-Api-Key|X-Install-Id|Device-Id|Access-Token|Api-Key|"
+    r"X-Api-Token|X-Api-Key|X-Install-Id|X-If|X-Kc|Device-Id|Access-Token|Api-Key|"
     r"Token|X-Internal-Rpc-Token|Internal-Rpc-Token|X-Strapi-Token|Strapi-Token"
     r")\b[=:]\s*('?)([^'\s]+)('?)",
 )
@@ -64,7 +68,8 @@ _QUOTED_FIELD_RE = re.compile(
     r"(?i)(['\"])("
     r"authorization|cookie|set-cookie|x-session-token|credential|signature|"
     r"accessToken|access_token|token|api_key|x-api-token|x-api-key|"
-    r"device_id|deviceId|install_id|installId|x-install-id|x-internal-rpc-token|internal_rpc_token|"
+    r"device_id|deviceId|install_id|installId|x-install-id|x_if|xIf|x_kc|xKc|"
+    r"x-internal-rpc-token|internal_rpc_token|"
     r"x-strapi-token|strapi_token"
     r")\1\s*:\s*(['\"])(.*?)\3"
 )

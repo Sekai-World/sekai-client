@@ -27,12 +27,44 @@ class JpEnCredential:
     user_id: str
     credential: str = field(repr=False)
     signature: str = field(repr=False)
+    # Registration device fingerprint. Present on remotely provisioned
+    # accounts; legacy local accounts carry none (all fields empty).
+    install_id: str = field(default="", repr=False)
+    x_if: str = field(default="", repr=False)
+    x_kc: str = field(default="", repr=False)
+    device_model: str = field(default="", repr=False)
+    os_version: str = field(default="", repr=False)
+    user_agent: str = field(default="", repr=False)
+    # Credential ticket metadata from the registration JWT, when known.
+    issued_at: datetime | None = None
+    expires_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.region not in (AccountRegion.JP, AccountRegion.EN):
             raise ValueError("JP/EN credential requires region jp or en")
         if not self.user_id or not self.credential or not self.signature:
             raise ValueError("JP/EN credential fields must be non-empty")
+        fingerprint = (
+            self.install_id,
+            self.x_if,
+            self.x_kc,
+            self.device_model,
+            self.os_version,
+            self.user_agent,
+        )
+        if any(fingerprint) and not all(fingerprint):
+            raise ValueError("JP/EN device fingerprint fields are all-or-nothing")
+        for name in ("issued_at", "expires_at"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if value.tzinfo is None:
+                raise ValueError("JP/EN credential timestamps must be timezone-aware")
+            object.__setattr__(self, name, value.astimezone(UTC))
+
+    @property
+    def has_device_fingerprint(self) -> bool:
+        return bool(self.install_id)
 
     def __repr__(self) -> str:
         return f"JpEnCredential(region={self.region.value!r})"

@@ -56,6 +56,21 @@ class TestRedactStructure:
         assert out["installId"] == REDACTED
         assert out["userId"] == "u1"
 
+    def test_redacts_lease_fingerprint_keys(self):
+        data = {
+            "xIf": "if-value",
+            "xKc": "kc-value",
+            "x_if": "if-value-2",
+            "x_kc": "kc-value-2",
+            "userId": "u1",
+        }
+        out = redact_structure(data)
+        assert out["xIf"] == REDACTED
+        assert out["xKc"] == REDACTED
+        assert out["x_if"] == REDACTED
+        assert out["x_kc"] == REDACTED
+        assert out["userId"] == "u1"
+
 
 class TestRedactText:
     def test_redacts_bearer_token(self):
@@ -81,6 +96,19 @@ class TestRedactText:
         assert "dev-123" not in out
         assert "inst-456" not in out
         assert out.count("[REDACTED]") == 2
+
+    def test_redacts_header_like_lease_fingerprint(self):
+        text = "x-if: if-value; x-kc=kc-value"
+        out = redact_text(text)
+        assert "if-value" not in out
+        assert "kc-value" not in out
+        assert out.count("[REDACTED]") == 2
+
+    def test_redacts_json_lease_fingerprint_fields(self):
+        text = '{"xIf": "secret-if", "xKc": "secret-kc"}'
+        out = redact_text(text)
+        assert "secret-if" not in out
+        assert "secret-kc" not in out
 
     def test_redacts_json_and_python_repr_fields(self):
         json_text = '{"credential": "secret", "userId": "1"}'
