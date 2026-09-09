@@ -4,13 +4,21 @@ Unofficial API client for Project Sekai feat. Hatsune Miku and several useful to
 
 ## Bootstrap
 
-This repo uses [`uv`][uv_url] to create the virtual environment and manage dependencies for running python scripts. The project targets Python 3.12.
+This repo uses [`uv`][uv_url] to create the virtual environment and manage dependencies for running Python scripts. The project targets Python 3.12.
 
-To start, install `uv` and run
+After cloning, install `uv` and run the setup script:
 
 ```sh
-$ uv sync
+./scripts/setup-dev.sh
 ```
+
+The script syncs the development dependencies and installs the pre-commit hook. It is safe to run again. To run the hooks manually, use:
+
+```sh
+uv run pre-commit run --all-files
+```
+
+Pre-commit provides local formatting and lint checks; CI remains the final gate.
 
 [uv_url]: https://docs.astral.sh/uv/
 

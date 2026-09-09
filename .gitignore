@@ -14,6 +14,7 @@
 sekai-master-db*/
 *.yaml
 !*.example.yaml
+!.pre-commit-config.yaml
 !pnpm*.yaml
 sekai-event-track/
 sekai-i18n/
