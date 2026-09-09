@@ -58,7 +58,7 @@ class JpEnCredential:
             value = getattr(self, name)
             if value is None:
                 continue
-            if value.tzinfo is None:
+            if value.tzinfo is None or value.utcoffset() is None:
                 raise ValueError("JP/EN credential timestamps must be timezone-aware")
             object.__setattr__(self, name, value.astimezone(UTC))
 

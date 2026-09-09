@@ -57,7 +57,8 @@ _URL_PARAM_RE = re.compile(
 _HEADER_RE = re.compile(
     r"(?i)\b("
     r"Authorization|Cookie|Set-Cookie|X-Session-Token|"
-    r"X-Api-Token|X-Api-Key|X-Install-Id|X-If|X-Kc|Device-Id|Access-Token|Api-Key|"
+    r"X-Api-Token|X-Api-Key|X-Install-Id|X-If|X_If|X-Kc|X_Kc|Device-Id|"
+    r"Access-Token|Api-Key|"
     r"Token|X-Internal-Rpc-Token|Internal-Rpc-Token|X-Strapi-Token|Strapi-Token"
     r")\b[=:]\s*('?)([^'\s]+)('?)",
 )

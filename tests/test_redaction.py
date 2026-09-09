@@ -104,6 +104,13 @@ class TestRedactText:
         assert "kc-value" not in out
         assert out.count("[REDACTED]") == 2
 
+    def test_redacts_header_like_snake_case_lease_fingerprint(self):
+        text = "x_if: if-value; x_kc=kc-value"
+        out = redact_text(text)
+        assert "if-value" not in out
+        assert "kc-value" not in out
+        assert out.count("[REDACTED]") == 2
+
     def test_redacts_json_lease_fingerprint_fields(self):
         text = '{"xIf": "secret-if", "xKc": "secret-kc"}'
         out = redact_text(text)

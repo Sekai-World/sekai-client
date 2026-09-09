@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 
@@ -97,6 +97,28 @@ def test_jp_en_credential_rejects_naive_timestamps():
             "credential",
             "signature",
             issued_at=datetime(2026, 9, 9),
+        )
+
+
+class _OffsetlessTz(tzinfo):
+    def utcoffset(self, dt):
+        return None
+
+    def dst(self, dt):
+        return None
+
+    def tzname(self, dt):
+        return None
+
+
+def test_jp_en_credential_rejects_offsetless_tzinfo():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        JpEnCredential(
+            AccountRegion.JP,
+            "user",
+            "credential",
+            "signature",
+            expires_at=datetime(2026, 9, 9, 12, tzinfo=_OffsetlessTz()),
         )
 
 

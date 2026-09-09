@@ -181,3 +181,48 @@ def test_jp_en_auth_without_lease_fingerprint_keeps_static_headers(monkeypatch):
     assert client.headers["x-if"] == original_headers["x-if"]
     assert client.headers["x-kc"] == original_headers["x-kc"]
     assert client.headers["user-agent"] == original_headers["user-agent"]
+
+
+def test_jp_en_auth_resets_fingerprint_headers_after_legacy_account(monkeypatch):
+    """A legacy credential must not reuse the previous lease's device identity."""
+    from api_client import APIClient
+
+    client = APIClient(region="jp")
+    monkeypatch.setattr(client, "_refresh_suite_version_headers", lambda: None)
+    original_headers = dict(client.headers)
+    client.call_pjsk_api = Mock(
+        return_value=_valid_auth_response(suiteMasterSplitPath=["master/a"])
+    )
+
+    client.account_info = {
+        "userId": "user",
+        "credential": "cred",
+        "signature": "sig",
+        "installId": "lease-install-id",
+        "xIf": "lease-if-id",
+        "xKc": "lease-kc-id",
+        "deviceModel": "lease-device-model",
+        "osVersion": "lease-os-version",
+        "userAgent": "lease-user-agent",
+    }
+    client._authenticate()
+    assert client.headers["x-install-id"] == "lease-install-id"
+
+    client.account_info = {
+        "userId": "legacy-user",
+        "credential": "legacy-cred",
+        "signature": "legacy-sig",
+    }
+    client._authenticate()
+
+    assert client.headers["x-install-id"] == original_headers["x-install-id"]
+    assert client.headers["x-if"] == original_headers["x-if"]
+    assert client.headers["x-kc"] == original_headers["x-kc"]
+    assert client.headers["x-devicemodel"] == original_headers["x-devicemodel"]
+    assert client.headers["x-operatingsystem"] == original_headers["x-operatingsystem"]
+    assert client.headers["user-agent"] == original_headers["user-agent"]
+    client.call_pjsk_api.assert_called_with(
+        "/user/legacy-user/auth?refreshUpdatedResources=False",
+        "put",
+        {"credential": "legacy-cred"},
+    )

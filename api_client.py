@@ -574,20 +574,37 @@ class APIClient:
     def _apply_jp_en_fingerprint_headers(self, credential: JpEnCredential) -> None:
         """Present the lease's registered device identity for JP/EN requests.
 
-        Credentials without a fingerprint (legacy local accounts) keep the
-        static per-region bootstrap headers; remotely provisioned accounts are
-        bound to the device identity recorded at their registration.
+        Credentials without a fingerprint (legacy local accounts) are reset to
+        the static per-region bootstrap headers so a previous lease's device
+        identity never outlives its credential; remotely provisioned accounts
+        are bound to the identity recorded at their registration.
         """
-        if not credential.has_device_fingerprint:
-            return
-        self.headers["x-install-id"] = credential.install_id
-        self.headers["x-if"] = credential.x_if
-        self.headers["x-kc"] = credential.x_kc
-        self.headers["x-devicemodel"] = credential.device_model
-        self.headers["x-operatingsystem"] = credential.os_version
-        self.headers["user-agent"] = credential.user_agent
+        if credential.has_device_fingerprint:
+            install_id = credential.install_id
+            x_if = credential.x_if
+            x_kc = credential.x_kc
+            device_model = credential.device_model
+            os_version = credential.os_version
+            user_agent = credential.user_agent
+            source = "lease"
+        else:
+            static = initial_api_headers[self.region]
+            install_id = static["x-install-id"]
+            x_if = static["x-if"]
+            x_kc = static["x-kc"]
+            device_model = static["x-devicemodel"]
+            os_version = static["x-operatingsystem"]
+            user_agent = static["user-agent"]
+            source = "static"
+        self.headers["x-install-id"] = install_id
+        self.headers["x-if"] = x_if
+        self.headers["x-kc"] = x_kc
+        self.headers["x-devicemodel"] = device_model
+        self.headers["x-operatingsystem"] = os_version
+        self.headers["user-agent"] = user_agent
         self.logger.info(
-            "applied lease device fingerprint region=%s",
+            "applied %s device fingerprint region=%s",
+            source,
             self.region,
         )
 
