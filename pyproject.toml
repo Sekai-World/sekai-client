@@ -100,5 +100,10 @@ select = [
 ignore = [
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Generated data module: long schema field lines are expected and the file
+# is regenerated rather than hand-edited.
+"nuverse_positional_structures.py" = ["E501"]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 10

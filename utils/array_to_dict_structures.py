@@ -6,6 +6,8 @@ from itertools import zip_longest
 from os import getenv
 from typing import Any
 
+from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
+
 BASE_STRUCTURES: dict[str, list[Any]] = {
     "actionSets": [
         "id",
@@ -1257,6 +1259,14 @@ def resolve_structure_compatibility_version(app_ver: str | None = None) -> str |
 
 @cache
 def _build_structures_for_app_ver(app_ver: str) -> dict[str, list[Any]]:
+    """Build the table-schema mapping in effect for ``app_ver``.
+
+    Starts from ``BASE_STRUCTURES`` and applies every applicable
+    ``STRUCTURE_COMPATIBILITY`` entry in ascending version order, then
+    overlays the distilled nuverse positional schemas (which always win).
+    Raises ``ValueError`` when ``app_ver`` is not a parseable semantic
+    version.
+    """
     result = deepcopy(BASE_STRUCTURES)
 
     for version in _sorted_compatibility_versions():
@@ -1269,18 +1279,42 @@ def _build_structures_for_app_ver(app_ver: str) -> dict[str, list[Any]]:
             else:
                 result[key] = deepcopy(value)
 
+    apply_nuverse_overlay(result)
+
     return result
 
 
+def apply_nuverse_overlay(result: dict[str, list[Any]]) -> None:
+    """Overlay the distilled nuverse positional schemas onto ``result``.
+
+    The bundle-derived schemas describe the current upstream record layouts
+    and win over the hand-maintained ``BASE_STRUCTURES`` entries, which
+    historically lag behind upstream field additions (cards, events,
+    virtualLives, ...). Tables absent from the bundle keep their existing
+    entry untouched.
+    """
+    result.update(deepcopy(NUVERSE_POSITIONAL_STRUCTURES))
+
+
 def get_structures_for_app_ver(app_ver: str | None = None) -> dict[str, list[Any]]:
+    """Return the table-schema mapping for ``app_ver`` (env ``APP_VER`` default).
+
+    Without a usable app version — absent, empty, or not a semantic version —
+    falls back to ``BASE_STRUCTURES``; both paths include the nuverse
+    positional overlay.
+    """
     target_app_ver = (app_ver or getenv("APP_VER") or "").strip()
     if not target_app_ver:
-        return deepcopy(BASE_STRUCTURES)
+        result = deepcopy(BASE_STRUCTURES)
+        apply_nuverse_overlay(result)
+        return result
 
     try:
         return deepcopy(_build_structures_for_app_ver(target_app_ver))
     except ValueError:
-        return deepcopy(BASE_STRUCTURES)
+        result = deepcopy(BASE_STRUCTURES)
+        apply_nuverse_overlay(result)
+        return result
 
 
 structures = get_structures_for_app_ver()
