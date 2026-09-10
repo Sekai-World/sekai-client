@@ -30,6 +30,7 @@ EXTRA_TRAILING_FIELDS = {"cardCostume3ds": ["isInitialObtainHair"]}
 
 
 def load_blob() -> tuple[dict, int]:
+    """Fetch and decrypt the current live master data blob."""
     client = JSONRPCClient("http://localhost:" + os.environ["JSONRPC_PORT"] + "/")
     cdn = client.request("version_info")["cdnVersion"]
     import requests
@@ -200,6 +201,7 @@ def main() -> None:
 
 
 def emit_module(specs: dict, cdn) -> str:
+    """Render the specs dict as the generated data module text."""
     lines = [
         '"""Generated positional schemas for nuverse (cn/tw/kr) master data.',
         "",
@@ -221,6 +223,7 @@ def emit_module(specs: dict, cdn) -> str:
 
 
 def emitter(node, indent: int) -> str:
+    """Render a spec node as a formatted Python literal (tuples preserved)."""
     pad = "    " * indent
     if isinstance(node, tuple):
         return "(" + ", ".join(repr(k) for k in node) + ",)"

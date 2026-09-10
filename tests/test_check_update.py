@@ -463,6 +463,7 @@ def test_get_splitted_master_data_rejects_unknown_dict_top_level_table(monkeypat
 
 
 def test_convert_master_records_passthrough_object_records(monkeypatch):
+    """Object records pass through unchanged."""
     monkeypatch.setattr(check_update, "pjsk_region", "tw")
     structures = {"cardCostume3ds": ["cardId", "costume3dId", "isInitialObtainHair"]}
     data = [{"cardId": 4, "costume3dId": 29001, "isInitialObtainHair": False}]
@@ -476,6 +477,7 @@ def test_convert_master_records_passthrough_object_records(monkeypatch):
 
 
 def test_convert_master_records_converts_positional_records(monkeypatch):
+    """Positional records decode against the table spec."""
     monkeypatch.setattr(check_update, "pjsk_region", "tw")
     structures = {"cardCostume3ds": ["cardId", "costume3dId", "isInitialObtainHair"]}
 
@@ -488,6 +490,7 @@ def test_convert_master_records_converts_positional_records(monkeypatch):
 
 
 def test_convert_master_records_passthrough_compact_columnar_table(monkeypatch):
+    """Compact columnar tables bypass positional conversion."""
     monkeypatch.setattr(check_update, "pjsk_region", "tw")
     data = {"__ENUM__": {}, "id": [1, 2]}
 

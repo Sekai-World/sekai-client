@@ -48,6 +48,7 @@ def test_restore_compact_data_rejects_malformed_enum_indexes(enum_index):
 
 
 def test_get_structures_applies_nuverse_overlay_without_app_ver():
+    """Overlay applies even when no app version is given."""
     from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
     from utils.array_to_dict import get_structures_for_app_ver
 
@@ -63,6 +64,7 @@ def test_get_structures_applies_nuverse_overlay_without_app_ver():
 
 
 def test_get_structures_overlay_wins_over_compatibility_entries():
+    """Bundle layouts win over the compatibility entries."""
     from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
     from utils.array_to_dict import get_structures_for_app_ver
 
@@ -73,6 +75,7 @@ def test_get_structures_overlay_wins_over_compatibility_entries():
 
 
 def test_apply_nuverse_overlay_preserves_tables_absent_from_bundle():
+    """Tables absent from the bundle keep their existing spec."""
     from utils.array_to_dict_structures import apply_nuverse_overlay
 
     result = {"handMaintainedTable": ["id", "name"]}
@@ -83,6 +86,7 @@ def test_apply_nuverse_overlay_preserves_tables_absent_from_bundle():
 
 
 def test_overlay_spec_converts_real_positional_record():
+    """The overlay spec decodes a real positional record."""
     from utils.array_to_dict import convert_array_to_dict, get_structures_for_app_ver
 
     structures = get_structures_for_app_ver()
@@ -94,6 +98,7 @@ def test_overlay_spec_converts_real_positional_record():
 
 
 def test_overlay_spec_converts_flat_struct_column():
+    """A flat-struct column decodes via its tuple mapping."""
     from utils.array_to_dict import convert_array_to_dict, get_structures_for_app_ver
 
     structures = get_structures_for_app_ver()

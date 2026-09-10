@@ -895,6 +895,7 @@ def test_validate_current_event_response_optional_region_compares_when_expected(
 
 
 def test_validate_master_data_accepts_positional_records_with_schema():
+    """Positional records are accepted for tables with a known schema."""
     validate_master_data(
         {
             "cardCostume3ds": [[4, 29001, False], [88, 30129, True]],
@@ -904,21 +905,25 @@ def test_validate_master_data_accepts_positional_records_with_schema():
 
 
 def test_validate_master_data_rejects_positional_records_without_schema():
+    """Positional records fail closed without a schema."""
     with pytest.raises(ResponseValidationError):
         validate_master_data({"noSuchPositionalTable": [[1, 2]]})
 
 
 def test_validate_master_data_rejects_positional_record_length_drift():
+    """A record length drift against the schema is rejected."""
     with pytest.raises(ResponseValidationError):
         validate_master_data({"cardCostume3ds": [[4, 29001, False], [4, 29002]]})
 
 
 def test_validate_master_data_rejects_mixed_record_shapes():
+    """Mixing positional and object records in one table is rejected."""
     with pytest.raises(ResponseValidationError):
         validate_master_data({"cardCostume3ds": [[4, 29001, False], {"id": 1}]})
 
 
 def test_validate_master_data_checks_positional_i18n_id_column():
+    """The i18n id check covers the positional id column."""
     from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
 
     schema = NUVERSE_POSITIONAL_STRUCTURES["events"]
@@ -930,6 +935,7 @@ def test_validate_master_data_checks_positional_i18n_id_column():
 
 
 def test_validate_master_data_accepts_positional_i18n_records_with_int_id():
+    """An int positional id satisfies the i18n id check."""
     from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
 
     schema = NUVERSE_POSITIONAL_STRUCTURES["events"]
@@ -940,6 +946,7 @@ def test_validate_master_data_accepts_positional_i18n_records_with_int_id():
 
 
 def test_validate_master_data_accepts_compact_columnar_table():
+    """Compact columnar tables are accepted as-is."""
     validate_master_data(
         {
             "compactResourceBoxes": {
@@ -952,9 +959,11 @@ def test_validate_master_data_accepts_compact_columnar_table():
 
 
 def test_validate_master_data_accepts_columnar_table_without_compact_prefix():
+    """Columnar shape is accepted regardless of the table name."""
     validate_master_data({"someColumnar": {"__ENUM__": {}, "id": [1]}})
 
 
 def test_validate_master_data_still_rejects_unknown_dict_table():
+    """Unknown dict tables stay rejected unless columnar-shaped."""
     with pytest.raises(ResponseValidationError):
         validate_master_data({"unknownDictTable": {"__x__": [], "id": [1]}})
