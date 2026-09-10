@@ -33,6 +33,7 @@ def test_restore_compact_data_rejects_malformed_enum_values():
 
 @pytest.mark.parametrize("enum_index", ["0", 1.0, True, -1, 1])
 def test_restore_compact_data_rejects_malformed_enum_indexes(enum_index):
+    """Non-int enum indexes (str/float/bool/out-of-range) are rejected."""
     data = {
         "status": [enum_index],
         "__ENUM__": {"status": ["ready"]},

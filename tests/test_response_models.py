@@ -879,6 +879,7 @@ def test_validate_current_event_response_optional_region_rejects_bad_type():
 
 
 def test_validate_current_event_response_optional_region_compares_when_expected():
+    """Region is compared case-insensitively when expected, else optional."""
     # matching region passes
     assert validate_current_event_response(
         _event_with_region("jp"), expected_region="jp"

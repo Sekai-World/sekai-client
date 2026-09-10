@@ -1259,6 +1259,14 @@ def resolve_structure_compatibility_version(app_ver: str | None = None) -> str |
 
 @cache
 def _build_structures_for_app_ver(app_ver: str) -> dict[str, list[Any]]:
+    """Build the table-schema mapping in effect for ``app_ver``.
+
+    Starts from ``BASE_STRUCTURES`` and applies every applicable
+    ``STRUCTURE_COMPATIBILITY`` entry in ascending version order, then
+    overlays the distilled nuverse positional schemas (which always win).
+    Raises ``ValueError`` when ``app_ver`` is not a parseable semantic
+    version.
+    """
     result = deepcopy(BASE_STRUCTURES)
 
     for version in _sorted_compatibility_versions():
@@ -1289,6 +1297,12 @@ def apply_nuverse_overlay(result: dict[str, list[Any]]) -> None:
 
 
 def get_structures_for_app_ver(app_ver: str | None = None) -> dict[str, list[Any]]:
+    """Return the table-schema mapping for ``app_ver`` (env ``APP_VER`` default).
+
+    Without a usable app version — absent, empty, or not a semantic version —
+    falls back to ``BASE_STRUCTURES``; both paths include the nuverse
+    positional overlay.
+    """
     target_app_ver = (app_ver or getenv("APP_VER") or "").strip()
     if not target_app_ver:
         result = deepcopy(BASE_STRUCTURES)

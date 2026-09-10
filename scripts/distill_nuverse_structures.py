@@ -88,6 +88,7 @@ def build_specs(bundle: dict, schemas: dict, observed: dict) -> dict:  # noqa: C
     """
 
     def ref_schema(name):
+        """Resolve a named type to its bundle schema (prefix-stripped)."""
         return schemas.get((name or "").split("/")[-1].split(".")[-1])
 
     def spec_for_named_scalar(table, name, payload, i, depth):
@@ -108,6 +109,13 @@ def build_specs(bundle: dict, schemas: dict, observed: dict) -> dict:  # noqa: C
         return name
 
     def build_spec(table, sch, depth):
+        """Build one table's positional spec; raises on unmappable shapes.
+
+        Every field must carry a contiguous ``msgpack_key`` (the positional
+        index), plain columns map to their name, arrays of named structs
+        recurse into ``[name, [nested spec]]`` entries, and named-struct
+        scalar columns are resolved by ``spec_for_named_scalar``.
+        """
         if depth > MAX_DEPTH:
             raise ValueError("depth limit")
         fields = sorted(sch["fields"], key=lambda f: f["msgpack_key"])
@@ -148,7 +156,13 @@ def build_specs(bundle: dict, schemas: dict, observed: dict) -> dict:  # noqa: C
 
 
 def verify_specs(blob: dict, specs: dict) -> tuple[int, int, list, list]:
-    """Convert sample records per positional table; report failures."""
+    """Convert sample records per positional table; report failures.
+
+    Every sampled record must have exactly ``len(spec)`` fields before
+    conversion: ``convert_array_to_dict`` silently ignores surplus trailing
+    values, so a spec missing a new upstream column would otherwise pass
+    verification while the published decode drops that column.
+    """
     list_tables = [
         t
         for t, r in blob.items()
@@ -162,6 +176,8 @@ def verify_specs(blob: dict, specs: dict) -> tuple[int, int, list, list]:
             continue
         try:
             for r in blob[table][:200]:
+                if len(r) != len(spec):
+                    raise ValueError(f"expected {len(spec)} fields, got {len(r)}")
                 convert_array_to_dict(r, spec, structure_name=table)
             ok += 1
         except Exception as exc:  # noqa: BLE001
@@ -171,6 +187,12 @@ def verify_specs(blob: dict, specs: dict) -> tuple[int, int, list, list]:
 
 
 def main() -> None:
+    """Run the full distillation and write the generated module.
+
+    Writes the module only when every list-form table in the live blob has a
+    spec and all sampled conversions succeed; any gap aborts with a nonzero
+    exit instead of emitting a partially verified schema module.
+    """
     blob, cdn = load_blob()
     with open(BUNDLE_PATH) as f:
         bundle = json.load(f)
@@ -179,10 +201,6 @@ def main() -> None:
     observed = build_observed_kinds(blob)
     specs = build_specs(bundle, schemas, observed)
     checked, ok, missing, failures = verify_specs(blob, specs)
-
-    module = emit_module(specs, cdn)
-    with open(sys.argv[1], "w") as f:
-        f.write(module)
 
     tuple_specs = sum(
         1
@@ -197,6 +215,17 @@ def main() -> None:
     print("missing specs:", missing)
     print("conversion failures:", failures)
     print("flat-tuple specs:", tuple_specs)
+
+    if missing or failures or ok != checked:
+        print(
+            "verification incomplete; refusing to write the module",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    module = emit_module(specs, cdn)
+    with open(sys.argv[1], "w") as f:
+        f.write(module)
     print("module bytes:", len(module))
 
 
