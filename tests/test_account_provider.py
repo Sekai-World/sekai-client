@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 
@@ -21,6 +21,105 @@ def test_jp_en_credential_rejects_wrong_region_and_hides_secrets():
     rendered = repr(value)
     assert "secret-cred" not in rendered
     assert "secret-sig" not in rendered
+
+
+def test_jp_en_credential_accepts_complete_fingerprint_and_hides_it():
+    value = JpEnCredential(
+        AccountRegion.JP,
+        "user",
+        "secret-cred",
+        "secret-sig",
+        install_id="lease-install",
+        x_if="lease-if",
+        x_kc="lease-kc",
+        device_model="lease-model",
+        os_version="lease-os",
+        user_agent="lease-agent",
+        issued_at=datetime(2026, 9, 1, tzinfo=UTC),
+        expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+    )
+
+    assert value.has_device_fingerprint is True
+    rendered = repr(value)
+    assert "lease-install" not in rendered
+    assert "lease-agent" not in rendered
+
+
+@pytest.mark.parametrize(
+    "empty_field",
+    ["install_id", "x_if", "x_kc", "device_model", "os_version", "user_agent"],
+)
+def test_jp_en_credential_rejects_partial_fingerprint(empty_field):
+    fields = {
+        "install_id": "lease-install",
+        "x_if": "lease-if",
+        "x_kc": "lease-kc",
+        "device_model": "lease-model",
+        "os_version": "lease-os",
+        "user_agent": "lease-agent",
+    }
+    fields[empty_field] = ""
+
+    with pytest.raises(ValueError, match="all-or-nothing"):
+        JpEnCredential(AccountRegion.JP, "user", "credential", "signature", **fields)
+
+
+def test_jp_en_credential_without_fingerprint_is_legacy_compatible():
+    value = JpEnCredential(AccountRegion.EN, "user", "credential", "signature")
+
+    assert value.has_device_fingerprint is False
+    assert value.issued_at is None
+    assert value.expires_at is None
+
+
+def test_jp_en_credential_normalizes_timestamps_to_utc():
+    value = JpEnCredential(
+        AccountRegion.JP,
+        "user",
+        "credential",
+        "signature",
+        issued_at=datetime(2026, 9, 9, 12, 0, tzinfo=timezone(timedelta(hours=9))),
+        expires_at=datetime(2026, 9, 10, 12, 0, tzinfo=timezone(timedelta(hours=9))),
+    )
+
+    assert value.issued_at is not None
+    assert value.issued_at.tzinfo is UTC
+    assert value.issued_at.hour == 3
+    assert value.expires_at is not None
+    assert value.expires_at.tzinfo is UTC
+
+
+def test_jp_en_credential_rejects_naive_timestamps():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        JpEnCredential(
+            AccountRegion.JP,
+            "user",
+            "credential",
+            "signature",
+            issued_at=datetime(2026, 9, 9),
+        )
+
+
+class _OffsetlessTz(tzinfo):
+    def utcoffset(self, dt):
+        return None
+
+    def dst(self, dt):
+        return None
+
+    def tzname(self, dt):
+        return None
+
+
+def test_jp_en_credential_rejects_offsetless_tzinfo():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        JpEnCredential(
+            AccountRegion.JP,
+            "user",
+            "credential",
+            "signature",
+            expires_at=datetime(2026, 9, 9, 12, tzinfo=_OffsetlessTz()),
+        )
 
 
 def test_tw_kr_credential_rejects_wrong_region_and_hides_token():

@@ -936,6 +936,36 @@ def test_tw_kr_auth_rejects_malformed_fingerprint_field_and_does_not_mutate_head
     assert client.headers == original_headers
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["installId", "xIf", "xKc", "deviceModel", "osVersion", "userAgent"],
+)
+@pytest.mark.parametrize("bad_value", [None, 0, False, "", 123])
+def test_jp_en_auth_rejects_malformed_fingerprint_field_and_does_not_mutate_headers(
+    field, bad_value, monkeypatch
+):
+    client = APIClient(region="jp")
+    monkeypatch.setattr(client, "_refresh_suite_version_headers", lambda: None)
+    original_headers = dict(client.headers)
+    client.account_info = {
+        "userId": "u",
+        "credential": "cred",
+        "signature": "sig",
+        "installId": "install-id",
+        "xIf": "if-id",
+        "xKc": "kc-id",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
+        "userAgent": "user-agent",
+    }
+    client.account_info[field] = bad_value
+
+    with pytest.raises(ValueError, match=f"non-empty {field}"):
+        client._authenticate()
+
+    assert client.headers == original_headers
+
+
 def test_tw_kr_auth_rejects_missing_cdn_version_without_mutating_split_paths(
     monkeypatch,
 ):

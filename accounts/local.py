@@ -32,11 +32,23 @@ def credential_to_account_info(
 ) -> dict[str, object]:
     """Convert a typed credential to the game client's legacy login payload."""
     if isinstance(credential, JpEnCredential):
-        return {
+        info: dict[str, object] = {
             "signature": credential.signature,
             "credential": credential.credential,
             "userId": credential.user_id,
         }
+        if credential.has_device_fingerprint:
+            info.update(
+                {
+                    "installId": credential.install_id,
+                    "xIf": credential.x_if,
+                    "xKc": credential.x_kc,
+                    "deviceModel": credential.device_model,
+                    "osVersion": credential.os_version,
+                    "userAgent": credential.user_agent,
+                }
+            )
+        return info
     return {
         "loginInfo": {"accessToken": credential.access_token},
         "userId": credential.sdk_open_id,

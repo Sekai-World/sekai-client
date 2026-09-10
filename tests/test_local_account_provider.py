@@ -35,6 +35,35 @@ def test_loads_existing_jp_yaml_and_restricts_permissions(tmp_path):
     assert account_path.stat().st_mode & 0o777 == 0o600
 
 
+def test_jp_en_credential_round_trips_fingerprint_through_account_info():
+    credential = JpEnCredential(
+        AccountRegion.JP,
+        "user",
+        "secret",
+        "signed",
+        install_id="lease-install",
+        x_if="lease-if",
+        x_kc="lease-kc",
+        device_model="lease-model",
+        os_version="lease-os",
+        user_agent="lease-agent",
+    )
+
+    info = credential_to_account_info(credential)
+
+    assert info == {
+        "userId": "user",
+        "credential": "secret",
+        "signature": "signed",
+        "installId": "lease-install",
+        "xIf": "lease-if",
+        "xKc": "lease-kc",
+        "deviceModel": "lease-model",
+        "osVersion": "lease-os",
+        "userAgent": "lease-agent",
+    }
+
+
 def test_registers_missing_account_atomically(tmp_path):
     register = Mock(
         return_value=JpEnCredential(

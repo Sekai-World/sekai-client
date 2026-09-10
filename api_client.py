@@ -509,12 +509,8 @@ class APIClient:
         credential: AccountCredential
         if self.region in ("jp", "en"):
             self._refresh_suite_version_headers()
-            credential = JpEnCredential(
-                AccountRegion(self.region),
-                str(self.account_info["userId"]),
-                str(self.account_info["credential"]),
-                str(self.account_info["signature"]),
-            )
+            credential = self._build_jp_en_credential()
+            self._apply_jp_en_fingerprint_headers(credential)
         elif self.region in ("tw", "kr"):
             credential = self._validate_tw_kr_account_info()
         elif self.region == "cn":
@@ -552,6 +548,65 @@ class APIClient:
         # split paths on the client.
         self.master_split_paths = list(result.master_split_paths)
         return auth_data
+
+    def _build_jp_en_credential(self) -> JpEnCredential:
+        def fingerprint_field(key: str) -> str:
+            if key not in self.account_info:
+                return ""
+            value = self.account_info[key]
+            if isinstance(value, str) and value:
+                return value
+            raise ValueError(f"JP/EN account info requires a non-empty {key}")
+
+        return JpEnCredential(
+            AccountRegion(self.region),
+            str(self.account_info["userId"]),
+            str(self.account_info["credential"]),
+            str(self.account_info["signature"]),
+            install_id=fingerprint_field("installId"),
+            x_if=fingerprint_field("xIf"),
+            x_kc=fingerprint_field("xKc"),
+            device_model=fingerprint_field("deviceModel"),
+            os_version=fingerprint_field("osVersion"),
+            user_agent=fingerprint_field("userAgent"),
+        )
+
+    def _apply_jp_en_fingerprint_headers(self, credential: JpEnCredential) -> None:
+        """Present the lease's registered device identity for JP/EN requests.
+
+        Credentials without a fingerprint (legacy local accounts) are reset to
+        the static per-region bootstrap headers so a previous lease's device
+        identity never outlives its credential; remotely provisioned accounts
+        are bound to the identity recorded at their registration.
+        """
+        if credential.has_device_fingerprint:
+            install_id = credential.install_id
+            x_if = credential.x_if
+            x_kc = credential.x_kc
+            device_model = credential.device_model
+            os_version = credential.os_version
+            user_agent = credential.user_agent
+            source = "lease"
+        else:
+            static = initial_api_headers[self.region]
+            install_id = static["x-install-id"]
+            x_if = static["x-if"]
+            x_kc = static["x-kc"]
+            device_model = static["x-devicemodel"]
+            os_version = static["x-operatingsystem"]
+            user_agent = static["user-agent"]
+            source = "static"
+        self.headers["x-install-id"] = install_id
+        self.headers["x-if"] = x_if
+        self.headers["x-kc"] = x_kc
+        self.headers["x-devicemodel"] = device_model
+        self.headers["x-operatingsystem"] = os_version
+        self.headers["user-agent"] = user_agent
+        self.logger.info(
+            "applied %s device fingerprint region=%s",
+            source,
+            self.region,
+        )
 
     def _refresh_suite_version_headers(self) -> None:
         """Use the current suite client fingerprint before authenticating."""
