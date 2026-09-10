@@ -128,10 +128,21 @@ def test_validate_system_data_accepts_valid():
 
 
 def test_validate_system_data_accepts_missing_optional_data_version():
+    """Accept a version entry that omits the optional ``dataVersion``."""
     response = _valid_system()
     del response["appVersions"][0]["dataVersion"]
 
     validate_system_data(response)
+
+
+def test_validate_system_data_accepts_missing_optional_maintenance_status():
+    """Accept system data that omits the optional ``maintenanceStatus``."""
+    response = _valid_system()
+    del response["maintenanceStatus"]
+
+    result = validate_system_data(response)
+
+    assert result == response
 
 
 @pytest.mark.parametrize(
@@ -139,7 +150,6 @@ def test_validate_system_data_accepts_missing_optional_data_version():
     [
         {},
         {"maintenanceStatus": "none"},
-        {"appVersions": []},
         {"maintenanceStatus": 0, "appVersions": []},
         {"maintenanceStatus": "none", "appVersions": [{"appVersion": "1"}]},
         {
@@ -156,6 +166,7 @@ def test_validate_system_data_accepts_missing_optional_data_version():
     ],
 )
 def test_validate_system_data_rejects_invalid(response):
+    """Reject malformed shapes and non-string version/maintenance fields."""
     with pytest.raises(ResponseValidationError):
         validate_system_data(response)
 

@@ -967,7 +967,11 @@ class APIClient:
 
         system_data = self.fetch_system_data()
         if self.region in ("jp", "en"):
-            res["maintenance"] = system_data["maintenanceStatus"] == "maintenance_in"
+            # maintenanceStatus is optional in upstream responses; absence
+            # means the server is not reporting a maintenance window.
+            res["maintenance"] = (
+                system_data.get("maintenanceStatus") == "maintenance_in"
+            )
 
         all_ver_infos = system_data["appVersions"]
         curr_app_ver = self.headers["x-app-version"]
