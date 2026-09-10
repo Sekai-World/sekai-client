@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
+
 # Tables whose records are consumed by the i18n special handlers and therefore
 # must carry an integer ``id``. Used by ``validate_master_data`` to give a
 # precise diagnostic for the records that drive public JSON output.
@@ -559,45 +561,95 @@ def validate_master_data(
 ) -> dict[str, Any]:
     """Validate master-data object/list shape.
 
-    Required: a top-level object whose values are lists of objects. The tables
-    consumed by the i18n special handlers (``cards``/``musics``/``events``/
-    ``virtualLives``/``eventStories``/``stamps``) additionally require each record
-    to carry an integer ``id`` so the i18n writers fail with a precise diagnostic
-    rather than a bare ``KeyError``.
+    Required: a top-level object whose values are lists of records. Records may
+    be objects (the classic shape) or, for tables with a known positional
+    schema in ``NUVERSE_POSITIONAL_STRUCTURES``, lists of positional arrays as
+    delivered by the nuverse (cn/tw/kr) source; positional records must match
+    the schema length exactly. The tables consumed by the i18n special handlers
+    (``cards``/``musics``/``events``/``virtualLives``/``eventStories``/
+    ``stamps``) additionally require each object record — or the ``id`` column
+    of a positional record — to carry an integer ``id`` so the i18n writers
+    fail with a precise diagnostic rather than a bare ``KeyError``.
 
     A small, explicitly named set of tables (``mysekaiStaminaRecovery``,
     ``mysekaiColorfulPass``, ``mysekaiConvertFixtureSlot``,
     ``mysekaiFixtureGameCharacterPerformanceBonusLimit``, and
     ``mysekaiSiteHousingPreset`` in JP/EN master splits) is a single object/dict
     singleton instead of a list; such tables are validated by
-    ``_validate_dict_singleton`` against their explicit field schema. Every other
-    table must remain a list — unknown dict-typed top-level tables are still
-    rejected to avoid silently accepting a malformed split.
+    ``_validate_dict_singleton`` against their explicit field schema. Compact
+    columnar tables (the ``compact*`` family: a column-name keyed object with
+    an optional ``__ENUM__`` dictionary-encoding table) are accepted as-is;
+    ``restore_compact_data`` reconstructs their records downstream. Every other
+    dict-typed top-level table is still rejected to avoid silently accepting a
+    malformed split.
     """
     d = _require_dict(data, source)
     for table, records in d.items():
-        # Explicitly named dict singletons are the only exception to the
+        # Explicitly named dict singletons are the only named exception to the
         # top-level "must be a list" rule.
         if table in _DICT_SINGLETON_TABLES:
             _validate_dict_singleton(records, source, table)
             continue
+        if isinstance(records, dict):
+            # Columnar encoding (compact* family): column-name keyed object,
+            # optionally with a __ENUM__ dictionary-encoding table. The actual
+            # shape is checked when restore_compact_data reconstructs records.
+            if table.startswith("compact") or "__ENUM__" in records:
+                continue
+            raise ResponseValidationError.invalid_type(source, table, "list", records)
         if not isinstance(records, list):
             raise ResponseValidationError.invalid_type(source, table, "list", records)
-        if table in _I18N_ID_TABLES:
-            for i, record in enumerate(records):
-                if not isinstance(record, dict):
-                    raise ResponseValidationError.invalid_type(
-                        source, f"{table}[{i}]", "object", record
-                    )
-                rid = record.get("id")
-                if not isinstance(rid, int) or isinstance(rid, bool):
-                    raise ResponseValidationError.invalid_type(
-                        source, f"{table}[{i}].id", "int", rid
-                    )
-        else:
-            for i, record in enumerate(records):
-                if not isinstance(record, dict):
-                    raise ResponseValidationError.invalid_type(
-                        source, f"{table}[{i}]", "object", record
-                    )
+        if records and isinstance(records[0], list):
+            _validate_positional_records(table, records, source)
+            continue
+        _validate_object_records(table, records, source)
     return d
+
+
+def _validate_object_records(table: str, records: list[Any], source: str) -> None:
+    """Validate object-form records; i18n tables must carry an int ``id``."""
+    if table not in _I18N_ID_TABLES:
+        for i, record in enumerate(records):
+            if not isinstance(record, dict):
+                raise ResponseValidationError.invalid_type(
+                    source, f"{table}[{i}]", "object", record
+                )
+        return
+    for i, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise ResponseValidationError.invalid_type(
+                source, f"{table}[{i}]", "object", record
+            )
+        rid = record.get("id")
+        if not isinstance(rid, int) or isinstance(rid, bool):
+            raise ResponseValidationError.invalid_type(
+                source, f"{table}[{i}].id", "int", rid
+            )
+
+
+def _validate_positional_records(table: str, records: list[Any], source: str) -> None:
+    """Validate positional (array-form) records against the distilled schema.
+
+    Every record must be a list matching the schema length exactly — a length
+    drift means the positional decoding would misassign or silently drop
+    fields, which must fail here rather than corrupt the published tables.
+    For i18n tables the ``id`` column must still carry an integer.
+    """
+    schema = NUVERSE_POSITIONAL_STRUCTURES.get(table)
+    if schema is None:
+        raise ResponseValidationError.invalid_type(
+            source, f"{table}[0]", "object (no positional schema)", records[0]
+        )
+    expected = len(schema)
+    id_index = schema.index("id") if "id" in schema else None
+    for i, record in enumerate(records):
+        if not isinstance(record, list) or len(record) != expected:
+            raise ResponseValidationError.invalid_type(
+                source, f"{table}[{i}]", f"list[{expected}]", record
+            )
+        if table in _I18N_ID_TABLES and id_index is not None:
+            rid = record[id_index]
+            if not isinstance(rid, int) or isinstance(rid, bool):
+                raise ResponseValidationError.invalid_type(
+                    source, f"{table}[{i}].id", "int", rid
+                )

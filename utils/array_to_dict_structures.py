@@ -6,6 +6,8 @@ from itertools import zip_longest
 from os import getenv
 from typing import Any
 
+from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
+
 BASE_STRUCTURES: dict[str, list[Any]] = {
     "actionSets": [
         "id",
@@ -1269,18 +1271,36 @@ def _build_structures_for_app_ver(app_ver: str) -> dict[str, list[Any]]:
             else:
                 result[key] = deepcopy(value)
 
+    apply_nuverse_overlay(result)
+
     return result
+
+
+def apply_nuverse_overlay(result: dict[str, list[Any]]) -> None:
+    """Overlay the distilled nuverse positional schemas onto ``result``.
+
+    The bundle-derived schemas describe the current upstream record layouts
+    and win over the hand-maintained ``BASE_STRUCTURES`` entries, which
+    historically lag behind upstream field additions (cards, events,
+    virtualLives, ...). Tables absent from the bundle keep their existing
+    entry untouched.
+    """
+    result.update(deepcopy(NUVERSE_POSITIONAL_STRUCTURES))
 
 
 def get_structures_for_app_ver(app_ver: str | None = None) -> dict[str, list[Any]]:
     target_app_ver = (app_ver or getenv("APP_VER") or "").strip()
     if not target_app_ver:
-        return deepcopy(BASE_STRUCTURES)
+        result = deepcopy(BASE_STRUCTURES)
+        apply_nuverse_overlay(result)
+        return result
 
     try:
         return deepcopy(_build_structures_for_app_ver(target_app_ver))
     except ValueError:
-        return deepcopy(BASE_STRUCTURES)
+        result = deepcopy(BASE_STRUCTURES)
+        apply_nuverse_overlay(result)
+        return result
 
 
 structures = get_structures_for_app_ver()

@@ -719,6 +719,10 @@ def _convert_master_records_for_region(
 ) -> tuple[Any, int | None]:
     if not (pjsk_region in ["cn", "tw", "kr"] and key in current_structures):
         return file_data, None
+    if key.startswith("compact"):
+        # Columnar tables are object-shaped, not record lists; they pass
+        # through and are reconstructed by _write_compact_master_alias_if_needed.
+        return file_data, None
     if not isinstance(file_data, list):
         raise RuntimeError(f"Expected list master data for {key}")
 
@@ -726,6 +730,11 @@ def _convert_master_records_for_region(
     last_record_idx = None
     for record_idx, file_datum in enumerate(file_data):
         last_record_idx = record_idx
+        if isinstance(file_datum, dict):
+            # Already object-form: most nuverse tables keep delivering dicts;
+            # only the positional-array tables need decoding.
+            converted_file_data.append(file_datum)
+            continue
         converted_file_data.append(
             convert_array_to_dict(
                 file_datum,

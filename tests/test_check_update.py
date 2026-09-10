@@ -460,3 +460,40 @@ def test_get_splitted_master_data_rejects_unknown_dict_top_level_table(monkeypat
 
     with pytest.raises(RuntimeError):
         check_update.get_splitted_master_data()
+
+
+def test_convert_master_records_passthrough_object_records(monkeypatch):
+    monkeypatch.setattr(check_update, "pjsk_region", "tw")
+    structures = {"cardCostume3ds": ["cardId", "costume3dId", "isInitialObtainHair"]}
+    data = [{"cardId": 4, "costume3dId": 29001, "isInitialObtainHair": False}]
+
+    out, last = check_update._convert_master_records_for_region(
+        "cardCostume3ds", data, structures
+    )
+
+    assert out == data
+    assert last == 0
+
+
+def test_convert_master_records_converts_positional_records(monkeypatch):
+    monkeypatch.setattr(check_update, "pjsk_region", "tw")
+    structures = {"cardCostume3ds": ["cardId", "costume3dId", "isInitialObtainHair"]}
+
+    out, last = check_update._convert_master_records_for_region(
+        "cardCostume3ds", [[4, 29001, False]], structures
+    )
+
+    assert out == [{"cardId": 4, "costume3dId": 29001, "isInitialObtainHair": False}]
+    assert last == 0
+
+
+def test_convert_master_records_passthrough_compact_columnar_table(monkeypatch):
+    monkeypatch.setattr(check_update, "pjsk_region", "tw")
+    data = {"__ENUM__": {}, "id": [1, 2]}
+
+    out, last = check_update._convert_master_records_for_region(
+        "compactResourceBoxes", data, {"compactResourceBoxes": ["id"]}
+    )
+
+    assert out is data
+    assert last is None
