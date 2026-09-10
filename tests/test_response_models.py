@@ -134,12 +134,20 @@ def test_validate_system_data_accepts_missing_optional_data_version():
     validate_system_data(response)
 
 
+def test_validate_system_data_accepts_missing_optional_maintenance_status():
+    response = _valid_system()
+    del response["maintenanceStatus"]
+
+    result = validate_system_data(response)
+
+    assert result == response
+
+
 @pytest.mark.parametrize(
     "response",
     [
         {},
         {"maintenanceStatus": "none"},
-        {"appVersions": []},
         {"maintenanceStatus": 0, "appVersions": []},
         {"maintenanceStatus": "none", "appVersions": [{"appVersion": "1"}]},
         {

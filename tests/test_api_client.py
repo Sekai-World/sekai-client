@@ -104,6 +104,37 @@ def test_check_versions_preserves_valid_app_hash_over_empty_upstream(monkeypatch
     assert client.version_info["appHash"] == "valid-hash"
 
 
+def test_check_versions_tolerates_missing_maintenance_status(monkeypatch):
+    client = APIClient(region="jp")
+    client.headers["x-app-version"] = "1.0.0"
+    client.headers["x-app-hash"] = "valid-hash"
+    client.version_info = {
+        "appVersion": "1.0.0",
+        "dataVersion": "1.0.0.1",
+        "assetVersion": "1.0.0.1",
+        "appHash": "valid-hash",
+    }
+
+    system_data = {
+        "appVersions": [
+            {
+                "appVersion": "1.0.0",
+                "dataVersion": "1.0.0.1",
+                "assetVersion": "1.0.0.1",
+                "appVersionStatus": "available",
+                "appHash": "",
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        api_client.APIClient, "fetch_system_data", lambda self: system_data
+    )
+
+    res = client.check_versions()
+
+    assert res["maintenance"] is False
+
+
 def test_jp_403_refreshes_cookie_and_retries_without_xml_content_type(monkeypatch):
     client = APIClient(region="jp")
     rejected = Mock(spec=requests.Response)

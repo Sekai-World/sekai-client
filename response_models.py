@@ -322,15 +322,16 @@ def validate_version_info(  # noqa: C901 - narrow field-by-field boundary valida
 def validate_system_data(data: object) -> dict[str, Any]:
     """Validate the ``/system`` version/system response.
 
-    Required: ``maintenanceStatus`` (str) and ``appVersions`` (list of version
-    descriptors, each with ``appVersion``/``assetVersion``/``appVersionStatus``).
-    ``dataVersion`` is optional because upstream version entries may omit it.
+    Required: ``appVersions`` (list of version descriptors, each with
+    ``appVersion``/``assetVersion``/``appVersionStatus``).
+    ``maintenanceStatus`` is optional because upstream responses may omit it;
+    when present it must be a string. Version-entry ``dataVersion`` is optional
+    for the same reason.
     """
     src = "system-data"
     d = _require_dict(data, src)
-    if "maintenanceStatus" not in d:
-        raise ResponseValidationError.missing_field(src, "maintenanceStatus")
-    _require_str(d["maintenanceStatus"], src, "maintenanceStatus")
+    if "maintenanceStatus" in d:
+        _require_str(d["maintenanceStatus"], src, "maintenanceStatus")
 
     if "appVersions" not in d:
         raise ResponseValidationError.missing_field(src, "appVersions")
