@@ -73,6 +73,7 @@ def test_apply_new_version_info_preserves_valid_app_hash_header():
 
 
 def test_check_versions_preserves_valid_app_hash_over_empty_upstream(monkeypatch):
+    """Keep the client's valid app hash when upstream reports an empty one."""
     client = APIClient(region="jp")
     client.headers["x-app-version"] = "1.0.0"
     client.headers["x-app-hash"] = "valid-hash"
@@ -100,11 +101,11 @@ def test_check_versions_preserves_valid_app_hash_over_empty_upstream(monkeypatch
     )
 
     client.check_versions()
-    # An empty upstream appHash must not overwrite the existing valid value.
     assert client.version_info["appHash"] == "valid-hash"
 
 
 def test_check_versions_tolerates_missing_maintenance_status(monkeypatch):
+    """Report no maintenance when system data omits ``maintenanceStatus``."""
     client = APIClient(region="jp")
     client.headers["x-app-version"] = "1.0.0"
     client.headers["x-app-hash"] = "valid-hash"
