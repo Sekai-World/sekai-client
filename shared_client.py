@@ -590,7 +590,15 @@ def _restore_runtime_locked(state: dict[str, Any]) -> None:
 
 
 def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
-    client.headers = state["headers"]
+    """Roll back client session state captured by ``_snapshot_client_state``.
+
+    Headers must be mutated in place: ``GameProtocolTransport`` shares the
+    dict object with ``APIClient``, so rebinding would detach the transport
+    from future session tokens and version headers, which then never reach
+    the wire.
+    """
+    client.headers.clear()
+    client.headers.update(state["headers"])
     client.account_info = state["account_info"]
     client.version_info = state["version_info"]
     client.master_split_paths = state["master_split_paths"]
