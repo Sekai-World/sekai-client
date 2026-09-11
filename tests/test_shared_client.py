@@ -135,6 +135,23 @@ def test_failed_forced_login_restores_active_session(monkeypatch, logged_in_clie
     day_change_job.resume.assert_called_once_with()
 
 
+def test_restore_client_state_keeps_headers_dict_identity(logged_in_client):
+    """Restoring must mutate the headers dict, not rebind it.
+
+    ``GameProtocolTransport`` shares the dict object with ``APIClient``;
+    rebinding detaches the transport, so session tokens set by later logins
+    never reach the wire (observed as TW/KR 400/403 session errors).
+    """
+    headers_dict = logged_in_client.headers
+    state = shared_client._snapshot_client_state(logged_in_client)
+
+    headers_dict["x-session-token"] = "rotated-token"
+    shared_client._restore_client_state(logged_in_client, state)
+
+    assert logged_in_client.headers is headers_dict
+    assert logged_in_client.headers["x-session-token"] == "active-token"
+
+
 def test_injected_provider_lease_is_released_when_login_fails(
     monkeypatch, logged_in_client
 ):
