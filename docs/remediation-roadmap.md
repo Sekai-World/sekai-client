@@ -562,16 +562,16 @@ and test-count records above are retained as execution history.
   Phase 6 reliability prerequisite is complete, and the TW and KR remote-provider
   canaries both passed their observation gates. On 2026-08-25 all production
   processes were migrated from the legacy release branch onto the current main
-  line; TW and KR are now migrated, and the remaining EN/JP expansion continues
-  one region at a time.
+  line; the remote-provider rollout has since completed for all regions.
 - Follow the roadmap's
   [Recommended Execution Order](architecture-decoupling-roadmap.md#recommended-execution-order):
   the Phase 0/1 confirmations and critical Phase 6 reliability work are done.
-  Remaining priorities: Phase 5 public endpoint verification and monitoring
-  integration ([#57](https://github.com/Sekai-World/sekai-client/issues/57)),
-  retirement of the legacy production checkout after one observed daily cycle
-  ([#58](https://github.com/Sekai-World/sekai-client/issues/58)), and continued
-  one-region-at-a-time remote-provider rollout ([#55](https://github.com/Sekai-World/sekai-client/issues/55)).
+  All tracked roadmap issues are now closed: the one-region-at-a-time
+  remote-provider rollout ([#55](https://github.com/Sekai-World/sekai-client/issues/55)),
+  Phase 5 public endpoint verification and monitoring integration
+  ([#57](https://github.com/Sekai-World/sekai-client/issues/57)), and the
+  legacy production checkout retirement ([#58](https://github.com/Sekai-World/sekai-client/issues/58)).
+  Ongoing work continues via the architecture-decoupling roadmap.
 
 ## 进度日志
 
@@ -596,3 +596,4 @@ and test-count records above are retained as execution history.
 | 2026-08-26 | roadmap | Current audit reconciled: event-tracker client and receiver idempotency/outbox work is complete; Dashboard desktop/mobile browser acceptance is complete; remaining work is upstream response validation, Phase 5 public endpoint/monitoring acceptance, legacy checkout retirement, and one-region rollout. | Track [#55](https://github.com/Sekai-World/sekai-client/issues/55), [#56](https://github.com/Sekai-World/sekai-client/issues/56), [#57](https://github.com/Sekai-World/sekai-client/issues/57), and [#58](https://github.com/Sekai-World/sekai-client/issues/58). |
 | 2026-08-27 | 5 | Added a repeatable, read-only Phase 5 acceptance tool (`deployment/phase5_acceptance.py`) and runbook (`docs/phase5-production-acceptance.md`). The tool performs aggregate, redacted PM2/Gunicorn and public-health validation without mutating services; it does not contain or claim any production acceptance evidence. Phase 5 remains in progress. | Operators run the tool in production and record only aggregate acceptance evidence (no URLs, bodies, credentials, IDs, paths, exact timestamps, or detailed counters) before marking Phase 5 complete; continue one-region canary/rollout. |
 | 2026-08-28 | 7 | Removed the check-update Strapi ID publication/outbox path and its deployment configuration. Preserved event-tracker Strapi current-event reads and ranking delivery outbox. JP/EN version validation now requires a non-empty `appHash`, and valid hashes are not overwritten by empty upstream values. Verification: full `pytest` 777 passed; Ruff and `git diff --check` clean. | Deploy only after the normal review/rollback gate; no production changes were made in this worktree. |
+| 2026-09-14 | ops | Legacy production checkout retired ([#58](https://github.com/Sekai-World/sekai-client/issues/58) closed). The observation gate passed with margin: months of scheduled daily cycles on the current main line plus an extended multi-region verification window with all regions READY and no authenticated-request failures. A reference scan confirmed no live process configuration referenced the legacy tree; four stale process-definition files were repointed before removal. Retention decision recorded: the checkout's Git history and its untracked source files were archived to the private operator record; the remainder (working data clones superseded by the active checkout, empty failure-artifact shells from a resolved August incident, a stale crash dump, and one obsolete credential) was destroyed without archive. Aggregate evidence only; operational identifiers and locations are retained privately. | None. |
