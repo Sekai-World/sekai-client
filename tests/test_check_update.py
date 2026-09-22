@@ -71,6 +71,51 @@ def test_jp_refresh_logs_in_when_client_has_no_session(monkeypatch):
     ]
 
 
+def test_kr_refresh_logs_in_before_requiring_cdn_version(monkeypatch):
+    client = Mock()
+    candidate = {
+        "appVersion": "1.0",
+        "dataVersion": "1.0",
+        "assetVersion": "1.0",
+        "cdnVersion": "cdn-kr",
+    }
+    client.request.side_effect = [False, {"loggedIn": True}, candidate]
+    monkeypatch.setattr(check_update, "jsonrpc_client", client)
+    monkeypatch.setattr(check_update, "pjsk_region", "kr")
+    monkeypatch.setattr(check_update, "check_update_simple_mode", False)
+
+    result = check_update._refresh_version_info_from_source()
+
+    assert result == candidate
+    assert client.request.call_args_list == [
+        call("is_login"),
+        call("login"),
+        call("version_info"),
+    ]
+
+
+def test_kr_refresh_skips_login_when_already_authenticated(monkeypatch):
+    client = Mock()
+    candidate = {
+        "appVersion": "1.0",
+        "dataVersion": "1.0",
+        "assetVersion": "1.0",
+        "cdnVersion": "cdn-kr",
+    }
+    client.request.side_effect = [True, candidate]
+    monkeypatch.setattr(check_update, "jsonrpc_client", client)
+    monkeypatch.setattr(check_update, "pjsk_region", "kr")
+    monkeypatch.setattr(check_update, "check_update_simple_mode", False)
+
+    result = check_update._refresh_version_info_from_source()
+
+    assert result == candidate
+    assert client.request.call_args_list == [
+        call("is_login"),
+        call("version_info"),
+    ]
+
+
 def test_merge_existing_file_data_replaces_matching_ids(tmp_path):
     file_path = tmp_path / "events.json"
     file_path.write_text(

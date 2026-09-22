@@ -643,15 +643,14 @@ def _refresh_version_info_from_source() -> dict[str, Any]:
     if check_update_simple_mode:
         return fetch_simple_version_info()
 
-    if pjsk_region in ("jp", "en"):
-        if not jsonrpc_client.request("is_login"):
-            jsonrpc_client.request("login")
-        else:
-            logger.debug(
-                "[refresh_version] refresh split master data list without "
-                "running full login workflow"
-            )
-            jsonrpc_client.request("refresh_master_split_paths")
+    if not jsonrpc_client.request("is_login"):
+        jsonrpc_client.request("login")
+    elif pjsk_region in ("jp", "en"):
+        logger.debug(
+            "[refresh_version] refresh split master data list without "
+            "running full login workflow"
+        )
+        jsonrpc_client.request("refresh_master_split_paths")
     return _validate_fetched_version_info(
         jsonrpc_client.request("version_info"),
         require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
