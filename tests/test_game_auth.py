@@ -204,16 +204,15 @@ def test_tw_authentication_rejects_malformed_second_response(login_response):
 
 @pytest.mark.parametrize(
     ("region", "expected_device_id"),
-    [("tw", "configured-tw-device-id"), ("kr", "lease-device-id")],
+    [("tw", "lease-device-id"), ("kr", "lease-device-id")],
 )
 def test_tw_kr_auth_sets_device_id_header_on_transport(
     monkeypatch, region, expected_device_id
 ):
-    """TW keeps its configured ID; KR uses the lease ID after authentication."""
+    """TW and KR use the current credential's device ID after authentication."""
     from api_client import APIClient
 
-    if region == "tw":
-        monkeypatch.setenv("SEKAI_TW_DEVICE_ID", expected_device_id)
+    monkeypatch.delenv("SEKAI_TW_DEVICE_ID", raising=False)
     client = APIClient(region=region)
     client.account_info = {
         "userId": "open-id",
@@ -270,6 +269,42 @@ def test_tw_kr_auth_sets_device_id_header_on_transport(
                 "authTriggerType": "normal",
             },
         )
+
+
+def test_tw_reauthentication_uses_new_lease_device_id(monkeypatch):
+    from api_client import APIClient
+
+    monkeypatch.delenv("SEKAI_TW_DEVICE_ID", raising=False)
+    client = APIClient(region="tw")
+    client.account_info = {
+        "userId": "open-id",
+        "loginInfo": {"accessToken": "token"},
+        "deviceId": "first-lease-device-id",
+        "installId": "lease-install-id",
+        "userAgent": "lease-user-agent",
+        "deviceModel": "lease-device-model",
+        "osVersion": "lease-os-version",
+    }
+    device_ids_used_for_auth = []
+
+    def respond(endpoint, method="get", body=""):
+        if endpoint == "/user/auth":
+            device_ids_used_for_auth.append(client.headers["device_id"])
+            return {"userId": 12345, "sessionToken": "game-session"}
+        assert endpoint == "/user/12345/login"
+        return _valid_tw_login_response()
+
+    client.call_pjsk_api = Mock(side_effect=respond)
+
+    client._authenticate()
+    client.account_info["deviceId"] = "second-lease-device-id"
+    client._authenticate()
+
+    assert device_ids_used_for_auth == [
+        "first-lease-device-id",
+        "second-lease-device-id",
+    ]
+    assert client.headers["device_id"] == "second-lease-device-id"
 
 
 def test_jp_en_auth_sets_fingerprint_headers_from_lease(monkeypatch):

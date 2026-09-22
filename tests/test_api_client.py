@@ -14,25 +14,12 @@ from game_auth import AuthenticationResult
 from utils.constants import EN_FALLBACK_VERSION_INFO, JP_FALLBACK_VERSION_INFO
 
 
-@pytest.fixture(autouse=True)
-def _configured_tw_device_id(monkeypatch):
-    monkeypatch.setenv("SEKAI_TW_DEVICE_ID", "test-tw-device-id")
+def test_tw_initialization_does_not_require_environment_device_id(monkeypatch):
+    monkeypatch.delenv("SEKAI_TW_DEVICE_ID", raising=False)
 
-
-def test_tw_configured_device_id_is_sent_before_authentication(monkeypatch):
-    monkeypatch.setenv("SEKAI_TW_DEVICE_ID", "configured-tw-device-id")
     client = APIClient(region="tw")
-    response = Mock(status_code=200, headers={}, content=b"")
-    response.raise_for_status.return_value = None
-    request = Mock(return_value=response)
-    monkeypatch.setattr(requests, "request", request)
-    monkeypatch.setattr(client, "_decrypt_response_data", Mock(return_value=None))
 
-    assert client.call_pjsk_api("/system") is None
-
-    assert request.call_args.kwargs["headers"]["device_id"] == (
-        "configured-tw-device-id"
-    )
+    assert client.region == "tw"
 
 
 def test_tw_app_hash_is_loaded_at_import_and_sent_with_android_platform(monkeypatch):
@@ -80,21 +67,8 @@ def test_tw_app_hash_is_loaded_at_import_and_sent_with_android_platform(monkeypa
         importlib.reload(constants)
 
 
-@pytest.mark.parametrize("bad_device_id", [None, "", "   "])
-def test_tw_initialization_rejects_missing_or_invalid_device_id(
-    monkeypatch, bad_device_id
-):
-    if bad_device_id is None:
-        monkeypatch.delenv("SEKAI_TW_DEVICE_ID", raising=False)
-    else:
-        monkeypatch.setenv("SEKAI_TW_DEVICE_ID", bad_device_id)
-
-    with pytest.raises(ValueError, match="SEKAI_TW_DEVICE_ID"):
-        APIClient(region="tw")
-
-
 @pytest.mark.parametrize("region", ["kr", "jp", "en"])
-def test_other_regions_do_not_require_tw_device_id(monkeypatch, region):
+def test_other_regions_are_unaffected_by_tw_device_environment(monkeypatch, region):
     monkeypatch.delenv("SEKAI_TW_DEVICE_ID", raising=False)
 
     client = APIClient(region=region)

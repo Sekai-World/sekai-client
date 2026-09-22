@@ -11,7 +11,6 @@ Supported full API regions: 'jp' (Japan), 'en' (English), 'tw' (Taiwan),
 """
 
 import logging
-import os
 import random
 from collections.abc import Callable
 from copy import deepcopy
@@ -126,15 +125,6 @@ class APIClient:
         self._auth_transaction_id = 0
         self.region = region
         self.headers = deepcopy(initial_api_headers[region])
-        self._tw_device_id: str | None = None
-        if region == "tw":
-            device_id = os.getenv("SEKAI_TW_DEVICE_ID")
-            if not device_id or not device_id.strip():
-                raise ValueError(
-                    "SEKAI_TW_DEVICE_ID must be set to a non-empty value for TW"
-                )
-            self._tw_device_id = device_id
-            self.headers["device_id"] = device_id
         self.protocol = GameProtocolTransport(region, self.headers, logger)
         self.rate_limited = False
         self._recovering_426 = False
@@ -694,14 +684,7 @@ class APIClient:
             raise ValueError("TW/KR account info requires a non-empty deviceModel")
         if not isinstance(os_version, str) or not os_version:
             raise ValueError("TW/KR account info requires a non-empty osVersion")
-        if self.region == "tw":
-            if self._tw_device_id is None:
-                raise ValueError(
-                    "SEKAI_TW_DEVICE_ID must be set to a non-empty value for TW"
-                )
-            self.headers["device_id"] = self._tw_device_id
-        else:
-            self.headers["device_id"] = device_id
+        self.headers["device_id"] = device_id
         self.headers["x-install-id"] = install_id
         self.headers["user-agent"] = user_agent
         self.headers["x-devicemodel"] = device_model
