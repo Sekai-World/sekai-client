@@ -140,7 +140,7 @@ sekai_api_key = getenv("SEKAI_API_KEY", "")
 app_id_regions = {"jp": "9038", "tw": "18298", "en": "18337", "kr": "20082"}
 
 nuverse_master_data_base_url = {
-    "tw": "https://lf16-mkovscdn-sg.bytedgame.com/obj/sf-game-alisg/gdl_app_5245/MasterData/60001",
+    "tw": "https://lf19-mkovscdn-sg.bytedgame.com/obj/sf-game-alisg/gdl_app_5245/MasterData/60001",
     "kr": "https://lf19-mkkr.bytedgame.com/obj/sf-game-alisg/gdl_app_292248/MasterData/60001",
     "cn": "https://lf9-mkcncdn-tos.dailygn.com/obj/sf-game-lf/gdl_app_5236/MasterData/60001",
 }

@@ -119,6 +119,7 @@ class APIClient:
         self._user_info: dict[str, Any] = {}
         self._region: str = ""
         self._master_split_paths: list[str] = []
+        self._pending_game_user_id: int | None = None
 
         self.logger = logger
         self.lifecycle_callback: Callable[[AuthTransition], None] | None = None
@@ -509,6 +510,7 @@ class APIClient:
             self.version_info["appHash"] = ver_data["appHash"]
 
     def _authenticate(self) -> dict[str, Any]:
+        self._pending_game_user_id = None
         self.headers.pop("x-session-token", None)
         credential_type = "jp_en" if self.region in ("jp", "en") else "other"
         self.logger.info(
@@ -557,6 +559,8 @@ class APIClient:
         # succeeded, so a malformed TW/KR auth response cannot leave stale/partial
         # split paths on the client.
         self.master_split_paths = list(result.master_split_paths)
+        if self.region == "tw":
+            self._pending_game_user_id = result.canonical_user_id
         return auth_data
 
     def _build_jp_en_credential(self) -> JpEnCredential:
@@ -795,6 +799,13 @@ class APIClient:
             self.call_pjsk_api(
                 f"/user/{user_id}/tutorial", "patch", {"tutorialStatus": status}
             )
+
+    def _user_id_for_api(self) -> str:
+        """Return the authenticated game ID, normalized at the API boundary."""
+        user_id = self._pending_game_user_id
+        if user_id is None:
+            user_id = self.account_info["userId"]
+        return str(user_id)
 
     def _post_login_refresh(self, user_id: str) -> None:
         self.logger.debug("check user invitation")
@@ -1072,6 +1083,7 @@ class APIClient:
         if self._authenticating:
             raise RuntimeError("authentication already in progress")
         self._authenticating = True
+        self._pending_game_user_id = None
         try:
             self.logger.info("simulate login process")
             self.logger.debug("do auth")
@@ -1079,16 +1091,19 @@ class APIClient:
             self._apply_auth_headers_and_version_info(auth_data)
 
             self.logger.debug("get suite user")
-            user_id = self.account_info["userId"]
+            user_id = self._user_id_for_api()
             user_info = self.fetch_suite_user()
 
             self.logger.debug("check and skip tutorial")
             self._complete_tutorial_if_needed(user_id, user_info)
             self._post_login_refresh(user_id)
 
+            if self._pending_game_user_id is not None:
+                self.account_info["userId"] = str(self._pending_game_user_id)
             self.user_info = user_info
             return user_info
         finally:
+            self._pending_game_user_id = None
             self._authenticating = False
 
     def refresh_master_split_paths(self) -> list[str]:
@@ -1101,7 +1116,7 @@ class APIClient:
         return self.master_split_paths
 
     def fetch_suite_user(self, update_user_info: bool = False) -> dict[str, Any]:
-        res = GameAPIService(self, str(self.account_info["userId"])).fetch_suite_user()
+        res = GameAPIService(self, self._user_id_for_api()).fetch_suite_user()
 
         if update_user_info:
             self.user_info = res
@@ -1109,16 +1124,16 @@ class APIClient:
         return res
 
     def fetch_user_profile(self, user_id: str) -> dict[str, Any]:
-        return GameAPIService(
-            self, str(self.account_info["userId"])
-        ).fetch_user_profile(self.region, user_id)
+        return GameAPIService(self, self._user_id_for_api()).fetch_user_profile(
+            self.region, user_id
+        )
 
     def fetch_user_event_ranking(
         self, target_user_id: str, event_id: int
     ) -> dict[str, Any]:
-        return GameAPIService(
-            self, str(self.account_info["userId"])
-        ).fetch_user_event_ranking(target_user_id, event_id)
+        return GameAPIService(self, self._user_id_for_api()).fetch_user_event_ranking(
+            target_user_id, event_id
+        )
 
     def fetch_information(self):
         return PublicGameAPIService(self).fetch_information()
@@ -1127,15 +1142,15 @@ class APIClient:
         return PublicGameAPIService(self).fetch_system_data()
 
     def fetch_event_rank_first_100(self, event_id: int) -> dict[str, Any]:
-        return GameAPIService(
-            self, str(self.account_info["userId"])
-        ).fetch_event_rank_first_100(event_id)
+        return GameAPIService(self, self._user_id_for_api()).fetch_event_rank_first_100(
+            event_id
+        )
 
     def fetch_event_rank_border(self, event_id: int) -> dict[str, Any]:
         return PublicGameAPIService(self).fetch_event_rank_border(event_id)
 
     def accept_agreement(self):
-        return GameAPIService(self, str(self.account_info["userId"])).accept_agreement(
+        return GameAPIService(self, self._user_id_for_api()).accept_agreement(
             str(self.account_info["credential"]),
         )
 

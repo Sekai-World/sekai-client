@@ -108,6 +108,7 @@ def test_tw_authentication_uses_ordered_two_step_flow_and_hands_off_session_toke
     ]
     assert result.data["sessionToken"] == "initial-session"
     assert result.data["appVersionStatus"] == "available"
+    assert result.canonical_user_id == 12345
 
 
 @pytest.mark.parametrize("response", [None, b"data", {}, {"sessionToken": ""}])

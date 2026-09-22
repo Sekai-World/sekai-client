@@ -34,6 +34,7 @@ class AuthenticationTransport(Protocol):
 class AuthenticationResult:
     data: dict[str, Any]
     master_split_paths: tuple[str, ...] = ()
+    canonical_user_id: int | None = None
 
 
 class GameAuthenticationService:
@@ -90,6 +91,7 @@ class GameAuthenticationService:
             raise ValueError(
                 f"Invalid credential validation response: {error}"
             ) from error
+        canonical_user_id = auth_data["userId"]
 
         session_token = auth_data["sessionToken"]
         self._transport.headers["x-session-token"] = session_token
@@ -103,4 +105,4 @@ class GameAuthenticationService:
 
         result_data = dict(login_data)
         result_data["sessionToken"] = session_token
-        return AuthenticationResult(result_data)
+        return AuthenticationResult(result_data, canonical_user_id=canonical_user_id)

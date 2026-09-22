@@ -210,7 +210,9 @@ def test_four_region_lease_contract_and_client_owned_game_auth(region):
         ]
     else:
         game_transport.call_pjsk_api.return_value = legacy_auth_response
-    GameAuthenticationService(game_transport).authenticate(lease.credential)
+    auth_result = GameAuthenticationService(game_transport).authenticate(
+        lease.credential
+    )
     if isinstance(lease.credential, JpEnCredential):
         game_transport.call_pjsk_api.assert_called_once_with(
             f"/user/{region.value}-user/auth?refreshUpdatedResources=False",
@@ -220,6 +222,7 @@ def test_four_region_lease_contract_and_client_owned_game_auth(region):
     else:
         assert isinstance(lease.credential, TwKrCredential)
         if region == AccountRegion.TW:
+            assert auth_result.canonical_user_id == 12345
             assert game_transport.headers["x-session-token"] == "game-session"
             assert game_transport.call_pjsk_api.call_args_list == [
                 call("/user/auth", "post", {"accessToken": "tw-token"}),

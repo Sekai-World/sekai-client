@@ -765,6 +765,161 @@ def test_login_clears_authentication_guard_after_failure():
     assert client._authenticating is False
 
 
+def _valid_tw_login_data(**overrides):
+    data = {
+        "appVersion": "1.0.0",
+        "dataVersion": "1.0.0",
+        "assetVersion": "1.0.0",
+        "multiPlayVersion": "1.0.0",
+        "cdnVersion": 275,
+        "appVersionStatus": "available",
+    }
+    data.update(overrides)
+    return data
+
+
+def test_tw_login_propagates_canonical_game_user_id_to_scoped_requests():
+    client = APIClient(region="tw")
+    client.account_info = {
+        "userId": "sdk-open-id",
+        "loginInfo": {"accessToken": "access-token"},
+        "deviceId": "device-id",
+        "installId": "install-id",
+        "userAgent": "user-agent",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
+    }
+
+    def respond(endpoint, method="get", body="", **kwargs):
+        if endpoint == "/user/auth":
+            return {"userId": 98765, "sessionToken": "initial-session"}
+        if endpoint == "/user/98765/login":
+            return _valid_tw_login_data()
+        if endpoint == "/suite/user/98765":
+            return {"userTutorial": {"tutorialStatus": "start"}}
+        return {}
+
+    client.call_pjsk_api = Mock(side_effect=respond)
+
+    client.login()
+    client.fetch_user_event_ranking("target-user", 42)
+
+    endpoints = [call.args[0] for call in client.call_pjsk_api.call_args_list]
+    assert client.account_info["userId"] == "98765"
+    assert "/user/98765/login" in endpoints
+    assert "/suite/user/98765" in endpoints
+    assert "/user/98765/tutorial" in endpoints
+    assert "/user/98765/event/42/ranking?targetUserId=target-user" in endpoints
+    assert all("sdk-open-id" not in endpoint for endpoint in endpoints)
+
+
+@pytest.mark.parametrize(
+    ("responses", "error_match"),
+    [
+        ([{"userId": 0, "sessionToken": "initial-session"}], "Invalid credential"),
+        (
+            [
+                {"userId": 12345, "sessionToken": "initial-session"},
+                _valid_tw_login_data(appVersionStatus=""),
+            ],
+            "Invalid TW login response",
+        ),
+    ],
+)
+def test_failed_tw_authentication_preserves_sdk_user_id(responses, error_match):
+    client = APIClient(region="tw")
+    client.account_info = {
+        "userId": "sdk-open-id",
+        "loginInfo": {"accessToken": "access-token"},
+        "deviceId": "device-id",
+        "installId": "install-id",
+        "userAgent": "user-agent",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
+    }
+    client.call_pjsk_api = Mock(side_effect=responses)
+
+    with pytest.raises(ValueError, match=error_match):
+        client.login()
+
+    assert client.account_info["userId"] == "sdk-open-id"
+
+
+def test_failed_post_auth_tw_login_preserves_sdk_user_id():
+    client = APIClient(region="tw")
+    client.account_info = {
+        "userId": "sdk-open-id",
+        "loginInfo": {"accessToken": "access-token"},
+        "deviceId": "device-id",
+        "installId": "install-id",
+        "userAgent": "user-agent",
+        "deviceModel": "device-model",
+        "osVersion": "os-version",
+    }
+
+    def respond(endpoint, method="get", body="", **kwargs):
+        if endpoint == "/user/auth":
+            return {"userId": 98765, "sessionToken": "initial-session"}
+        if endpoint == "/user/98765/login":
+            return _valid_tw_login_data()
+        if endpoint == "/suite/user/98765":
+            return {"userTutorial": {"tutorialStatus": "end"}}
+        if endpoint == "/user/98765/invitation":
+            raise RuntimeError("post-login refresh failed")
+        return {}
+
+    client.call_pjsk_api = Mock(side_effect=respond)
+
+    with pytest.raises(RuntimeError, match="post-login refresh failed"):
+        client.login()
+
+    assert client.account_info["userId"] == "sdk-open-id"
+
+
+@pytest.mark.parametrize("region", ["jp", "en", "kr"])
+def test_non_tw_login_keeps_existing_user_id(monkeypatch, region):
+    client = APIClient(region=region)
+    user_id = "existing-user-id"
+    if region in ("jp", "en"):
+        monkeypatch.setattr(client, "_refresh_suite_version_headers", lambda: None)
+        client.account_info = {
+            "userId": user_id,
+            "credential": "credential",
+            "signature": "signature",
+        }
+    else:
+        client.account_info = {
+            "userId": user_id,
+            "loginInfo": {"accessToken": "access-token"},
+            "deviceId": "device-id",
+            "installId": "install-id",
+            "userAgent": "user-agent",
+            "deviceModel": "device-model",
+            "osVersion": "os-version",
+        }
+
+    auth_data = {
+        "sessionToken": "session-token",
+        "appVersion": "1.0.0",
+        "dataVersion": "1.0.0",
+        "assetVersion": "1.0.0",
+        "multiPlayVersion": "1.0.0",
+    }
+    if region == "kr":
+        auth_data["cdnVersion"] = 275
+
+    def respond(endpoint, method="get", body="", **kwargs):
+        if endpoint == f"/suite/user/{user_id}":
+            return {"userTutorial": {"tutorialStatus": "end"}}
+        return auth_data if endpoint != f"/user/{user_id}/invitation" else {}
+
+    client.call_pjsk_api = Mock(side_effect=respond)
+
+    client.login()
+
+    assert client.account_info["userId"] == user_id
+
+
 def test_hidden_auth_outcomes_are_paired_and_not_emitted_without_account():
     client = APIClient(region="jp")
     callback = Mock()
@@ -798,6 +953,16 @@ def test_request_and_decrypt_allows_allowlisted_master_data_url(monkeypatch):
     base = nuverse_master_data_base_url["tw"]
     url = f"{base}/master-data-60001.info"
     assert client.request_and_decrypt(url) == b"data"
+
+
+def test_nuverse_master_data_base_urls_preserve_region_values():
+    from utils.constants import nuverse_master_data_base_url
+
+    assert nuverse_master_data_base_url == {
+        "tw": "https://lf19-mkovscdn-sg.bytedgame.com/obj/sf-game-alisg/gdl_app_5245/MasterData/60001",
+        "kr": "https://lf19-mkkr.bytedgame.com/obj/sf-game-alisg/gdl_app_292248/MasterData/60001",
+        "cn": "https://lf9-mkcncdn-tos.dailygn.com/obj/sf-game-lf/gdl_app_5236/MasterData/60001",
+    }
 
 
 def test_request_and_decrypt_rejects_redirect_without_following(monkeypatch):
