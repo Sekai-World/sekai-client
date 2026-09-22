@@ -20,6 +20,8 @@ from response_models import (
     validate_information,
     validate_master_data,
     validate_system_data,
+    validate_tw_auth_response,
+    validate_tw_login_response,
     validate_version_info,
 )
 
@@ -79,6 +81,76 @@ def test_validate_auth_response_requires_cdn_version_when_requested():
 
 def test_validate_auth_response_accepts_cdn_version():
     validate_auth_response(_valid_auth(cdnVersion="20240101"), require_cdn_version=True)
+
+
+def test_validate_tw_auth_response_requires_positive_user_id_and_session_token():
+    response = {"userId": 42, "sessionToken": "session"}
+
+    assert validate_tw_auth_response(response) == response
+
+    for bad_response in (
+        {},
+        {"userId": True, "sessionToken": "session"},
+        {"userId": 0, "sessionToken": "session"},
+        {"userId": 42, "sessionToken": ""},
+    ):
+        with pytest.raises(ResponseValidationError):
+            validate_tw_auth_response(bad_response)
+
+
+def test_validate_tw_login_response_does_not_require_session_token():
+    response = {
+        "appVersion": "1.0.0",
+        "dataVersion": "1.0.0",
+        "assetVersion": "1.0.0",
+        "multiPlayVersion": "miku",
+        "cdnVersion": 275,
+        "appVersionStatus": "available",
+    }
+
+    assert validate_tw_login_response(response) == response
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {
+            "appVersion": "1",
+            "dataVersion": "1",
+            "assetVersion": "1",
+            "multiPlayVersion": "miku",
+            "cdnVersion": 1,
+        },
+        {
+            "appVersion": "1",
+            "dataVersion": "1",
+            "assetVersion": "1",
+            "multiPlayVersion": True,
+            "cdnVersion": 1,
+            "appVersionStatus": "available",
+        },
+        {
+            "appVersion": "1",
+            "dataVersion": "1",
+            "assetVersion": "1",
+            "multiPlayVersion": "miku",
+            "cdnVersion": True,
+            "appVersionStatus": "available",
+        },
+        {
+            "appVersion": "1",
+            "dataVersion": "1",
+            "assetVersion": "1",
+            "multiPlayVersion": "miku",
+            "cdnVersion": 1,
+            "appVersionStatus": "",
+        },
+    ],
+)
+def test_validate_tw_login_response_rejects_malformed_response(response):
+    with pytest.raises(ResponseValidationError):
+        validate_tw_login_response(response)
 
 
 # --------------------------------------------------------------------------- #

@@ -11,6 +11,49 @@ from game_auth import AuthenticationResult
 from utils.constants import EN_FALLBACK_VERSION_INFO, JP_FALLBACK_VERSION_INFO
 
 
+@pytest.fixture(autouse=True)
+def _configured_tw_device_id(monkeypatch):
+    monkeypatch.setenv("SEKAI_TW_DEVICE_ID", "test-tw-device-id")
+
+
+def test_tw_configured_device_id_is_sent_before_authentication(monkeypatch):
+    monkeypatch.setenv("SEKAI_TW_DEVICE_ID", "configured-tw-device-id")
+    client = APIClient(region="tw")
+    response = Mock(status_code=200, headers={}, content=b"")
+    response.raise_for_status.return_value = None
+    request = Mock(return_value=response)
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(client, "_decrypt_response_data", Mock(return_value=None))
+
+    assert client.call_pjsk_api("/system") is None
+
+    assert request.call_args.kwargs["headers"]["device_id"] == (
+        "configured-tw-device-id"
+    )
+
+
+@pytest.mark.parametrize("bad_device_id", [None, "", "   "])
+def test_tw_initialization_rejects_missing_or_invalid_device_id(
+    monkeypatch, bad_device_id
+):
+    if bad_device_id is None:
+        monkeypatch.delenv("SEKAI_TW_DEVICE_ID", raising=False)
+    else:
+        monkeypatch.setenv("SEKAI_TW_DEVICE_ID", bad_device_id)
+
+    with pytest.raises(ValueError, match="SEKAI_TW_DEVICE_ID"):
+        APIClient(region="tw")
+
+
+@pytest.mark.parametrize("region", ["kr", "jp", "en"])
+def test_other_regions_do_not_require_tw_device_id(monkeypatch, region):
+    monkeypatch.delenv("SEKAI_TW_DEVICE_ID", raising=False)
+
+    client = APIClient(region=region)
+
+    assert "device_id" not in client.headers
+
+
 def test_refresh_master_split_paths_only_applies_auth_metadata():
     client = Mock()
     client.region = "jp"
@@ -54,6 +97,30 @@ def test_auth_metadata_preserves_app_hash_for_version_document(region):
     )
 
     assert client.version_info["appHash"] == "current-app-hash"
+
+
+@pytest.mark.parametrize(
+    ("region", "expected_status"),
+    [("tw", "maintenance"), ("kr", "available")],
+)
+def test_tw_login_status_is_preserved_without_changing_kr_behavior(
+    region, expected_status
+):
+    client = APIClient(region=region)
+
+    client._apply_auth_headers_and_version_info(
+        {
+            "sessionToken": "session-token",
+            "appVersion": "1.0.0",
+            "dataVersion": "1.0.0.1",
+            "assetVersion": "1.0.0.1",
+            "multiPlayVersion": "miku",
+            "cdnVersion": 275,
+            "appVersionStatus": "maintenance",
+        }
+    )
+
+    assert client.version_info["appVersionStatus"] == expected_status
 
 
 def test_apply_new_version_info_preserves_valid_app_hash_header():
@@ -220,14 +287,13 @@ def test_init_cookie_http_error_does_not_expose_upstream_details(monkeypatch):
 
 def test_call_pjsk_api_http_error_does_not_expose_response_data():
     client = APIClient(region="jp")
-    response = Mock(status_code=500)
+    response = Mock(status_code=500, content=b"not-encrypted")
     response.raise_for_status.side_effect = requests.HTTPError(
         "upstream-secret-response", response=response
     )
     client._send_api_request = Mock(return_value=response)
-    client._decrypt_response_data = Mock(
-        return_value={"errorCode": "upstream-secret-error"}
-    )
+    decrypt_response = Mock(side_effect=ValueError("Invalid PKCS#7 padding"))
+    client._decrypt_response_data = decrypt_response
 
     with pytest.raises(RuntimeError) as excinfo:
         client.call_pjsk_api("/system", retry_policy=RetryPolicy.NEVER)
@@ -235,7 +301,8 @@ def test_call_pjsk_api_http_error_does_not_expose_response_data():
     error = str(excinfo.value)
     assert error == "PJSK API request failed (HTTP 500)"
     assert "upstream-secret-response" not in error
-    assert "upstream-secret-error" not in error
+    assert "Invalid PKCS#7 padding" not in error
+    decrypt_response.assert_not_called()
 
 
 def test_redirect_does_not_persist_session_token_and_is_rejected(monkeypatch):
@@ -272,7 +339,7 @@ def test_non_redirect_response_persists_session_token(monkeypatch):
 def test_post_426_invokes_handler_but_does_not_replay_request(monkeypatch):
     """Regression: non-idempotent HTTP 426 must run recovery side effects."""
     client = APIClient(region="jp")
-    response = Mock(status_code=426, headers={}, content=b"")
+    response = Mock(status_code=426, headers={}, content=b"not-encrypted")
     response.raise_for_status.side_effect = requests.HTTPError(response=response)
     request = Mock(return_value=response)
     monkeypatch.setattr(requests, "request", request)
@@ -281,11 +348,14 @@ def test_post_426_invokes_handler_but_does_not_replay_request(monkeypatch):
 
     handler = Mock(return_value=True)
     client._handle_http_error_retry = handler
+    decrypt_response = Mock(side_effect=ValueError("Invalid PKCS#7 padding"))
+    client._decrypt_response_data = decrypt_response
 
     with pytest.raises(RuntimeError, match="HTTP 426"):
         client.call_pjsk_api("/user", "post", {"action": "do"})
 
     handler.assert_called_once_with(response, None, endpoint="/user")
+    decrypt_response.assert_not_called()
     assert request.call_count == 1
 
 

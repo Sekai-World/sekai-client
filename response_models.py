@@ -255,6 +255,50 @@ def validate_auth_response(
     return d
 
 
+def validate_tw_auth_response(data: object) -> dict[str, Any]:
+    """Validate the first, access-token-only TW ``/user/auth`` response."""
+    src = "tw-auth"
+    d = _require_dict(data, src)
+    if "userId" not in d:
+        raise ResponseValidationError.missing_field(src, "userId")
+    _require_positive_int(d["userId"], src, "userId")
+    if "sessionToken" not in d:
+        raise ResponseValidationError.missing_field(src, "sessionToken")
+    session_token = d["sessionToken"]
+    if not isinstance(session_token, str) or not session_token:
+        raise ResponseValidationError.invalid_type(
+            src, "sessionToken", "non-empty str", session_token
+        )
+    return d
+
+
+def validate_tw_login_response(data: object) -> dict[str, Any]:
+    """Validate the second-step TW login response before auth state is applied."""
+    src = "tw-login"
+    d = _require_dict(data, src)
+    for field in ("appVersion", "dataVersion", "assetVersion"):
+        if field not in d:
+            raise ResponseValidationError.missing_field(src, field)
+        _require_str(d[field], src, field)
+
+    if "multiPlayVersion" not in d:
+        raise ResponseValidationError.missing_field(src, "multiPlayVersion")
+    if not _is_str_or_int(d["multiPlayVersion"]):
+        raise ResponseValidationError.invalid_type(
+            src, "multiPlayVersion", "str|int", d["multiPlayVersion"]
+        )
+
+    _require_present_str_or_int(d, src, "cdnVersion")
+    if "appVersionStatus" not in d:
+        raise ResponseValidationError.missing_field(src, "appVersionStatus")
+    app_version_status = d["appVersionStatus"]
+    if not isinstance(app_version_status, str) or not app_version_status:
+        raise ResponseValidationError.invalid_type(
+            src, "appVersionStatus", "non-empty str", app_version_status
+        )
+    return d
+
+
 def _validate_split_paths(paths: Any, source: str) -> None:
     if not isinstance(paths, (list, tuple)):
         raise ResponseValidationError.invalid_type(

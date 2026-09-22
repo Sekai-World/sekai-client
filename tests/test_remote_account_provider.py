@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -188,13 +188,28 @@ def test_four_region_lease_contract_and_client_owned_game_auth(region):
     }
 
     game_transport = Mock()
-    game_transport.call_pjsk_api.return_value = {
+    game_transport.headers = {}
+    legacy_auth_response = {
         "sessionToken": "game-session",
         "appVersion": "1.0.0",
         "dataVersion": "1.0.0",
         "assetVersion": "1.0.0",
         "multiPlayVersion": "1.0.0",
     }
+    if region == AccountRegion.TW:
+        game_transport.call_pjsk_api.side_effect = [
+            {"userId": 12345, "sessionToken": "game-session"},
+            {
+                "appVersion": "1.0.0",
+                "dataVersion": "1.0.0",
+                "assetVersion": "1.0.0",
+                "multiPlayVersion": "1.0.0",
+                "cdnVersion": 275,
+                "appVersionStatus": "available",
+            },
+        ]
+    else:
+        game_transport.call_pjsk_api.return_value = legacy_auth_response
     GameAuthenticationService(game_transport).authenticate(lease.credential)
     if isinstance(lease.credential, JpEnCredential):
         game_transport.call_pjsk_api.assert_called_once_with(
@@ -204,16 +219,23 @@ def test_four_region_lease_contract_and_client_owned_game_auth(region):
         )
     else:
         assert isinstance(lease.credential, TwKrCredential)
-        game_transport.call_pjsk_api.assert_called_once_with(
-            "/user/auth",
-            "post",
-            {
-                "userID": 0,
-                "accessToken": f"{region.value}-token",
-                "deviceId": None,
-                "authTriggerType": "normal",
-            },
-        )
+        if region == AccountRegion.TW:
+            assert game_transport.headers["x-session-token"] == "game-session"
+            assert game_transport.call_pjsk_api.call_args_list == [
+                call("/user/auth", "post", {"accessToken": "tw-token"}),
+                call("/user/12345/login", "post"),
+            ]
+        else:
+            game_transport.call_pjsk_api.assert_called_once_with(
+                "/user/auth",
+                "post",
+                {
+                    "userID": 0,
+                    "accessToken": f"{region.value}-token",
+                    "deviceId": None,
+                    "authTriggerType": "normal",
+                },
+            )
 
 
 def test_release_and_invalid_report_match_service_contract():
