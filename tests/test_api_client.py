@@ -1,11 +1,14 @@
 """Unit tests for lightweight API client metadata refresh."""
 
+import importlib
+from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
 import requests
 
 import api_client
+import utils.constants as constants
 from api_client import APIClient, RetryPolicy
 from game_auth import AuthenticationResult
 from utils.constants import EN_FALLBACK_VERSION_INFO, JP_FALLBACK_VERSION_INFO
@@ -30,6 +33,51 @@ def test_tw_configured_device_id_is_sent_before_authentication(monkeypatch):
     assert request.call_args.kwargs["headers"]["device_id"] == (
         "configured-tw-device-id"
     )
+
+
+def test_tw_app_hash_is_loaded_at_import_and_sent_with_android_platform(monkeypatch):
+    configured_app_hash = "configured-tw-app-hash"
+    original_non_tw_headers = {
+        region: deepcopy(constants.initial_api_headers[region])
+        for region in ("jp", "en", "kr")
+    }
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setenv("APP_HASH", configured_app_hash)
+            reloaded_constants = importlib.reload(constants)
+            patch.setattr(
+                api_client,
+                "initial_api_headers",
+                reloaded_constants.initial_api_headers,
+            )
+
+            client = APIClient(region="tw")
+            response = Mock(status_code=200, headers={}, content=b"")
+            response.raise_for_status.return_value = None
+            request = Mock(return_value=response)
+            patch.setattr(requests, "request", request)
+            patch.setattr(client, "_decrypt_response_data", Mock(return_value=None))
+
+            assert client.call_pjsk_api("/system") is None
+
+            sent_headers = request.call_args.kwargs["headers"]
+            assert sent_headers["x-app-hash"] == configured_app_hash
+            assert sent_headers["x-platform"] == "Android"
+            assert not any(
+                key.lower() in {"x-gp", "x-channel-op"} for key in sent_headers
+            )
+
+            for region, original_headers in original_non_tw_headers.items():
+                if region in ("jp", "en"):
+                    original_headers["x-app-hash"] = configured_app_hash
+                assert reloaded_constants.initial_api_headers[region] == (
+                    original_headers
+                )
+                assert APIClient(region=region).headers == original_headers
+    finally:
+        # Restore constants to the environment seen before this import/reload test.
+        importlib.reload(constants)
 
 
 @pytest.mark.parametrize("bad_device_id", [None, "", "   "])

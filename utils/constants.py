@@ -53,7 +53,8 @@ initial_api_headers = {
             "%E4%B8%96%E7%95%8C%E8%A8%88%E7%95%AB/1258 CFNetwork/1494.0.7 Darwin/23.4.0"
         ),
         "x-app-version": getenv("APP_VER", "3.6.0"),
-        "x-platform": "iOS",
+        "x-app-hash": getenv("APP_HASH", ""),
+        "x-platform": "Android",
         "x-operatingSystem": "iPadOS 17.4",
     },
     "en": {
