@@ -41,13 +41,11 @@ initial_api_headers = {
         "content-type": "application/octet-stream",
     },
     "tw": {
-        "x-unity-version": "2019.4.19f1c1",
         "x-devicemodel": "iPad13,16",
         "accept": "application/octet-stream",
         "x-install-id": "9ed9f6fb-4159-4844-842c-26bec8e7289b",
-        "accept-language": "zh-cn",
-        "accept-encoding": "gzip, deflate, br",
         "content-type": "application/octet-stream",
+        "cookie": "",
         # 'X-Request-Id': '8c3aa6b3-a505-4974-afca-b2e911c85434',
         "user-agent": (
             "%E4%B8%96%E7%95%8C%E8%A8%88%E7%95%AB/1258 CFNetwork/1494.0.7 Darwin/23.4.0"

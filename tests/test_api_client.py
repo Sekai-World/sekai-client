@@ -22,6 +22,28 @@ def test_tw_initialization_does_not_require_environment_device_id(monkeypatch):
     assert client.region == "tw"
 
 
+def test_tw_header_profile_matches_captured_auth_headers():
+    expected_header_names = {
+        "accept",
+        "content-type",
+        "cookie",
+        "user-agent",
+        "x-app-hash",
+        "x-app-version",
+        "x-devicemodel",
+        "x-install-id",
+        "x-operatingSystem",
+        "x-platform",
+    }
+    client = APIClient(region="tw")
+
+    assert set(client.headers) == expected_header_names
+    assert client.headers["cookie"] == ""
+    assert client.headers["accept"] == "application/octet-stream"
+    assert client.headers["content-type"] == "application/octet-stream"
+    assert client.headers["x-platform"] == "Android"
+
+
 def test_tw_app_hash_is_loaded_at_import_and_sent_with_android_platform(monkeypatch):
     configured_app_hash = "configured-tw-app-hash"
     original_non_tw_headers = {
