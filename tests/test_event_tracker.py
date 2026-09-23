@@ -198,6 +198,30 @@ def test_collection_skips_border_and_enqueue_during_aggregation(monkeypatch):
     outbox.enqueue.assert_not_called()
 
 
+def test_collection_skips_after_event_closed(monkeypatch):
+    outbox = Mock()
+    monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)
+    monkeypatch.setattr(
+        event_tracker,
+        "event_data",
+        {
+            "id": 12,
+            "eventType": "marathon",
+            "startAt": 0,
+            "aggregateAt": 1_000,
+            "rankingAnnounceAt": 2_000,
+            "closedAt": 3_000,
+        },
+    )
+    request = Mock()
+    monkeypatch.setattr(event_tracker.jsonrpc_client, "request", request)
+
+    event_tracker.track_event_scores(3_000)
+
+    request.assert_not_called()
+    outbox.enqueue.assert_not_called()
+
+
 def test_http_sessions_use_bounded_connection_pools():
     session = event_tracker._new_http_session()
 
