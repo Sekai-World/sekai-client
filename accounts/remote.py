@@ -231,6 +231,8 @@ class RemoteAccountProvider:
             payload["user_agent"],
             payload["device_model"],
             payload["os_version"],
+            platform=_optional_str(payload, "platform"),
+            operating_system=_optional_str(payload, "operating_system"),
         )
 
     @staticmethod
