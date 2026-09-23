@@ -4,6 +4,13 @@ Run on the production host (needs the venv, the account RPC and the upstream
 blob). Emits a Python data module plus a verification report.
 
 Usage: distill_nuverse_structures.py OUT_MODULE.py
+       distill_nuverse_structures.py --update VERSION OUT_MODULE.py
+
+With ``--update`` the bundle and the live blob describe a newer game version:
+only the tables whose layout differs from the baseline
+``NUVERSE_POSITIONAL_STRUCTURES`` are emitted, as
+``NUVERSE_POSITIONAL_STRUCTURE_UPDATES[VERSION]``, next to the entries already
+recorded for other versions.
 """
 
 from __future__ import annotations
@@ -15,6 +22,7 @@ import sys
 sys.path.insert(0, "/root/sekai-client-main")
 os.chdir("/root/sekai-client-main")
 
+from response_models import NUVERSE_RAW_POSITIONAL_TABLES  # noqa: E402
 from utils.array_to_dict import convert_array_to_dict  # noqa: E402
 from utils.constants import nuverse_master_data_base_url  # noqa: E402
 from utils.crypto import decrypt_msgpack  # noqa: E402
@@ -163,10 +171,14 @@ def verify_specs(blob: dict, specs: dict) -> tuple[int, int, list, list]:
     values, so a spec missing a new upstream column would otherwise pass
     verification while the published decode drops that column.
     """
+    # Schema-less tables are published as raw arrays; nothing to verify.
     list_tables = [
         t
         for t, r in blob.items()
-        if isinstance(r, list) and r and isinstance(r[0], list)
+        if isinstance(r, list)
+        and r
+        and isinstance(r[0], list)
+        and t not in NUVERSE_RAW_POSITIONAL_TABLES
     ]
     failures = []
     ok = 0
@@ -193,6 +205,15 @@ def main() -> None:
     spec and all sampled conversions succeed; any gap aborts with a nonzero
     exit instead of emitting a partially verified schema module.
     """
+    args = sys.argv[1:]
+    if len(args) == 3 and args[0] == "--update":
+        update_version: str | None = args[1]
+        out_path = args[2]
+    elif len(args) == 1:
+        update_version, out_path = None, args[0]
+    else:
+        sys.exit(__doc__)
+
     blob, cdn = load_blob()
     with open(BUNDLE_PATH) as f:
         bundle = json.load(f)
@@ -223,8 +244,11 @@ def main() -> None:
         )
         sys.exit(1)
 
-    module = emit_module(specs, cdn)
-    with open(sys.argv[1], "w") as f:
+    if update_version is None:
+        module = emit_module(specs, cdn)
+    else:
+        module = emit_updates_module(update_version, specs, cdn)
+    with open(out_path, "w") as f:
         f.write(module)
     print("module bytes:", len(module))
 
@@ -248,6 +272,46 @@ def emit_module(specs: dict, cdn) -> str:
     ]
     lines.append(emitter(specs, 1))
     lines.append(")")
+    return "\n".join(lines) + "\n"
+
+
+def emit_updates_module(version: str, specs: dict, cdn) -> str:
+    """Render the versioned layout updates module text.
+
+    ``version`` records every table whose spec differs from the baseline
+    module; entries already recorded for other versions are kept as-is.
+    """
+    from nuverse_positional_structure_updates import (
+        NUVERSE_POSITIONAL_STRUCTURE_UPDATES,
+    )
+    from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
+
+    updates = dict(NUVERSE_POSITIONAL_STRUCTURE_UPDATES)
+    updates[version] = {
+        table: spec
+        for table, spec in specs.items()
+        if NUVERSE_POSITIONAL_STRUCTURES.get(table) != spec
+    }
+    lines = [
+        '"""Generated positional schema updates for newer nuverse master data.',
+        "",
+        "Maps a game version to the tables whose positional field order differs",
+        "from the baseline in nuverse_positional_structures; each entry is",
+        "relative to that baseline. Distilled from Team-Haruki/Haruki-Sekai-API",
+        "Data/structures/<version>/nuverse_schema_bundle.json and verified",
+        "against the live blob by scripts/distill_nuverse_structures.py --update",
+        f"(latest run: {version}, master data cdnVersion {cdn}). Regenerate",
+        "rather than edit.",
+        '"""',
+        "",
+        "from typing import Any",
+        "",
+        "# fmt: off",
+        "NUVERSE_POSITIONAL_STRUCTURE_UPDATES: dict[str, dict[str, list[Any]]] = {",
+    ]
+    for key in sorted(updates, key=lambda v: tuple(int(p) for p in v.split("."))):
+        lines.append(f"    {key!r}: {emitter(updates[key], 1)},")
+    lines.append("}")
     return "\n".join(lines) + "\n"
 
 

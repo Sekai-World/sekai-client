@@ -556,6 +556,57 @@ def test_convert_master_records_converts_positional_records(monkeypatch):
     assert last == 0
 
 
+def test_overlay_positional_structures_decodes_nuverse_6_4_gacha(monkeypatch):
+    """A 6.4.0 gachas record decodes with the layout validation selected."""
+    from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
+
+    monkeypatch.setattr(check_update, "pjsk_region", "cn")
+    _, newest = check_update.select_nuverse_positional_structures({})
+    names = [key if isinstance(key, str) else key[0] for key in newest["gachas"]]
+    record: list = [None] * len(names)
+    record[names.index("id")] = 1
+    record[names.index("gachaCharacterBonusGroupId")] = 5
+    record[names.index("gachaBonusId")] = 7
+    record[names.index("gachaInformation")] = [1, "summary", "desc", "bubble", "text"]
+    for nested in (
+        "gachaCardRarityRates",
+        "gachaDetails",
+        "gachaBehaviors",
+        "gachaPickups",
+    ):
+        record[names.index(nested)] = []
+    structures = {"gachas": NUVERSE_POSITIONAL_STRUCTURES["gachas"]}
+
+    version = check_update._overlay_positional_structures(
+        structures, {"gachas": [record]}
+    )
+    out, _ = check_update._convert_master_records_for_region(
+        "gachas", [record], structures
+    )
+
+    assert version == "6.4.0"
+    assert out[0]["gachaCharacterBonusGroupId"] == 5
+    assert out[0]["gachaBonusId"] == 7
+    assert out[0]["gachaInformation"]["summary"] == "summary"
+
+
+def test_convert_master_records_passthrough_raw_positional_table(monkeypatch):
+    """Schema-less positional tables are published as raw arrays."""
+    monkeypatch.setattr(check_update, "pjsk_region", "cn")
+    data = [[1, 1, 1, 60.0]]
+    structures = check_update.get_structures_for_app_ver("6.4.0")
+    check_update._overlay_positional_structures(
+        structures, {"billingShopItemRandomBoxGroups": data}
+    )
+
+    out, last = check_update._convert_master_records_for_region(
+        "billingShopItemRandomBoxGroups", data, structures
+    )
+
+    assert out is data
+    assert last is None
+
+
 def test_convert_master_records_passthrough_compact_columnar_table(monkeypatch):
     """Compact columnar tables bypass positional conversion."""
     monkeypatch.setattr(check_update, "pjsk_region", "tw")

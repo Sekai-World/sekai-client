@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from nuverse_positional_structure_updates import NUVERSE_POSITIONAL_STRUCTURE_UPDATES
 from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
 
 # Tables whose records are consumed by the i18n special handlers and therefore
@@ -600,6 +601,64 @@ def _validate_dict_singleton(value: Any, source: str, table: str) -> None:
         _require_int(value["id"], source, f"{table}.id")
 
 
+# Game version whose layouts ``NUVERSE_POSITIONAL_STRUCTURES`` records. Newer
+# versions are that baseline plus their ``NUVERSE_POSITIONAL_STRUCTURE_UPDATES``
+# entry, listed newest first.
+_NUVERSE_POSITIONAL_BASELINE_VERSION = "6.0.0"
+_NUVERSE_POSITIONAL_LAYOUTS: tuple[tuple[str, dict[str, list[Any]]], ...] = (
+    *(
+        (version, {**NUVERSE_POSITIONAL_STRUCTURES, **updates})
+        for version, updates in sorted(
+            NUVERSE_POSITIONAL_STRUCTURE_UPDATES.items(),
+            key=lambda item: tuple(int(part) for part in item[0].split(".")),
+            reverse=True,
+        )
+    ),
+    (_NUVERSE_POSITIONAL_BASELINE_VERSION, NUVERSE_POSITIONAL_STRUCTURES),
+)
+
+# Positional tables with no known field names: the upstream schema bundle does
+# not describe them, so they are published as raw arrays (as upstream does)
+# until a schema exists. Any other positional table without a schema still
+# fails closed.
+NUVERSE_RAW_POSITIONAL_TABLES = frozenset({"billingShopItemRandomBoxGroups"})
+
+
+def _is_positional_table(records: object) -> bool:
+    return isinstance(records, list) and bool(records) and isinstance(records[0], list)
+
+
+def _positional_layout_fits(records: list[Any], schema: list[Any] | None) -> bool:
+    return schema is not None and all(
+        isinstance(record, list) and len(record) == len(schema) for record in records
+    )
+
+
+def select_nuverse_positional_structures(
+    data: dict[str, Any],
+) -> tuple[str, dict[str, list[Any]]]:
+    """Return the positional layout version and schemas that fit ``data``.
+
+    Nuverse regions move to a new layout at different times, so the layout is
+    chosen from the records rather than from a reported app version: the
+    version whose schemas match the record length of the most positional
+    tables wins, the newest one on ties. A blob that fits no version fully is
+    validated against its closest version, which reports the drifting table.
+    """
+    positional = [
+        (table, records)
+        for table, records in data.items()
+        if _is_positional_table(records)
+    ]
+    return max(
+        _NUVERSE_POSITIONAL_LAYOUTS,
+        key=lambda layout: sum(
+            _positional_layout_fits(records, layout[1].get(table))
+            for table, records in positional
+        ),
+    )
+
+
 def validate_master_data(
     data: object, *, source: str = "master-data"
 ) -> dict[str, Any]:
@@ -607,9 +666,10 @@ def validate_master_data(
 
     Required: a top-level object whose values are lists of records. Records may
     be objects (the classic shape) or, for tables with a known positional
-    schema in ``NUVERSE_POSITIONAL_STRUCTURES``, lists of positional arrays as
-    delivered by the nuverse (cn/tw/kr) source; positional records must match
-    the schema length exactly. The tables consumed by the i18n special handlers
+    schema, lists of positional arrays as delivered by the nuverse (cn/tw/kr)
+    source; positional records must match the schema length exactly, using the
+    layout version ``select_nuverse_positional_structures`` picks for the whole
+    blob. The tables consumed by the i18n special handlers
     (``cards``/``musics``/``events``/``virtualLives``/``eventStories``/
     ``stamps``) additionally require each object record — or the ``id`` column
     of a positional record — to carry an integer ``id`` so the i18n writers
@@ -628,6 +688,7 @@ def validate_master_data(
     malformed split.
     """
     d = _require_dict(data, source)
+    _, positional_structures = select_nuverse_positional_structures(d)
     for table, records in d.items():
         # Explicitly named dict singletons are the only named exception to the
         # top-level "must be a list" rule.
@@ -644,7 +705,9 @@ def validate_master_data(
         if not isinstance(records, list):
             raise ResponseValidationError.invalid_type(source, table, "list", records)
         if records and isinstance(records[0], list):
-            _validate_positional_records(table, records, source)
+            _validate_positional_records(
+                table, records, source, positional_structures.get(table)
+            )
             continue
         _validate_object_records(table, records, source)
     return d
@@ -671,21 +734,24 @@ def _validate_object_records(table: str, records: list[Any], source: str) -> Non
             )
 
 
-def _validate_positional_records(table: str, records: list[Any], source: str) -> None:
+def _validate_positional_records(
+    table: str, records: list[Any], source: str, schema: list[Any] | None
+) -> None:
     """Validate positional (array-form) records against the distilled schema.
 
     Every record must be a list matching the schema length exactly — a length
     drift means the positional decoding would misassign or silently drop
     fields, which must fail here rather than corrupt the published tables.
-    For i18n tables the ``id`` column must still carry an integer.
+    For i18n tables the ``id`` column must still carry an integer. Records of
+    a ``NUVERSE_RAW_POSITIONAL_TABLES`` table have no schema and must share the first
+    record's length instead.
     """
-    schema = NUVERSE_POSITIONAL_STRUCTURES.get(table)
-    if schema is None:
+    if schema is None and table not in NUVERSE_RAW_POSITIONAL_TABLES:
         raise ResponseValidationError.invalid_type(
             source, f"{table}[0]", "object (no positional schema)", records[0]
         )
-    expected = len(schema)
-    id_index = schema.index("id") if "id" in schema else None
+    expected = len(schema) if schema is not None else len(records[0])
+    id_index = schema.index("id") if schema is not None and "id" in schema else None
     for i, record in enumerate(records):
         if not isinstance(record, list) or len(record) != expected:
             raise ResponseValidationError.invalid_type(
