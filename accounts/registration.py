@@ -7,7 +7,7 @@ from typing import Any, Protocol
 import jwt
 
 from accounts.models import AccountCredential, AccountRegion, JpEnCredential
-from game_auth import GameAuthenticationService
+from game_auth import AuthenticationTransport, GameAuthenticationService
 
 REGISTRATION_PAYLOAD = {
     "platform": "iOS",
@@ -51,7 +51,7 @@ class AccountRegistrationAdapter:
 class AccountCredentialValidator:
     """Validate credentials through authentication without full game login."""
 
-    def __init__(self, transport: RegistrationTransport) -> None:
+    def __init__(self, transport: AuthenticationTransport) -> None:
         self._transport = transport
 
     def validate(self, credential: AccountCredential) -> bool:

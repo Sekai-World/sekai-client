@@ -22,6 +22,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from hashlib import sha256
 from hmac import compare_digest
 from os import getenv, path
 from threading import Lock, RLock
@@ -79,7 +80,9 @@ _account_provider: AccountProvider | None = None
 _active_account_lease: AccountLease | None = None
 _active_lease_operation: LeaseOperation | None = None
 _account_lease_lock = Lock()
-_LEASE_RENEW_AHEAD = timedelta(hours=1)
+_ACCOUNT_LEASE_TTL_SECONDS = 6 * 60 * 60
+_LEASE_RENEW_AHEAD_MIN = timedelta(minutes=45)
+_LEASE_RENEW_AHEAD_MAX = timedelta(minutes=75)
 _lease_renewal_retry_until: datetime | None = None
 
 
@@ -109,6 +112,16 @@ def _format_utc(value: datetime) -> str:
     return (
         value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     )
+
+
+def _lease_renewal_ahead(lease_id: str) -> timedelta:
+    """Return a stable, lease-specific renewal lead time within the safe window."""
+    window_seconds = int(
+        (_LEASE_RENEW_AHEAD_MAX - _LEASE_RENEW_AHEAD_MIN).total_seconds()
+    )
+    digest = sha256(lease_id.encode("utf-8")).digest()
+    jitter_seconds = int.from_bytes(digest[:8], "big") % (window_seconds + 1)
+    return _LEASE_RENEW_AHEAD_MIN + timedelta(seconds=jitter_seconds)
 
 
 class LifecycleState(StrEnum):
@@ -612,19 +625,21 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
 
     region = AccountRegion(_lifecycle.region)
     with _account_lease_lock:
+        now = _utc_now()
         if (
             _active_account_lease is not None
             and _active_account_lease.region is region
-            and not _active_account_lease.is_expired()
+            and not _active_account_lease.is_expired(now)
         ):
             operation = _active_lease_operation
             if (
                 _account_provider is not None
-                and datetime.now(UTC)
-                >= _active_account_lease.expires_at - _LEASE_RENEW_AHEAD
+                and now
+                >= _active_account_lease.expires_at
+                - _lease_renewal_ahead(_active_account_lease.lease_id)
                 and (
                     _lease_renewal_retry_until is None
-                    or datetime.now(UTC) >= _lease_renewal_retry_until
+                    or now >= _lease_renewal_retry_until
                 )
                 and operation is not None
                 and operation.expires_at is not None
@@ -640,7 +655,7 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
                     assert provider is not None
                     new_expires_at = provider.renew(
                         _active_account_lease.lease_id,
-                        extend_seconds=24 * 60 * 60,
+                        extend_seconds=_ACCOUNT_LEASE_TTL_SECONDS,
                         idempotency_key=renew_key,
                     )
                     journal = _remote_lease_journal(provider)
@@ -664,7 +679,7 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
                 except AccountProviderError as error:
                     logger.warning("Account lease renewal failed")
                     if error.retryable:
-                        _lease_renewal_retry_until = datetime.now(UTC) + timedelta(
+                        _lease_renewal_retry_until = _utc_now() + timedelta(
                             seconds=(
                                 error.retry_after
                                 if error.retry_after is not None
@@ -693,7 +708,7 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
         lease = _account_provider.acquire(
             region,
             consumer,
-            ttl_seconds=24 * 60 * 60,
+            ttl_seconds=_ACCOUNT_LEASE_TTL_SECONDS,
             idempotency_key=(
                 operation.idempotency_key if operation else f"login-{uuid4()}"
             ),

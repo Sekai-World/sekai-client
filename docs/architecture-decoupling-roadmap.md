@@ -211,6 +211,18 @@ Remote acquire and release intent is journaled with atomic `0600` writes. A
 restart reuses the same acquire idempotency key or completes an ambiguous
 release before requesting another account. Gunicorn's `worker_exit` hook runs
 the graceful release path without replacing Gunicorn's signal handlers.
+Remote acquire and renewal requests use a six-hour lease TTL. Renewal starts at
+a stable, lease-specific point 45–75 minutes before expiry to spread restarts
+without reshuffling a lease's schedule. An unclean restart replays the journaled
+acquire idempotently while its lease is live; after expiry it starts a fresh
+acquire operation and can recover when the service makes the account available.
+This deliberately does not force same-consumer takeover or use fencing, so
+unclean-worker recovery is eventual after the prior lease expires, not immediate
+merely because the service is available.
+The fake-clock lifecycle tests simulate restarts by clearing in-process state;
+they exercise expiry recovery with a fake provider, not a live service. A focused
+subprocess test separately verifies that an unexpired journaled lease ID and
+acquire idempotency key persist across an actual process boundary.
 
 Acceptance criteria:
 
