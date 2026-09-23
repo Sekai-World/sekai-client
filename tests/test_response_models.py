@@ -14,6 +14,7 @@ import check_update
 import event_tracker
 from response_models import (
     ResponseValidationError,
+    select_nuverse_positional_structures,
     validate_auth_response,
     validate_current_event_response,
     validate_event_ranking_snapshot,
@@ -1016,6 +1017,100 @@ def test_validate_master_data_accepts_positional_i18n_records_with_int_id():
     row[schema.index("id")] = 17
 
     validate_master_data({"events": [row]})
+
+
+def _positional_row(schema, **values):
+    names = [key if isinstance(key, str) else key[0] for key in schema]
+    row = [None] * len(schema)
+    for name, value in values.items():
+        row[names.index(name)] = value
+    return row
+
+
+def test_nuverse_6_4_layout_inserts_gacha_columns_before_bonus_id():
+    """6.4.0 gachas gain three columns mid-record, shifting later indices."""
+    _, structures = select_nuverse_positional_structures({})
+    names = [key if isinstance(key, str) else key[0] for key in structures["gachas"]]
+
+    assert len(names) == 26
+    assert names[13:17] == [
+        "rateChoiceGachaWishGroupId",
+        "gachaCharacterBonusGroupId",
+        "isSelectCharacter",
+        "gachaBonusId",
+    ]
+    assert names.index("gachaInformation") == 22
+
+
+def test_select_nuverse_positional_structures_matches_record_layout():
+    """Each blob decodes with the layout version its records match."""
+    from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
+
+    _, newest = select_nuverse_positional_structures({})
+    old_blob = {
+        "gachas": [_positional_row(NUVERSE_POSITIONAL_STRUCTURES["gachas"], id=1)],
+        "events": [_positional_row(NUVERSE_POSITIONAL_STRUCTURES["events"], id=2)],
+    }
+    new_blob = {
+        "gachas": [_positional_row(newest["gachas"], id=1)],
+        "events": [_positional_row(newest["events"], id=2)],
+    }
+
+    assert select_nuverse_positional_structures(old_blob)[0] == "6.0.0"
+    assert select_nuverse_positional_structures(new_blob)[0] == "6.4.0"
+    assert validate_master_data(old_blob) is old_blob
+    assert validate_master_data(new_blob) is new_blob
+
+
+def test_select_nuverse_positional_structures_prefers_newest_on_tie():
+    """Tables unchanged between versions resolve to the newest layout."""
+    blob = {"cardCostume3ds": [[4, 29001, False]], "cards": [{"id": 1}]}
+
+    assert select_nuverse_positional_structures(blob)[0] == "6.4.0"
+    assert select_nuverse_positional_structures({})[0] == "6.4.0"
+
+
+def test_validate_master_data_rejects_mixed_layout_versions():
+    """A blob mixing 6.0.0 and 6.4.0 table layouts fits no version."""
+    from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
+
+    _, newest = select_nuverse_positional_structures({})
+    blob = {
+        "gachas": [_positional_row(newest["gachas"], id=1)],
+        "events": [_positional_row(NUVERSE_POSITIONAL_STRUCTURES["events"], id=2)],
+    }
+
+    with pytest.raises(ResponseValidationError, match=r"events\[0\]"):
+        validate_master_data(blob)
+
+
+def test_validate_master_data_accepts_schema_less_raw_positional_table():
+    """The allowlisted schema-less table passes through as raw arrays."""
+    blob = {"billingShopItemRandomBoxGroups": [[1, 1, 1, 60.0], [2, 1, 2, 40.0]]}
+
+    assert validate_master_data(blob) is blob
+
+
+def test_validate_master_data_rejects_raw_positional_length_drift():
+    """Raw positional records must still share one length."""
+    with pytest.raises(ResponseValidationError, match=r"\[1\]"):
+        validate_master_data(
+            {"billingShopItemRandomBoxGroups": [[1, 1, 1, 60.0], [2, 1, 2]]}
+        )
+
+
+def test_validate_master_data_reports_drift_against_closest_layout():
+    """Drift in one table is reported there, not as a newer-layout mismatch."""
+    from nuverse_positional_structures import NUVERSE_POSITIONAL_STRUCTURES
+
+    blob = {
+        "gachas": [_positional_row(NUVERSE_POSITIONAL_STRUCTURES["gachas"], id=1)],
+        "events": [_positional_row(NUVERSE_POSITIONAL_STRUCTURES["events"], id=2)],
+        "cardCostume3ds": [[4, 29001]],
+    }
+
+    with pytest.raises(ResponseValidationError, match=r"cardCostume3ds\[0\]"):
+        validate_master_data(blob)
 
 
 def test_validate_master_data_accepts_compact_columnar_table():

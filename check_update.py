@@ -24,6 +24,7 @@ from pytz import timezone
 from logging_config import configure_logging
 from response_models import (
     ResponseValidationError,
+    select_nuverse_positional_structures,
     validate_master_data,
     validate_version_info,
 )
@@ -728,6 +729,19 @@ def _resolve_master_id_key(key: str) -> str | None:
     return None
 
 
+def _overlay_positional_structures(
+    structures: dict[str, list], master_data: dict[str, Any]
+) -> str:
+    """Overlay the positional layouts that fit ``master_data`` onto ``structures``.
+
+    Validation picked the same layout version for this blob, so records decode
+    with the field order they were validated against. Returns that version.
+    """
+    version, positional_structures = select_nuverse_positional_structures(master_data)
+    structures.update(positional_structures)
+    return version
+
+
 def _convert_master_records_for_region(
     key: str,
     file_data: Any,
@@ -850,10 +864,15 @@ def refresh_version(candidate: dict[str, Any] | None = None) -> dict[str, Any]:
         structures_app_ver
     )
     if pjsk_region in ["cn", "tw", "kr"]:
+        positional_version = _overlay_positional_structures(
+            current_structures, master_data
+        )
         logger.info(
-            "[refresh_version] using %s structures for appVersion=%s",
+            "[refresh_version] using %s structures for appVersion=%s "
+            "with %s positional layouts",
             current_structure_version or "base",
             structures_app_ver or "N/A",
+            positional_version,
         )
 
     for key, value in master_data.items():
