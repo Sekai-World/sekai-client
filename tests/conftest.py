@@ -18,6 +18,14 @@ import pytest
 os.environ.setdefault("SEKAI_REGION", "jp")
 
 
+@pytest.fixture(autouse=True)
+def _published_app_identity_unavailable(monkeypatch):
+    """Keep TW/KR tests offline: the app identity feed reports no data by default."""
+    import api_client
+
+    monkeypatch.setattr(api_client, "get_app_identity", lambda region: None)
+
+
 @pytest.fixture
 def mock_logger():
     """Provide a mock logger for testing."""

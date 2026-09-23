@@ -20,6 +20,37 @@ JP_CURRENT_VERSION_URL = (
     "https://raw.githubusercontent.com/Team-Haruki/haruki-sekai-master/"
     "refs/heads/main/versions/current_version.json"
 )
+# Per-region {appVersion, appHash} published by sekai-apphash-updater from the
+# region's latest APK; ``{region}`` is the upper-case region code.
+APP_IDENTITY_URL_TEMPLATE = (
+    "https://raw.githubusercontent.com/Sekai-World/sekai-apphash-updater/"
+    "refs/heads/data/{region}.json"
+)
+
+
+def get_app_identity(region: str) -> dict[str, str] | None:
+    """Fetch the published app version and hash for ``region``.
+
+    Returns ``None`` when the feed is unreachable or malformed so callers keep
+    their current values.
+    """
+    template = environ.get("APP_IDENTITY_URL_TEMPLATE") or APP_IDENTITY_URL_TEMPLATE
+    url = template.format(region=region.upper())
+    try:
+        response = requests.get(url, timeout=bounded_timeout(10))
+        response.raise_for_status()
+        payload = response.json()
+        identity = {key: payload[key] for key in ("appVersion", "appHash")}
+        if not all(isinstance(value, str) and value for value in identity.values()):
+            raise ValueError("app identity requires non-empty appVersion and appHash")
+    except Exception as error:  # noqa: BLE001 - every feed failure keeps current values
+        logger.warning(
+            "get_app_identity_%s fetch failed; keeping current values error_type=%s",
+            region,
+            type(error).__name__,
+        )
+        return None
+    return identity
 
 
 def get_app_ver_qooapp(appid: str) -> str:

@@ -3,6 +3,7 @@
   "installation_id": 147244811,
   "private_key_path": "/root/.config/sekai-github-app/private-key.pem",
   "repositories": [
+    "Sekai-World/sekai-apphash-updater",
     "Sekai-World/sekai-i18n",
     "Sekai-World/sekai-master-db-cn-diff",
     "Sekai-World/sekai-master-db-diff",

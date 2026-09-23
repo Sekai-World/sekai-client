@@ -39,6 +39,7 @@ Some files need to have specific environment variables, listed below
 | Variable name | Description | shared_client | check_update | event_tracker | api_public_server |
 | --- | --- | :---: | :---: | :---: | :---: |
 | `APP_VER` | PJSK app version | ✅ | | | |
+| `APP_IDENTITY_URL_TEMPLATE` | tw/kr app version and hash feed, `{region}` = upper-case region (default: sekai-apphash-updater `data` branch); `APP_VER`/`APP_HASH` are the fallback | ✅ (pjsk_region=tw/kr) | | | |
 | `AES_KEY` | PJSK aes key, as hex or plain text (hex wins when both decode to a valid size) | ✅ | | | |
 | `AES_IV` | PJSK aes iv, as hex or plain text (hex wins when both decode to a valid size) | ✅ | | | |
 | `SEKAI_TW_DEVICE_ID` | Device id for tw server | ✅ (pjsk_region=tw) | | | |
