@@ -89,6 +89,51 @@ def test_validate_processes_all_pass():
     assert proc["gunicorn"]["workers_ok"] == 4
 
 
+def test_validate_process_uses_pm2_script_and_split_args():
+    entry = {
+        "name": "sharedApiClient-jp",
+        "pm2_env": {
+            "status": "online",
+            "script": "gunicorn",
+            "args": [
+                "--workers",
+                "1",
+                "--bind",
+                "127.0.0.1:39390",
+                "--config",
+                "gunicorn_conf.py",
+            ],
+        },
+    }
+
+    result = phase5.validate_shared_client_process(entry["name"], entry)
+
+    assert result == {
+        "online": "pass",
+        "workers": "pass",
+        "bind": "pass",
+        "config": "pass",
+    }
+
+
+def test_validate_process_uses_entry_script_and_split_args():
+    entry = {
+        "name": "sharedApiClient-jp",
+        "script": "gunicorn",
+        "args": "--workers 1 --bind 127.0.0.1:39390 --config gunicorn_conf.py",
+        "pm2_env": {"status": "online"},
+    }
+
+    result = phase5.validate_shared_client_process(entry["name"], entry)
+
+    assert result == {
+        "online": "pass",
+        "workers": "pass",
+        "bind": "pass",
+        "config": "pass",
+    }
+
+
 def test_validate_processes_missing_region():
     entries = phase5.parse_pm2_jlist(
         json.dumps([_proc("sharedApiClient-jp"), _proc("sharedApiClient-en")])

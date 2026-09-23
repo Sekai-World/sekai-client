@@ -131,19 +131,25 @@ def validate_shared_client_process(name: str, entry: dict) -> dict[str, str]:
         pm2_env = {}
     status = str(pm2_env.get("status", "")).lower()
     script = str(pm2_env.get("script") or entry.get("script") or "")
+    args_value = pm2_env.get("args") or entry.get("args") or ""
+    if isinstance(args_value, (list, tuple)):
+        args = " ".join(str(arg) for arg in args_value)
+    else:
+        args = str(args_value)
+    command = f"{script} {args}" if args else script
 
     result = {"online": "fail", "workers": "fail", "bind": "fail", "config": "fail"}
     result["online"] = "pass" if status == "online" else "fail"
 
-    workers = _WORKERS_RE.search(script)
+    workers = _WORKERS_RE.search(command)
     if workers is not None and workers.group(1) == "1":
         result["workers"] = "pass"
 
-    bind = _BIND_RE.search(script)
+    bind = _BIND_RE.search(command)
     if bind is not None and _is_loopback_bind(bind.group(1)):
         result["bind"] = "pass"
 
-    config = _CONFIG_RE.search(script)
+    config = _CONFIG_RE.search(command)
     if config is not None and config.group(1) == "gunicorn_conf.py":
         result["config"] = "pass"
 
