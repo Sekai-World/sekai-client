@@ -80,19 +80,18 @@ initial_api_headers = {
         # "content-type": 'application/octet-stream'
     },
     "kr": {
-        "x-unity-version": "2019.4.19f1c1",
         "x-devicemodel": "iPad13,16",
         "content-type": "application/octet-stream",
         "accept": "application/octet-stream",
-        "x-asset-version": "",
         "x-install-id": "3e9d5364-1c68-4f53-aae8-2824e08e993f",
-        "x-data-version": "",
+        "cookie": "",
         "user-agent": (
             "%ED%94%84%EB%A1%9C%EC%84%B8%EC%B9%B4/5011 CFNetwork/1494.0.7 Darwin/23.4.0"
         ),
         "x-app-version": getenv("APP_VER", "3.6.0"),
         # "X-Session-Token": "",
-        "x-platform": "iOS",
+        "x-app-hash": getenv("APP_HASH", ""),
+        "x-platform": "Android",
         "x-operatingsystem": "iPadOS 17.4",
     },
 }

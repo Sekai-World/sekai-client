@@ -196,7 +196,7 @@ def test_four_region_lease_contract_and_client_owned_game_auth(region):
         "assetVersion": "1.0.0",
         "multiPlayVersion": "1.0.0",
     }
-    if region == AccountRegion.TW:
+    if region in (AccountRegion.TW, AccountRegion.KR):
         game_transport.call_pjsk_api.side_effect = [
             {"userId": 12345, "sessionToken": "game-session"},
             {
@@ -221,24 +221,12 @@ def test_four_region_lease_contract_and_client_owned_game_auth(region):
         )
     else:
         assert isinstance(lease.credential, TwKrCredential)
-        if region == AccountRegion.TW:
-            assert auth_result.canonical_user_id == 12345
-            assert game_transport.headers["x-session-token"] == "game-session"
-            assert game_transport.call_pjsk_api.call_args_list == [
-                call("/user/auth", "post", {"accessToken": "tw-token"}),
-                call("/user/12345/login", "post"),
-            ]
-        else:
-            game_transport.call_pjsk_api.assert_called_once_with(
-                "/user/auth",
-                "post",
-                {
-                    "userID": 0,
-                    "accessToken": f"{region.value}-token",
-                    "deviceId": None,
-                    "authTriggerType": "normal",
-                },
-            )
+        assert auth_result.canonical_user_id == 12345
+        assert game_transport.headers["x-session-token"] == "game-session"
+        assert game_transport.call_pjsk_api.call_args_list == [
+            call("/user/auth", "post", {"accessToken": f"{region.value}-token"}),
+            call("/user/12345/login", "post"),
+        ]
 
 
 def test_release_and_invalid_report_match_service_contract():
