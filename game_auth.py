@@ -7,8 +7,6 @@ from typing import Any, Protocol
 
 from accounts.models import (
     AccountCredential,
-    AccountRegion,
-    JpEnCredential,
     TwKrCredential,
 )
 from response_models import (
@@ -42,29 +40,14 @@ class GameAuthenticationService:
         self._transport = transport
 
     def authenticate(self, credential: AccountCredential) -> AuthenticationResult:
-        if (
-            isinstance(credential, TwKrCredential)
-            and credential.region == AccountRegion.TW
-        ):
-            return self._authenticate_tw(credential)
+        if isinstance(credential, TwKrCredential):
+            return self._authenticate_tw_kr(credential)
 
-        if isinstance(credential, JpEnCredential):
-            response = self._transport.call_pjsk_api(
-                f"/user/{credential.user_id}/auth?refreshUpdatedResources=False",
-                "put",
-                {"credential": credential.credential},
-            )
-        else:
-            response = self._transport.call_pjsk_api(
-                "/user/auth",
-                "post",
-                {
-                    "userID": 0,
-                    "accessToken": credential.access_token,
-                    "deviceId": None,
-                    "authTriggerType": "normal",
-                },
-            )
+        response = self._transport.call_pjsk_api(
+            f"/user/{credential.user_id}/auth?refreshUpdatedResources=False",
+            "put",
+            {"credential": credential.credential},
+        )
         # Validate the login response boundary before any session state is
         # derived from it. A malformed response raises a clear diagnostic error
         # instead of letting ``_apply_auth_headers_and_version_info`` fail later
@@ -79,7 +62,12 @@ class GameAuthenticationService:
         raw_paths = validated.get("suiteMasterSplitPath", ())
         return AuthenticationResult(validated, tuple(str(path) for path in raw_paths))
 
-    def _authenticate_tw(self, credential: TwKrCredential) -> AuthenticationResult:
+    def _authenticate_tw_kr(self, credential: TwKrCredential) -> AuthenticationResult:
+        """Run the Nuverse 6.4 two-step login shared by TW and KR.
+
+        ``/user/auth`` exchanges the access token for the game user ID and a
+        session token; ``/user/{userId}/login`` then returns the versions.
+        """
         auth_response = self._transport.call_pjsk_api(
             "/user/auth",
             "post",
@@ -101,7 +89,8 @@ class GameAuthenticationService:
         try:
             login_data = validate_tw_login_response(login_response)
         except ResponseValidationError as error:
-            raise ValueError(f"Invalid TW login response: {error}") from error
+            region = credential.region.value.upper()
+            raise ValueError(f"Invalid {region} login response: {error}") from error
 
         result_data = dict(login_data)
         result_data["sessionToken"] = session_token

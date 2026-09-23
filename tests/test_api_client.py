@@ -44,6 +44,27 @@ def test_tw_header_profile_matches_captured_auth_headers():
     assert client.headers["x-platform"] == "Android"
 
 
+def test_kr_header_profile_matches_tw_6_4_profile():
+    """KR sends the same 6.4 header set as TW (region's own OS header name)."""
+    expected_header_names = {
+        "accept",
+        "content-type",
+        "cookie",
+        "user-agent",
+        "x-app-hash",
+        "x-app-version",
+        "x-devicemodel",
+        "x-install-id",
+        "x-operatingsystem",
+        "x-platform",
+    }
+    client = APIClient(region="kr")
+
+    assert set(client.headers) == expected_header_names
+    assert client.headers["cookie"] == ""
+    assert client.headers["x-platform"] == "Android"
+
+
 def test_tw_app_hash_is_loaded_at_import_and_sent_with_android_platform(monkeypatch):
     configured_app_hash = "configured-tw-app-hash"
     original_non_tw_headers = {
@@ -78,7 +99,7 @@ def test_tw_app_hash_is_loaded_at_import_and_sent_with_android_platform(monkeypa
             )
 
             for region, original_headers in original_non_tw_headers.items():
-                if region in ("jp", "en"):
+                if region in ("jp", "en", "kr"):
                     original_headers["x-app-hash"] = configured_app_hash
                 assert reloaded_constants.initial_api_headers[region] == (
                     original_headers
@@ -143,13 +164,8 @@ def test_auth_metadata_preserves_app_hash_for_version_document(region):
     assert client.version_info["appHash"] == "current-app-hash"
 
 
-@pytest.mark.parametrize(
-    ("region", "expected_status"),
-    [("tw", "maintenance"), ("kr", "available")],
-)
-def test_tw_login_status_is_preserved_without_changing_kr_behavior(
-    region, expected_status
-):
+@pytest.mark.parametrize("region", ["tw", "kr"])
+def test_tw_kr_login_status_is_preserved(region):
     client = APIClient(region=region)
 
     client._apply_auth_headers_and_version_info(
@@ -164,7 +180,7 @@ def test_tw_login_status_is_preserved_without_changing_kr_behavior(
         }
     )
 
-    assert client.version_info["appVersionStatus"] == expected_status
+    assert client.version_info["appVersionStatus"] == "maintenance"
 
 
 def test_apply_new_version_info_preserves_valid_app_hash_header():
@@ -822,8 +838,9 @@ def _valid_tw_login_data(**overrides):
     return data
 
 
-def test_tw_login_propagates_canonical_game_user_id_to_scoped_requests():
-    client = APIClient(region="tw")
+@pytest.mark.parametrize("region", ["tw", "kr"])
+def test_tw_kr_login_propagates_canonical_game_user_id_to_scoped_requests(region):
+    client = APIClient(region=region)
     client.account_info = {
         "userId": "sdk-open-id",
         "loginInfo": {"accessToken": "access-token"},
@@ -920,27 +937,16 @@ def test_failed_post_auth_tw_login_preserves_sdk_user_id():
     assert client.account_info["userId"] == "sdk-open-id"
 
 
-@pytest.mark.parametrize("region", ["jp", "en", "kr"])
-def test_non_tw_login_keeps_existing_user_id(monkeypatch, region):
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_jp_en_login_keeps_existing_user_id(monkeypatch, region):
     client = APIClient(region=region)
     user_id = "existing-user-id"
-    if region in ("jp", "en"):
-        monkeypatch.setattr(client, "_refresh_suite_version_headers", lambda: None)
-        client.account_info = {
-            "userId": user_id,
-            "credential": "credential",
-            "signature": "signature",
-        }
-    else:
-        client.account_info = {
-            "userId": user_id,
-            "loginInfo": {"accessToken": "access-token"},
-            "deviceId": "device-id",
-            "installId": "install-id",
-            "userAgent": "user-agent",
-            "deviceModel": "device-model",
-            "osVersion": "os-version",
-        }
+    monkeypatch.setattr(client, "_refresh_suite_version_headers", lambda: None)
+    client.account_info = {
+        "userId": user_id,
+        "credential": "credential",
+        "signature": "signature",
+    }
 
     auth_data = {
         "sessionToken": "session-token",
@@ -949,8 +955,6 @@ def test_non_tw_login_keeps_existing_user_id(monkeypatch, region):
         "assetVersion": "1.0.0",
         "multiPlayVersion": "1.0.0",
     }
-    if region == "kr":
-        auth_data["cdnVersion"] = 275
 
     def respond(endpoint, method="get", body="", **kwargs):
         if endpoint == f"/suite/user/{user_id}":

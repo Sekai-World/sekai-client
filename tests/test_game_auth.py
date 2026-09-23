@@ -47,35 +47,10 @@ def test_jp_authentication_returns_session_metadata():
     )
 
 
-def test_kr_authentication_uses_access_token():
-    transport = Mock()
-    transport.call_pjsk_api.return_value = _valid_auth_response()
-    credential = TwKrCredential(
-        AccountRegion.KR,
-        "open-id",
-        "access-token",
-        "device-id",
-        "install-id",
-        "user-agent",
-        "device-model",
-        "os-version",
-    )
-
-    GameAuthenticationService(transport).authenticate(credential)
-
-    transport.call_pjsk_api.assert_called_once_with(
-        "/user/auth",
-        "post",
-        {
-            "userID": 0,
-            "accessToken": "access-token",
-            "deviceId": None,
-            "authTriggerType": "normal",
-        },
-    )
-
-
-def test_tw_authentication_uses_ordered_two_step_flow_and_hands_off_session_token():
+@pytest.mark.parametrize("region", [AccountRegion.TW, AccountRegion.KR])
+def test_tw_kr_authentication_uses_ordered_two_step_flow_and_hands_off_session_token(
+    region,
+):
     transport = Mock()
     transport.headers = {}
 
@@ -90,7 +65,7 @@ def test_tw_authentication_uses_ordered_two_step_flow_and_hands_off_session_toke
 
     transport.call_pjsk_api.side_effect = respond
     credential = TwKrCredential(
-        AccountRegion.TW,
+        region,
         "open-id",
         "access-token",
         "device-id",
@@ -174,7 +149,8 @@ def test_tw_authentication_rejects_malformed_first_response_without_login(respon
         _valid_tw_login_response(cdnVersion=None),
     ],
 )
-def test_tw_authentication_rejects_malformed_second_response(login_response):
+@pytest.mark.parametrize("region", [AccountRegion.TW, AccountRegion.KR])
+def test_tw_kr_authentication_rejects_malformed_second_response(region, login_response):
     transport = Mock()
     transport.headers = {}
     transport.call_pjsk_api.side_effect = [
@@ -182,7 +158,7 @@ def test_tw_authentication_rejects_malformed_second_response(login_response):
         login_response,
     ]
     credential = TwKrCredential(
-        AccountRegion.TW,
+        region,
         "open-id",
         "access-token",
         "device-id",
@@ -192,7 +168,9 @@ def test_tw_authentication_rejects_malformed_second_response(login_response):
         "os-version",
     )
 
-    with pytest.raises(ValueError, match="Invalid TW login response"):
+    with pytest.raises(
+        ValueError, match=f"Invalid {region.value.upper()} login response"
+    ):
         GameAuthenticationService(transport).authenticate(credential)
 
     assert transport.headers["x-session-token"] == "initial-session"
@@ -223,24 +201,12 @@ def test_tw_kr_auth_sets_device_id_header_on_transport(
         "deviceModel": "lease-device-model",
         "osVersion": "lease-os-version",
     }
-    if region == "tw":
-        client.call_pjsk_api = Mock(
-            side_effect=[
-                {"userId": 12345, "sessionToken": "game-session"},
-                _valid_tw_login_response(),
-            ]
-        )
-    else:
-        client.call_pjsk_api = Mock(
-            return_value={
-                "sessionToken": "game-session",
-                "appVersion": "1.0.0",
-                "dataVersion": "1.0.0",
-                "assetVersion": "1.0.0",
-                "multiPlayVersion": "1.0.0",
-                "cdnVersion": "20240101",
-            }
-        )
+    client.call_pjsk_api = Mock(
+        side_effect=[
+            {"userId": 12345, "sessionToken": "game-session"},
+            _valid_tw_login_response(),
+        ]
+    )
 
     client._authenticate()
 
@@ -250,25 +216,13 @@ def test_tw_kr_auth_sets_device_id_header_on_transport(
     assert client.headers["x-devicemodel"] == "lease-device-model"
     os_header = "x-operatingSystem" if region == "tw" else "x-operatingsystem"
     assert client.headers[os_header] == "lease-os-version"
-    if region == "tw":
-        client.call_pjsk_api.assert_has_calls(
-            [
-                call("/user/auth", "post", {"accessToken": "token"}),
-                call("/user/12345/login", "post"),
-            ]
-        )
-        assert client.headers["x-session-token"] == "game-session"
-    else:
-        client.call_pjsk_api.assert_called_once_with(
-            "/user/auth",
-            "post",
-            {
-                "userID": 0,
-                "accessToken": "token",
-                "deviceId": None,
-                "authTriggerType": "normal",
-            },
-        )
+    client.call_pjsk_api.assert_has_calls(
+        [
+            call("/user/auth", "post", {"accessToken": "token"}),
+            call("/user/12345/login", "post"),
+        ]
+    )
+    assert client.headers["x-session-token"] == "game-session"
 
 
 def test_tw_reauthentication_uses_new_lease_device_id(monkeypatch):

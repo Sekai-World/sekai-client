@@ -549,7 +549,7 @@ class APIClient:
         # succeeded, so a malformed TW/KR auth response cannot leave stale/partial
         # split paths on the client.
         self.master_split_paths = list(result.master_split_paths)
-        if self.region == "tw":
+        if self.region in ("tw", "kr"):
             self._pending_game_user_id = result.canonical_user_id
         return auth_data
 
@@ -731,7 +731,7 @@ class APIClient:
                 "assetHash": "",
                 "appVersionStatus": (
                     auth_data["appVersionStatus"]
-                    if self.region == "tw"
+                    if self.region in ("tw", "kr")
                     else "available"
                 ),
                 "cdnVersion": auth_data["cdnVersion"],

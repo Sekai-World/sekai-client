@@ -1,6 +1,6 @@
 """Contract tests for lifecycle-independent game-account registration."""
 
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -90,28 +90,6 @@ def test_registration_rejects_tw_before_transport_call():
                 {"credential": "credential"},
             ),
         ),
-        (
-            TwKrCredential(
-                AccountRegion.KR,
-                "open-id",
-                "access-token",
-                "device-id",
-                "install-id",
-                "user-agent",
-                "device-model",
-                "os-version",
-            ),
-            (
-                "/user/auth",
-                "post",
-                {
-                    "userID": 0,
-                    "accessToken": "access-token",
-                    "deviceId": None,
-                    "authTriggerType": "normal",
-                },
-            ),
-        ),
     ],
 )
 def test_credential_validation_only_calls_auth_endpoint(credential, expected_call):
@@ -126,6 +104,38 @@ def test_credential_validation_only_calls_auth_endpoint(credential, expected_cal
 
     assert AccountCredentialValidator(transport).validate(credential) is True
     transport.call_pjsk_api.assert_called_once_with(*expected_call)
+
+
+def test_kr_credential_validation_runs_two_step_login():
+    transport = Mock()
+    transport.headers = {}
+    transport.call_pjsk_api.side_effect = [
+        {"userId": 12345, "sessionToken": "session"},
+        {
+            "appVersion": "1.0.0",
+            "dataVersion": "1.0.0",
+            "assetVersion": "1.0.0",
+            "multiPlayVersion": "1.0.0",
+            "cdnVersion": 1,
+            "appVersionStatus": "available",
+        },
+    ]
+    credential = TwKrCredential(
+        AccountRegion.KR,
+        "open-id",
+        "access-token",
+        "device-id",
+        "install-id",
+        "user-agent",
+        "device-model",
+        "os-version",
+    )
+
+    assert AccountCredentialValidator(transport).validate(credential) is True
+    assert transport.call_pjsk_api.call_args_list == [
+        call("/user/auth", "post", {"accessToken": "access-token"}),
+        call("/user/12345/login", "post"),
+    ]
 
 
 def test_credential_validation_rejects_malformed_response_without_secret_leak():
