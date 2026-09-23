@@ -132,6 +132,43 @@ def test_collection_uses_combined_snapshot_rpc(monkeypatch):
     outbox.enqueue.assert_called_once()
 
 
+def test_collection_recovers_when_snapshot_rpc_fails(monkeypatch):
+    outbox = Mock()
+    monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)
+    monkeypatch.setattr(
+        event_tracker,
+        "event_data",
+        {
+            "id": 12,
+            "eventType": "marathon",
+            "startAt": 0,
+            "aggregateAt": 1_000_000,
+            "rankingAnnounceAt": 1_100_000,
+            "closedAt": 2_000_000,
+        },
+    )
+    request = Mock(
+        side_effect=[
+            RuntimeError("rpc"),
+            {"ready": True},
+            {
+                "first100": {"isEventAggregate": False, "rankings": []},
+                "border": {"borderRankings": []},
+            },
+        ]
+    )
+    monkeypatch.setattr(event_tracker.jsonrpc_client, "request", request)
+
+    event_tracker.track_event_scores(1_000)
+
+    assert [call.args for call in request.call_args_list] == [
+        ("fetch_event_rank_snapshot", [12]),
+        ("ensure_ready",),
+        ("fetch_event_rank_snapshot", [12]),
+    ]
+    outbox.enqueue.assert_called_once()
+
+
 def test_collection_skips_border_and_enqueue_during_aggregation(monkeypatch):
     outbox = Mock()
     monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)

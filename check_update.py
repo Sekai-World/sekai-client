@@ -60,6 +60,7 @@ from utils.git_lock import (
 )
 from utils.git_publish import commit_diff, push_diff
 from utils.jsonrpc_client import JSONRPCClient
+from utils.rpc_recovery import request_with_recovery
 from utils.update_transaction import (
     FileEntry,
     JournalError,
@@ -536,14 +537,21 @@ def get_splitted_master_data() -> dict[str, Any]:
     global pjsk_region
     global version_info
 
-    master_split_paths: list[str] = jsonrpc_client.request("master_split_paths")
+    master_split_paths: list[str] = request_with_recovery(
+        jsonrpc_client, "master_split_paths", log_warning=logger.warning
+    )
 
     # download every split via the scoped, allowlisted RPC
     master_data_raw = []
     for split_path in master_split_paths:
         logger.debug("[get_splitted_master_data] fetch split %s", split_path)
         master_data_raw.append(
-            jsonrpc_client.request("fetch_master_split", [split_path])
+            request_with_recovery(
+                jsonrpc_client,
+                "fetch_master_split",
+                [split_path],
+                log_warning=logger.warning,
+            )
         )
 
     master_data: dict[str, Any] = {}
@@ -575,8 +583,11 @@ def download_nuverse_master_data(cdn_version: int) -> dict[str, Any]:
         raw = decrypt_msgpack(res.content)
     else:
         raw = _require_dict_response(
-            jsonrpc_client.request(
-                "request_and_decrypt", [f"{base_url}/master-data-{cdn_version}.info"]
+            request_with_recovery(
+                jsonrpc_client,
+                "request_and_decrypt",
+                [f"{base_url}/master-data-{cdn_version}.info"],
+                log_warning=logger.warning,
             ),
             "download Nuverse master data",
         )
@@ -643,16 +654,22 @@ def _refresh_version_info_from_source() -> dict[str, Any]:
     if check_update_simple_mode:
         return fetch_simple_version_info()
 
-    if not jsonrpc_client.request("is_login"):
-        jsonrpc_client.request("login")
+    if not request_with_recovery(
+        jsonrpc_client, "is_login", log_warning=logger.warning
+    ):
+        request_with_recovery(jsonrpc_client, "login", log_warning=logger.warning)
     elif pjsk_region in ("jp", "en"):
         logger.debug(
             "[refresh_version] refresh split master data list without "
             "running full login workflow"
         )
-        jsonrpc_client.request("refresh_master_split_paths")
+        request_with_recovery(
+            jsonrpc_client, "refresh_master_split_paths", log_warning=logger.warning
+        )
     return _validate_fetched_version_info(
-        jsonrpc_client.request("version_info"),
+        request_with_recovery(
+            jsonrpc_client, "version_info", log_warning=logger.warning
+        ),
         require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
         require_app_hash=pjsk_region in ("jp", "en"),
     )
@@ -2749,7 +2766,12 @@ def _cycle_should_proceed(daily: bool) -> str | None:
         # honor maintenance. The new-version gate is intentionally bypassed so a
         # daily run always re-fetches and republishes the full data set; the
         # published global is still not advanced when maintenance is active.
-        check_version_res = jsonrpc_client.request("check_versions", [version_info])
+        check_version_res = request_with_recovery(
+            jsonrpc_client,
+            "check_versions",
+            [version_info],
+            log_warning=logger.warning,
+        )
         if check_version_res["maintenance"]:
             logger.warning("PJSK server is in maintenance, skipping cycle")
             is_in_maintenance = True
@@ -2760,7 +2782,12 @@ def _cycle_should_proceed(daily: bool) -> str | None:
     # Ordinary run: standard mode must respect the new-version gate computed by
     # the server. When the candidate version matches the published global there
     # is nothing to publish, so we skip cleanly.
-    check_version_res = jsonrpc_client.request("check_versions", [version_info])
+    check_version_res = request_with_recovery(
+        jsonrpc_client,
+        "check_versions",
+        [version_info],
+        log_warning=logger.warning,
+    )
     if check_version_res["maintenance"]:
         logger.warning("PJSK server is in maintenance, skipping cycle")
         is_in_maintenance = True
@@ -3278,7 +3305,9 @@ def _bootstrap_try_refresh() -> bool:
     retry after a delay. All user-info writes and commits happen exclusively
     inside the unified locked cycle (``_run_update_cycle_locked``), never here.
     """
-    check_version_res = jsonrpc_client.request("check_versions")
+    check_version_res = request_with_recovery(
+        jsonrpc_client, "check_versions", log_warning=logger.warning
+    )
     if check_version_res["maintenance"]:
         logger.warning("[bootstrap] Server in maintenance, retry after 10 minutes")
         sleep(10 * 60)

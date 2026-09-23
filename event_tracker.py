@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 import time
 from collections import Counter
 from os import getenv
@@ -24,6 +23,7 @@ from response_models import (
 from utils.constants import pjsk_region, sekai_api_key, strapi_base_url
 from utils.event_outbox import EventRankingOutbox
 from utils.jsonrpc_client import JSONRPCClient
+from utils.rpc_recovery import request_with_recovery
 
 LOGLEVEL = getenv("LOGLEVEL", "INFO").upper()
 configure_logging(level=LOGLEVEL)
@@ -156,7 +156,12 @@ def _track_event_cycle():
     version_started = time.monotonic()
     try:
         logger.info("[track_event_func] Check game versions")
-        ver_res = jsonrpc_client.request("check_versions", [version_info])
+        ver_res = request_with_recovery(
+            jsonrpc_client,
+            "check_versions",
+            [version_info],
+            log_warning=logger.warning,
+        )
     except Exception:
         logger.exception(
             "[track_event_func] Failed to execute check_versions, restart bootstrapping"
@@ -166,7 +171,12 @@ def _track_event_cycle():
             "bootstrapping..."
         )
         bootstrap()
-        ver_res = jsonrpc_client.request("check_versions", [version_info])
+        ver_res = request_with_recovery(
+            jsonrpc_client,
+            "check_versions",
+            [version_info],
+            log_warning=logger.warning,
+        )
     finally:
         _record_stage("version_check", version_started)
     logger.debug("[track_event_func] got ver_res")
@@ -253,7 +263,9 @@ def refresh_version():
     # current-event payload and the version_info are fully validated before any
     # of ``event_data``/``_world_blooms_cache``/``version_info`` is overwritten,
     # so if either fails the last-known-good values are preserved.
-    raw_version_info = jsonrpc_client.request("version_info")
+    raw_version_info = request_with_recovery(
+        jsonrpc_client, "version_info", log_warning=logger.warning
+    )
     try:
         validated_version_info = validate_version_info(
             raw_version_info, require_cdn_version=pjsk_region in ("cn", "tw", "kr")
@@ -452,7 +464,12 @@ def track_event_scores(curr_time):
     event_id = event_data["id"]
 
     collection_started = time.monotonic()
-    snapshot = jsonrpc_client.request("fetch_event_rank_snapshot", [event_id])
+    snapshot = request_with_recovery(
+        jsonrpc_client,
+        "fetch_event_rank_snapshot",
+        [event_id],
+        log_warning=logger.warning,
+    )
     # Validate the combined ranking snapshot (first100/border shapes, ranking
     # identity and value ranges). ``border`` is optional: when present it must
     # match the expected shape. Validation raises before any ranking data is
@@ -485,15 +502,17 @@ def track_event_scores(curr_time):
 
 
 def bootstrap():
-    if not jsonrpc_client.request("is_init") and not jsonrpc_client.request(
-        "init", [pjsk_region]
-    ):
-        sys.exit(1)
-    logger.info("[bootstrap] PJSK client inited")
-
     while True:
         try:
-            check_version_res = jsonrpc_client.request("check_versions")
+            status = jsonrpc_client.request("ensure_ready")
+            if not isinstance(status, dict) or status.get("ready") is not True:
+                raise RuntimeError("shared-client readiness did not reach READY")
+            logger.info("[bootstrap] PJSK client ready")
+            check_version_res = request_with_recovery(
+                jsonrpc_client,
+                "check_versions",
+                log_warning=logger.warning,
+            )
             if check_version_res["maintenance"]:
                 logger.warning(
                     "[bootstrap] Server in maintenance, retry after 10 minutes"
@@ -501,7 +520,6 @@ def bootstrap():
                 time.sleep(10 * 60)
                 continue
 
-            jsonrpc_client.request("login")
             refresh_version()
             break
         except Exception:
