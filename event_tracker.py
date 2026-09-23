@@ -294,6 +294,7 @@ def _should_skip_event_tracking(curr_time: int) -> bool:
     return (
         (not event_data)
         or curr_time < event_data["startAt"]
+        or curr_time >= event_data["closedAt"]
         or (
             curr_time > (event_data["rankingAnnounceAt"] + 6 * 60 * 1000)
             and curr_time < (event_data["closedAt"] - 15 * 60 * 1000)
