@@ -80,6 +80,10 @@ class TwKrCredential:
     user_agent: str = field(repr=False)
     device_model: str = field(repr=False)
     os_version: str = field(repr=False)
+    # Optional x-platform / x-operatingsystem values from the account service.
+    # Empty when the service does not return them.
+    platform: str = field(default="", repr=False)
+    operating_system: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:
         if self.region not in (AccountRegion.TW, AccountRegion.KR):
