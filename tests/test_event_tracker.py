@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import Mock
 
 import event_tracker
@@ -215,11 +216,108 @@ def test_collection_skips_after_event_closed(monkeypatch):
     )
     request = Mock()
     monkeypatch.setattr(event_tracker.jsonrpc_client, "request", request)
+    refresh = Mock()
+    monkeypatch.setattr(event_tracker, "refresh_version", refresh)
 
     event_tracker.track_event_scores(3_000)
 
+    refresh.assert_called_once_with()
     request.assert_not_called()
     outbox.enqueue.assert_not_called()
+
+
+def _closed_event(event_id=12):
+    return {
+        "id": event_id,
+        "eventType": "marathon",
+        "startAt": 0,
+        "aggregateAt": 1_000,
+        "rankingAnnounceAt": 2_000,
+        "closedAt": 3_000,
+    }
+
+
+def test_idle_tracker_picks_up_next_event_after_close(monkeypatch):
+    outbox = Mock()
+    monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)
+    monkeypatch.setattr(event_tracker, "event_data", _closed_event())
+    next_event = {
+        "id": 13,
+        "eventType": "marathon",
+        "startAt": 4_000,
+        "aggregateAt": 1_000_000,
+        "rankingAnnounceAt": 1_100_000,
+        "closedAt": 2_000_000,
+    }
+
+    def refresh():
+        event_tracker.event_data = next_event
+
+    monkeypatch.setattr(event_tracker, "refresh_version", Mock(side_effect=refresh))
+    request = Mock(
+        return_value={
+            "first100": {"isEventAggregate": False, "rankings": []},
+            "border": {"borderRankings": []},
+        }
+    )
+    monkeypatch.setattr(event_tracker.jsonrpc_client, "request", request)
+
+    event_tracker.track_event_scores(5_000)
+
+    request.assert_called_once_with("fetch_event_rank_snapshot", [13])
+    outbox.enqueue.assert_called_once()
+
+
+def test_closing_window_refreshes_without_raising(monkeypatch):
+    outbox = Mock()
+    monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)
+    event = {
+        "id": 12,
+        "eventType": "marathon",
+        "startAt": 0,
+        "aggregateAt": 1_000,
+        "rankingAnnounceAt": 2_000,
+        "closedAt": 20 * 60 * 1000,
+    }
+    monkeypatch.setattr(event_tracker, "event_data", event)
+    refresh = Mock()
+    monkeypatch.setattr(event_tracker, "refresh_version", refresh)
+    request = Mock()
+    monkeypatch.setattr(event_tracker.jsonrpc_client, "request", request)
+
+    # Inside the final 15 minutes before closedAt.
+    event_tracker.track_event_scores(10 * 60 * 1000)
+
+    refresh.assert_called_once_with()
+    request.assert_not_called()
+    outbox.enqueue.assert_not_called()
+
+
+def test_idle_cycles_log_the_pause_once(monkeypatch, caplog):
+    monkeypatch.setattr(event_tracker, "event_data", _closed_event())
+    monkeypatch.setattr(event_tracker, "refresh_version", Mock())
+    monkeypatch.setattr(event_tracker, "_tracking_idle", False)
+    caplog.set_level(logging.INFO, logger=event_tracker.logger.name)
+
+    for _ in range(3):
+        event_tracker.track_event_scores(5_000)
+
+    idle_records = [r for r in caplog.records if "No ongoing event" in r.message]
+    assert [r.levelno for r in idle_records] == [logging.INFO]
+
+
+def test_drain_without_activity_logs_at_debug(monkeypatch, caplog):
+    outbox = Mock()
+    outbox.drain.return_value = {"sent": 0, "failed": 0, "retained": 0}
+    outbox.metrics.return_value = Mock(
+        pending=0, sending=0, failed=0, oldest_pending_age_seconds=0.0
+    )
+    monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)
+    caplog.set_level(logging.INFO, logger=event_tracker.logger.name)
+
+    event_tracker._drain_ranking_outbox()
+
+    assert "[ranking_outbox]" not in caplog.text
 
 
 def test_http_sessions_use_bounded_connection_pools():
