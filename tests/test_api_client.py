@@ -1361,3 +1361,88 @@ def test_tw_kr_auth_records_split_paths_only_after_cdn_version_validation(
 
     assert auth_data["sessionToken"] == "sess"
     assert client.master_split_paths == ["split/path"]
+
+
+_TW_KR_ACCOUNT_INFO = {
+    "userId": "sdk-open-id",
+    "loginInfo": {"accessToken": "access-token"},
+    "deviceId": "device-id",
+    "installId": "install-id",
+    "userAgent": "user-agent",
+    "deviceModel": "device-model",
+    "osVersion": "os-version",
+}
+
+
+@pytest.mark.parametrize("region", ["tw", "kr"])
+def test_tw_kr_auth_sends_published_app_identity(monkeypatch, region):
+    monkeypatch.setattr(
+        api_client,
+        "get_app_identity",
+        lambda requested: {"appVersion": "6.4.1", "appHash": f"{requested}-hash"},
+    )
+    client = APIClient(region=region)
+    client.account_info = dict(_TW_KR_ACCOUNT_INFO)
+    sent = {}
+
+    def respond(endpoint, method="get", body="", **kwargs):
+        if endpoint == "/user/auth":
+            sent["app_version"] = client.headers["x-app-version"]
+            sent["app_hash"] = client.headers["x-app-hash"]
+            return {"userId": 98765, "sessionToken": "session"}
+        return _valid_tw_login_data()
+
+    client.call_pjsk_api = Mock(side_effect=respond)
+
+    client._authenticate()
+
+    assert sent == {"app_version": "6.4.1", "app_hash": f"{region}-hash"}
+
+
+@pytest.mark.parametrize("region", ["tw", "kr"])
+def test_tw_kr_auth_keeps_configured_identity_without_feed(region):
+    client = APIClient(region=region)
+    configured = (client.headers["x-app-version"], client.headers["x-app-hash"])
+    client.account_info = dict(_TW_KR_ACCOUNT_INFO)
+    client.call_pjsk_api = Mock(
+        side_effect=[
+            {"userId": 98765, "sessionToken": "session"},
+            _valid_tw_login_data(),
+        ]
+    )
+
+    client._authenticate()
+
+    assert (client.headers["x-app-version"], client.headers["x-app-hash"]) == configured
+
+
+def test_tw_kr_426_prefers_published_identity_over_qooapp(monkeypatch):
+    monkeypatch.setattr(
+        api_client,
+        "get_app_identity",
+        lambda region: {"appVersion": "6.4.1", "appHash": "published-hash"},
+    )
+    qooapp = Mock(side_effect=AssertionError("QooApp must not be queried"))
+    monkeypatch.setattr(api_client, "get_app_ver_qooapp", qooapp)
+    client = APIClient(region="kr")
+    client._refresh_tw_kr_asset_data_versions = Mock()
+    client.check_versions = Mock()
+
+    client._update_version_after_426(endpoint="/user/auth")
+
+    assert client.headers["x-app-version"] == "6.4.1"
+    assert client.headers["x-app-hash"] == "published-hash"
+    client._refresh_tw_kr_asset_data_versions.assert_called_once_with()
+
+
+def test_tw_kr_426_falls_back_to_qooapp_without_feed(monkeypatch):
+    monkeypatch.setattr(api_client, "get_app_ver_qooapp", Mock(return_value="6.4.2"))
+    client = APIClient(region="kr")
+    configured_hash = client.headers["x-app-hash"]
+    client._refresh_tw_kr_asset_data_versions = Mock()
+    client.check_versions = Mock()
+
+    client._update_version_after_426(endpoint="/user/auth")
+
+    assert client.headers["x-app-version"] == "6.4.2"
+    assert client.headers["x-app-hash"] == configured_hash

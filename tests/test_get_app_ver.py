@@ -305,3 +305,66 @@ def test_get_app_ver_and_hash_falls_back_on_http_error(
 
     request.assert_called_once_with(url, timeout=10)
     response.raise_for_status.assert_called_once_with()
+
+
+APP_IDENTITY_KR_URL = (
+    "https://raw.githubusercontent.com/Sekai-World/sekai-apphash-updater/"
+    "refs/heads/data/KR.json"
+)
+
+
+def test_get_app_identity_reads_the_region_feed(monkeypatch):
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        "appVersion": "6.4.0",
+        "appHash": "published-hash",
+        "updatedAt": "2026-09-24T00:00:00Z",
+    }
+    request = Mock(return_value=response)
+    monkeypatch.delenv("APP_IDENTITY_URL_TEMPLATE", raising=False)
+    monkeypatch.setattr(get_app_ver.requests, "get", request)
+
+    assert get_app_ver.get_app_identity("kr") == {
+        "appVersion": "6.4.0",
+        "appHash": "published-hash",
+    }
+    request.assert_called_once_with(APP_IDENTITY_KR_URL, timeout=10)
+    response.raise_for_status.assert_called_once_with()
+
+
+def test_get_app_identity_uses_environment_url_template(monkeypatch):
+    response = Mock(status_code=200)
+    response.json.return_value = {"appVersion": "6.4.0", "appHash": "hash"}
+    request = Mock(return_value=response)
+    monkeypatch.setenv(
+        "APP_IDENTITY_URL_TEMPLATE", "https://example.test/{region}.json"
+    )
+    monkeypatch.setattr(get_app_ver.requests, "get", request)
+
+    assert get_app_ver.get_app_identity("tw") is not None
+    request.assert_called_once_with("https://example.test/TW.json", timeout=10)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"appVersion": "6.4.0"},
+        {"appVersion": "6.4.0", "appHash": ""},
+        {"appVersion": 640, "appHash": "hash"},
+    ],
+)
+def test_get_app_identity_rejects_malformed_payload(monkeypatch, payload):
+    response = Mock(status_code=200)
+    response.json.return_value = payload
+    monkeypatch.setattr(get_app_ver.requests, "get", Mock(return_value=response))
+
+    assert get_app_ver.get_app_identity("kr") is None
+
+
+def test_get_app_identity_returns_none_on_http_error(monkeypatch):
+    response = Mock(status_code=404)
+    response.raise_for_status.side_effect = requests.HTTPError("not found")
+    monkeypatch.setattr(get_app_ver.requests, "get", Mock(return_value=response))
+
+    assert get_app_ver.get_app_identity("kr") is None

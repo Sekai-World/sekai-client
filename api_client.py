@@ -53,6 +53,7 @@ from utils.constants import (
 from utils.crypto import decrypt_msgpack
 from utils.deadline import DeadlineExceeded, bounded_timeout, current_deadline
 from utils.get_app_ver import (
+    get_app_identity,
     get_app_ver_and_hash_en,
     get_app_ver_and_hash_jp,
     get_app_ver_qooapp,
@@ -237,8 +238,9 @@ class APIClient:
         elif self.region in ["en"]:
             self._refresh_suite_version_headers()
         else:
-            ver_text = get_app_ver_qooapp(app_id_regions[self.region])
-            self.headers["x-app-version"] = ver_text
+            if not self._refresh_tw_kr_app_identity():
+                ver_text = get_app_ver_qooapp(app_id_regions[self.region])
+                self.headers["x-app-version"] = ver_text
             # TW/KR: ``check_versions`` is intentionally a no-op for these
             # regions, so the data/asset headers would otherwise stay stale
             # after a 426. Refresh them explicitly from the public system
@@ -247,6 +249,24 @@ class APIClient:
         self.check_versions()
         if self.account_info and not self._is_auth_endpoint(endpoint or ""):
             self.login()
+
+    def _refresh_tw_kr_app_identity(self) -> bool:
+        """Apply the published TW/KR app version and hash.
+
+        Returns ``False`` when the feed is unavailable; the current headers,
+        seeded from ``APP_VER``/``APP_HASH``, then stay in place.
+        """
+        identity = get_app_identity(self.region)
+        if identity is None:
+            return False
+        self.headers["x-app-version"] = identity["appVersion"]
+        self.headers["x-app-hash"] = identity["appHash"]
+        self.logger.info(
+            "applied published app identity region=%s app_version=%s",
+            self.region,
+            identity["appVersion"],
+        )
+        return True
 
     def _refresh_tw_kr_asset_data_versions(self) -> None:
         """Refresh ``x-data-version``/``x-asset-version`` for TW/KR after 426.
@@ -515,6 +535,7 @@ class APIClient:
             self._apply_jp_en_fingerprint_headers(credential)
         elif self.region in ("tw", "kr"):
             credential = self._validate_tw_kr_account_info()
+            self._refresh_tw_kr_app_identity()
         elif self.region == "cn":
             access_token = self.account_info["loginInfo"]["accessToken"]
             raw = self.call_pjsk_api(
