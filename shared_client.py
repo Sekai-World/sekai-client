@@ -83,6 +83,8 @@ _account_lease_lock = Lock()
 _ACCOUNT_LEASE_TTL_SECONDS = 6 * 60 * 60
 _LEASE_RENEW_AHEAD_MIN = timedelta(minutes=45)
 _LEASE_RENEW_AHEAD_MAX = timedelta(minutes=75)
+# Identifies the worker boot that acquired a lease; it does not change ownership.
+_LEASE_CONSUMER_INSTANCE_ID = uuid4().hex[:12]
 _lease_renewal_retry_until: datetime | None = None
 
 
@@ -694,20 +696,24 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
         if _account_provider is None:
             _account_provider = _build_account_provider()
         consumer = f"shared-client-{region.value}"
+        acquire_consumer = f"{consumer}-{_LEASE_CONSUMER_INSTANCE_ID}"
         journal = _remote_lease_journal(_account_provider)
         operation = None
         if journal is not None:
-            operation = journal.load_or_create(region.value, consumer)
+            operation = journal.load_or_create(region.value, consumer, acquire_consumer)
             if operation.release_pending:
                 try:
                     _account_provider.release(operation.lease_id or "")
                 except InvalidLeaseError:
                     pass
                 journal.clear(operation)
-                operation = journal.load_or_create(region.value, consumer)
+                operation = journal.load_or_create(
+                    region.value, consumer, acquire_consumer
+                )
         lease = _account_provider.acquire(
             region,
-            consumer,
+            # A replay must resend the consumer its operation was started with.
+            operation.acquire_consumer if operation else acquire_consumer,
             ttl_seconds=_ACCOUNT_LEASE_TTL_SECONDS,
             idempotency_key=(
                 operation.idempotency_key if operation else f"login-{uuid4()}"
@@ -720,6 +726,7 @@ def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branch
         _active_account_lease = lease
         _active_lease_operation = operation
         _lease_renewal_retry_until = None
+        logger.info("Acquired account lease as consumer %s", lease.consumer)
         return credential_to_account_info(lease.credential)
 
 

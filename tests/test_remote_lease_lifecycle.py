@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 import tempfile
@@ -411,6 +412,9 @@ class FakeAccountService:
     def acquire(self, region, consumer, *, ttl_seconds, idempotency_key):
         self.acquire_calls.append((region, consumer, ttl_seconds, idempotency_key))
         existing = self.leases_by_key.get(idempotency_key)
+        # Like the service, reject a replay that changes the original consumer.
+        if existing is not None and existing.consumer != consumer:
+            raise InvalidLeaseError()
         if existing is not None and not existing.is_expired(self.clock.now()):
             return existing
 
@@ -598,3 +602,81 @@ print(operation.lease_id)
 
     assert operation.lease_id == "subprocess-lease"
     assert result.stdout.splitlines() == [operation.idempotency_key, operation.lease_id]
+
+
+def _simulate_restart(monkeypatch, instance_id):
+    monkeypatch.setattr(shared_client, "_active_account_lease", None)
+    monkeypatch.setattr(shared_client, "_active_lease_operation", None)
+    monkeypatch.setattr(shared_client, "_LEASE_CONSUMER_INSTANCE_ID", instance_id)
+
+
+def test_restart_replays_live_lease_with_the_acquiring_boot_consumer(
+    tmp_path, monkeypatch, fake_clock
+):
+    provider = FakeAccountService(fake_clock)
+    _configure_service(provider, monkeypatch, tmp_path)
+    monkeypatch.setattr(shared_client, "_LEASE_CONSUMER_INSTANCE_ID", "boot-a")
+    shared_client.get_account_info()
+    original_lease = shared_client._active_account_lease
+
+    _simulate_restart(monkeypatch, "boot-b")
+    shared_client.get_account_info()
+
+    assert shared_client._active_account_lease is original_lease
+    assert [call[1] for call in provider.acquire_calls] == [
+        "shared-client-tw-boot-a",
+        "shared-client-tw-boot-a",
+    ]
+    assert provider.acquire_calls[0][3] == provider.acquire_calls[1][3]
+
+
+def test_restart_after_expiry_acquires_with_the_new_boot_consumer(
+    tmp_path, monkeypatch, fake_clock, caplog
+):
+    caplog.set_level("INFO", logger=shared_client.__name__)
+    provider = FakeAccountService(fake_clock)
+    _configure_service(provider, monkeypatch, tmp_path)
+    monkeypatch.setattr(shared_client, "_LEASE_CONSUMER_INSTANCE_ID", "boot-a")
+    shared_client.get_account_info()
+    original_lease = shared_client._active_account_lease
+    assert original_lease is not None
+
+    _simulate_restart(monkeypatch, "boot-b")
+    fake_clock.advance(original_lease.expires_at - fake_clock.now())
+    shared_client.get_account_info()
+
+    assert [call[1] for call in provider.acquire_calls] == [
+        "shared-client-tw-boot-a",
+        "shared-client-tw-boot-b",
+    ]
+    recovered_lease = shared_client._active_account_lease
+    assert recovered_lease is not None
+    assert recovered_lease.consumer == "shared-client-tw-boot-b"
+    assert "Acquired account lease as consumer shared-client-tw-boot-b" in caplog.text
+
+
+def test_restart_replays_pre_suffix_journal_with_the_base_consumer(
+    tmp_path, monkeypatch, fake_clock
+):
+    provider = FakeAccountService(fake_clock)
+    _configure_service(provider, monkeypatch, tmp_path)
+    journal = shared_client.LeaseJournal(tmp_path)
+    operation = journal.load_or_create("tw", "shared-client-tw")
+    lease = provider.acquire(
+        AccountRegion.TW,
+        "shared-client-tw",
+        ttl_seconds=shared_client._ACCOUNT_LEASE_TTL_SECONDS,
+        idempotency_key=operation.idempotency_key,
+    )
+    journal.mark_acquired(operation, lease.lease_id, lease.expires_at)
+    journal_file = next(tmp_path.glob("lease-*.json"))
+    payload = json.loads(journal_file.read_text())
+    del payload["acquire_consumer"]
+    journal_file.write_text(json.dumps(payload))
+
+    _simulate_restart(monkeypatch, "boot-b")
+    shared_client.get_account_info()
+
+    assert shared_client._active_account_lease is lease
+    assert provider.acquire_calls[-1][1] == "shared-client-tw"
+    assert provider.acquire_calls[-1][3] == operation.idempotency_key

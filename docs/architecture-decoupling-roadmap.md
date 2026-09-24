@@ -219,6 +219,14 @@ acquire operation and can recover when the service makes the account available.
 This deliberately does not force same-consumer takeover or use fencing, so
 unclean-worker recovery is eventual after the prior lease expires, not immediate
 merely because the service is available.
+Each worker process acquires as `shared-client-{region}-{instance id}`, with a
+random per-process instance id, and logs that consumer on acquire, so a listed
+lease can be matched to the boot that acquired it. The suffix is for observability only and does not change
+ownership. The journal stays keyed by the base `shared-client-{region}`
+consumer and records the consumer each acquire operation started with; a
+replay resends that original consumer because the service rejects an
+idempotent replay under a different one. Journals written before the suffix
+replay with the base consumer.
 The fake-clock lifecycle tests simulate restarts by clearing in-process state;
 they exercise expiry recovery with a fake provider, not a live service. A focused
 subprocess test separately verifies that an unexpired journaled lease ID and

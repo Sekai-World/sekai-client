@@ -198,3 +198,67 @@ def test_clear_cannot_delete_a_concurrent_replacement(tmp_path, monkeypatch):
     replacement = replacing.load("tw", "worker")
     assert replacement is not None
     assert replacement.idempotency_key != expired.idempotency_key
+
+
+def test_acquire_consumer_is_recorded_under_the_base_consumer_key(tmp_path):
+    journal = LeaseJournal(tmp_path)
+    pending = journal.load_or_create("tw", "worker", "worker-boot-a")
+    acquired = journal.mark_acquired(
+        pending, "lease-1", datetime.now(UTC) + timedelta(minutes=5)
+    )
+    renewed = journal.mark_renewed(acquired, datetime.now(UTC) + timedelta(hours=6))
+    assert renewed is not None
+    releasing = journal.mark_release_pending(renewed)
+
+    restored = LeaseJournal(tmp_path).load("tw", "worker")
+    assert restored == releasing
+    assert restored.consumer == "worker"
+    assert restored.acquire_consumer == "worker-boot-a"
+
+
+def test_live_operation_keeps_its_original_acquire_consumer(tmp_path):
+    journal = LeaseJournal(tmp_path)
+    pending = journal.load_or_create("tw", "worker", "worker-boot-a")
+    journal.mark_acquired(pending, "lease-1", datetime.now(UTC) + timedelta(minutes=5))
+
+    replayed = LeaseJournal(tmp_path).load_or_create("tw", "worker", "worker-boot-b")
+
+    assert replayed.idempotency_key == pending.idempotency_key
+    assert replayed.acquire_consumer == "worker-boot-a"
+
+
+def test_expired_operation_is_replaced_with_the_new_acquire_consumer(tmp_path):
+    journal = LeaseJournal(tmp_path)
+    pending = journal.load_or_create("tw", "worker", "worker-boot-a")
+    journal.mark_acquired(pending, "lease-1", datetime.now(UTC) - timedelta(seconds=1))
+
+    replacement = LeaseJournal(tmp_path).load_or_create("tw", "worker", "worker-boot-b")
+
+    assert replacement.idempotency_key != pending.idempotency_key
+    assert replacement.acquire_consumer == "worker-boot-b"
+
+
+def test_journal_without_acquire_consumer_falls_back_to_base_consumer(tmp_path):
+    journal = LeaseJournal(tmp_path)
+    operation = journal.load_or_create("tw", "worker", "worker-boot-a")
+    journal_file = next(tmp_path.glob("lease-*.json"))
+    payload = json.loads(journal_file.read_text())
+    del payload["acquire_consumer"]
+    journal_file.write_text(json.dumps(payload))
+
+    restored = LeaseJournal(tmp_path).load_or_create("tw", "worker", "worker-boot-b")
+
+    assert restored.idempotency_key == operation.idempotency_key
+    assert restored.acquire_consumer == "worker"
+
+
+def test_empty_acquire_consumer_fails_closed(tmp_path):
+    journal = LeaseJournal(tmp_path)
+    journal.load_or_create("tw", "worker", "worker-boot-a")
+    journal_file = next(tmp_path.glob("lease-*.json"))
+    payload = json.loads(journal_file.read_text())
+    payload["acquire_consumer"] = ""
+    journal_file.write_text(json.dumps(payload))
+
+    with pytest.raises(RuntimeError, match="journal is invalid"):
+        journal.load("tw", "worker")

@@ -7,7 +7,7 @@ import os
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from fcntl import LOCK_EX, LOCK_UN, flock
 from hashlib import sha256
@@ -24,6 +24,8 @@ class LeaseOperation:
     lease_id: str | None = None
     expires_at: datetime | None = None
     release_pending: bool = False
+    # Consumer sent to the provider; ``consumer`` stays the stable journal key.
+    acquire_consumer: str = field(kw_only=True)
 
 
 class LeaseJournal:
@@ -32,7 +34,10 @@ class LeaseJournal:
     def __init__(self, directory: str | Path) -> None:
         self.directory = Path(directory)
 
-    def load_or_create(self, region: str, consumer: str) -> LeaseOperation:
+    def load_or_create(
+        self, region: str, consumer: str, acquire_consumer: str | None = None
+    ) -> LeaseOperation:
+        """Return the live operation, or start one sent as ``acquire_consumer``."""
         target = self._path(region, consumer)
         with self._locked(target):
             current = self._load(target, region, consumer)
@@ -41,7 +46,12 @@ class LeaseJournal:
                 current.expires_at is None or current.expires_at > now
             ):
                 return current
-            operation = LeaseOperation(region, consumer, f"login-{uuid4()}")
+            operation = LeaseOperation(
+                region,
+                consumer,
+                f"login-{uuid4()}",
+                acquire_consumer=acquire_consumer or consumer,
+            )
             self._write(operation)
             return operation
 
@@ -70,12 +80,15 @@ class LeaseJournal:
                 lease_id=payload.get("lease_id"),
                 expires_at=expires_at,
                 release_pending=payload.get("release_pending", False),
+                # Journals written before the suffix was introduced lack it.
+                acquire_consumer=payload.get("acquire_consumer", payload["consumer"]),
             )
         except (KeyError, TypeError, ValueError) as error:
             raise RuntimeError("remote lease journal is invalid") from error
         if (
             operation.region != region
             or operation.consumer != consumer
+            or not operation.acquire_consumer
             or not operation.idempotency_key
             or (operation.release_pending and not operation.lease_id)
             or (operation.expires_at and operation.expires_at.tzinfo is None)
@@ -86,12 +99,11 @@ class LeaseJournal:
     def mark_acquired(
         self, operation: LeaseOperation, lease_id: str, expires_at: datetime
     ) -> LeaseOperation:
-        acquired = LeaseOperation(
-            operation.region,
-            operation.consumer,
-            operation.idempotency_key,
-            lease_id,
-            expires_at.astimezone(UTC),
+        acquired = replace(
+            operation,
+            lease_id=lease_id,
+            expires_at=expires_at.astimezone(UTC),
+            release_pending=False,
         )
         with self._locked(self._path(operation.region, operation.consumer)):
             self._write(acquired)
@@ -105,14 +117,7 @@ class LeaseJournal:
             raise RuntimeError("cannot renew an unconfirmed lease")
         if expires_at.tzinfo is None:
             raise ValueError("lease expiry must be timezone-aware")
-        renewed = LeaseOperation(
-            operation.region,
-            operation.consumer,
-            operation.idempotency_key,
-            operation.lease_id,
-            expires_at.astimezone(UTC),
-            operation.release_pending,
-        )
+        renewed = replace(operation, expires_at=expires_at.astimezone(UTC))
         target = self._path(operation.region, operation.consumer)
         with self._locked(target):
             current = self._load(target, operation.region, operation.consumer)
@@ -127,14 +132,7 @@ class LeaseJournal:
         return renewed
 
     def mark_release_pending(self, operation: LeaseOperation) -> LeaseOperation:
-        pending = LeaseOperation(
-            operation.region,
-            operation.consumer,
-            operation.idempotency_key,
-            operation.lease_id,
-            operation.expires_at,
-            True,
-        )
+        pending = replace(operation, release_pending=True)
         if not pending.lease_id:
             raise RuntimeError("cannot release an unconfirmed lease")
         with self._locked(self._path(operation.region, operation.consumer)):
@@ -159,6 +157,7 @@ class LeaseJournal:
             "version": 1,
             "region": operation.region,
             "consumer": operation.consumer,
+            "acquire_consumer": operation.acquire_consumer,
             "idempotency_key": operation.idempotency_key,
             "lease_id": operation.lease_id,
             "expires_at": operation.expires_at.isoformat()
