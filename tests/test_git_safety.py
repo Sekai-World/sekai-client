@@ -16,8 +16,8 @@ no real push to production. Covers:
   pre-receive hook that proves the *same* SHA is pushed and the full commit-SHA
   list is unchanged.
 - ``check_update`` shared commit helper: credential-safe pending warning
-  (operation/reason/local SHA, no URL/detail); original Actors preserved;
-  repo-missing / version-info-missing -> FAILED.
+  (operation/reason/local SHA and redacted detail, no URL/credentials);
+  original Actors preserved; repo-missing / version-info-missing -> FAILED.
 """
 
 import os
@@ -28,6 +28,7 @@ from git import Repo
 
 from utils.git import (
     GitOutcome,
+    GitResult,
     check_git_folder,
     prepare_repo_for_update,
     push_current_head,
@@ -671,7 +672,7 @@ def test_commit_pending_emits_credential_safe_warning(monkeypatch, caplog):
 
     assert result.outcome is GitOutcome.PENDING_PUSH
     assert bool(result) is False
-    # Warning must include operation/reason/local_sha but NOT the URL/detail.
+    # Warning must include operation/reason/local_sha but NOT the URL/credentials.
     # The warning is emitted by the push step (operation "push_master_diff").
     warning = caplog.text
     assert "push pending" in warning
@@ -684,6 +685,64 @@ def test_commit_pending_emits_credential_safe_warning(monkeypatch, caplog):
     repo.index.commit.assert_called_once()
     author = repo.index.commit.call_args.kwargs["author"]
     assert author.name == "master-db-diff-bot"
+
+
+def test_push_diff_pending_warning_includes_redacted_detail(caplog):
+    import logging
+
+    from utils.git_publish import push_diff
+
+    detail = (
+        "Cmd('git') failed due to: exit code(1)\n"
+        "  stderr: 'To https://x-access-token:ghs_AppSecret1@github.com/o/r.git\n"
+        " ! [remote rejected] HEAD -> main (cannot lock ref)\n"
+        "hint: username=x-access-token password=ghp_UserSecret2 "
+        "github_pat_FineSecret3'"
+    )
+    pending = GitResult(
+        outcome=GitOutcome.PENDING_PUSH,
+        reason="push_rejected",
+        local_sha="abc123",
+        detail=detail,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="utils.git_publish"):
+        result = push_diff(
+            Mock(), "push_op", push_current_head_fn=Mock(return_value=pending)
+        )
+
+    assert result is pending
+    warning = caplog.text
+    assert "push_op" in warning
+    assert "push_rejected" in warning
+    assert "[remote rejected] HEAD -> main (cannot lock ref)" in warning
+    for secret in (
+        "AppSecret1",
+        "UserSecret2",
+        "FineSecret3",
+        "ghs_",
+        "ghp_",
+        "github_pat_",
+        "x-access-token",
+        "github.com",
+    ):
+        assert secret not in warning
+
+
+def test_push_diff_pending_warning_truncates_detail(caplog):
+    import logging
+
+    from utils.git_publish import push_diff
+
+    pending = GitResult(
+        outcome=GitOutcome.PENDING_PUSH, reason="push_rejected", detail="x" * 5000
+    )
+
+    with caplog.at_level(logging.WARNING, logger="utils.git_publish"):
+        push_diff(Mock(), "push_op", push_current_head_fn=Mock(return_value=pending))
+
+    assert "x" * 500 + "..." in caplog.text
+    assert "x" * 501 not in caplog.text
 
 
 def test_commit_failed_when_repo_missing(monkeypatch):

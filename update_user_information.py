@@ -15,7 +15,7 @@ from git.util import Actor
 
 from logging_config import configure_logging
 from utils.constants import local_git_folder_names, pjsk_region, update_options
-from utils.git import GitOutcome, prepare_repo_for_update
+from utils.git import GitOutcome, GitResult, prepare_repo_for_update
 from utils.git_lock import RepoLockUnavailable, repo_file_locks
 from utils.git_publish import commit_diff, push_diff
 from utils.jsonrpc_client import JSONRPCClient
@@ -30,6 +30,7 @@ configure_logging(level=LOGLEVEL)
 logger = logging.getLogger(__name__)
 
 _MASTER_FILES = ("userHomeBanners.json", "userInformations.json")
+_AUTHOR = Actor("user-information-bot", "anonymous@example.com")
 masterdb_diff_folder_path = os.path.join(
     os.path.dirname(__file__), local_git_folder_names["masterDBDiff"]
 )
@@ -47,10 +48,53 @@ def _write_master_file(relpath: str, data: object) -> None:
         os.fsync(file.fileno())
 
 
+def _ahead_commits_owned_by_updater(repo: Repo) -> bool:
+    """Return whether every ``origin/main..HEAD`` commit is an updater commit.
+
+    Only non-merge commits authored by this updater and touching nothing but
+    its own files qualify. Anything else (e.g. a retained master-version
+    commit) belongs to check_update's journal workflow and must not be pushed
+    from here.
+    """
+    commits = list(repo.iter_commits("origin/main..HEAD"))
+    if not commits:
+        return False
+    for commit in commits:
+        if commit.author.name != _AUTHOR.name or len(commit.parents) != 1:
+            return False
+        changes = commit.parents[0].diff(commit)
+        paths = {
+            path for diff in changes for path in (diff.a_path, diff.b_path) if path
+        }
+        if not paths.issubset(_MASTER_FILES):
+            return False
+    return True
+
+
+def _push_retained_commits(repo: Repo) -> GitResult:
+    """Push updater commits retained by an earlier failed push, then re-prepare.
+
+    prepare runs with ``allow_push=False``, so a retained commit would otherwise
+    block every later run (and check_update) with ``ahead_push_disabled``.
+    """
+    if not _ahead_commits_owned_by_updater(repo):
+        raise RuntimeError(
+            "master repository is not ready: ahead_push_disabled "
+            "(ahead commits are not owned by the user information updater)"
+        )
+    logger.warning("[user_information] pushing retained user information commits")
+    pushed = push_diff(repo, "push_retained_user_information")
+    if pushed.outcome is not GitOutcome.OK:
+        raise RuntimeError(f"retained user information push failed: {pushed.reason}")
+    return prepare_repo_for_update(repo, allow_push=False)
+
+
 def _prepare_master_repo() -> Repo:
     repo_path = Path(masterdb_diff_folder_path)
     repo = Repo(repo_path)
     result = prepare_repo_for_update(repo, allow_push=False)
+    if result.reason == "ahead_push_disabled":
+        result = _push_retained_commits(repo)
     if result.outcome is not GitOutcome.OK:
         raise RuntimeError(f"master repository is not ready: {result.reason}")
     return repo
@@ -76,7 +120,7 @@ def run_once() -> str:
                 operation="commit_user_information",
                 folder_label=local_git_folder_names["masterDBDiff"],
                 commit_message="update user information",
-                author=Actor("user-information-bot", "anonymous@example.com"),
+                author=_AUTHOR,
                 paths=paths,
                 version=version,
             )

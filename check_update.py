@@ -977,7 +977,8 @@ def _push_diff(
     A push failure or unverified push returns ``PENDING_PUSH``; the local
     commit is *kept* and never deleted, recloned, reset, or force-pushed. The
     warning (when pending) contains only operation, reason, and retained local
-    SHA — never the remote URL or exception detail.
+    SHA (plus a redacted, truncated detail on the plain ``push_diff`` path) —
+    never the remote URL or credentials.
 
     ``expected_sha`` (when provided) is forwarded to ``push_current_head`` as an
     explicit SHA barrier: the push is verified against the exact target commit
