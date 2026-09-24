@@ -35,12 +35,10 @@ class GameAPIService:
         endpoint = f"/suite/user/{self._user_id}"
         return self._require_dict(self._caller.call_pjsk_api(endpoint), endpoint)
 
-    def fetch_user_profile(self, region: str, target_user_id: str) -> dict[str, Any]:
-        endpoint = (
-            f"/user/{self._user_id}/{target_user_id}/profile"
-            if region == "jp"
-            else f"/user/{target_user_id}/profile"
-        )
+    def fetch_user_profile(self, target_user_id: str) -> dict[str, Any]:
+        # Every region uses the viewer-scoped path; the bare
+        # /user/{target}/profile form answers 405.
+        endpoint = f"/user/{self._user_id}/{target_user_id}/profile"
         return self._require_dict(self._caller.call_pjsk_api(endpoint), endpoint)
 
     def fetch_user_event_ranking(

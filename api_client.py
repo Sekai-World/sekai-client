@@ -1142,9 +1142,7 @@ class APIClient:
         return res
 
     def fetch_user_profile(self, user_id: str) -> dict[str, Any]:
-        return GameAPIService(self, self._user_id_for_api()).fetch_user_profile(
-            self.region, user_id
-        )
+        return GameAPIService(self, self._user_id_for_api()).fetch_user_profile(user_id)
 
     def fetch_user_event_ranking(
         self, target_user_id: str, event_id: int
