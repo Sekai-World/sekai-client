@@ -684,11 +684,17 @@ class APIClient:
             raise ValueError("TW/KR account info requires a non-empty deviceModel")
         if not isinstance(os_version, str) or not os_version:
             raise ValueError("TW/KR account info requires a non-empty osVersion")
+        # Optional service-provided header values; absent or empty keeps the
+        # static x-platform and the bare osVersion header.
+        platform = self._optional_tw_kr_header_value("platform")
+        operating_system = self._optional_tw_kr_header_value("operatingSystem")
         self.headers["device_id"] = device_id
         self.headers["x-install-id"] = install_id
         self.headers["user-agent"] = user_agent
         self.headers["x-devicemodel"] = device_model
-        self.headers[os_header] = os_version
+        self.headers[os_header] = operating_system or os_version
+        if platform:
+            self.headers["x-platform"] = platform
         return TwKrCredential(
             AccountRegion(self.region),
             str(self.account_info["userId"]),
@@ -698,7 +704,15 @@ class APIClient:
             user_agent,
             device_model,
             os_version,
+            platform=platform,
+            operating_system=operating_system,
         )
+
+    def _optional_tw_kr_header_value(self, key: str) -> str:
+        value = self.account_info.get(key) or ""
+        if not isinstance(value, str):
+            raise ValueError(f"TW/KR account info {key} must be a string")
+        return value
 
     def _apply_auth_headers_and_version_info(self, auth_data: dict[str, Any]) -> None:
         session_token = auth_data["sessionToken"]

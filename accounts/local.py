@@ -49,7 +49,7 @@ def credential_to_account_info(
                 }
             )
         return info
-    return {
+    tw_kr_info: dict[str, object] = {
         "loginInfo": {"accessToken": credential.access_token},
         "userId": credential.sdk_open_id,
         "deviceId": credential.device_id,
@@ -58,6 +58,11 @@ def credential_to_account_info(
         "deviceModel": credential.device_model,
         "osVersion": credential.os_version,
     }
+    if credential.platform:
+        tw_kr_info["platform"] = credential.platform
+    if credential.operating_system:
+        tw_kr_info["operatingSystem"] = credential.operating_system
+    return tw_kr_info
 
 
 class LocalAccountProvider:
