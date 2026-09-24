@@ -28,6 +28,9 @@ from utils.rpc_recovery import request_with_recovery
 LOGLEVEL = getenv("LOGLEVEL", "INFO").upper()
 configure_logging(level=LOGLEVEL)
 logger = logging.getLogger(__name__)
+# The job runs every three minutes, so the scheduler's per-run INFO lines are
+# noise; missed runs and job failures still log at WARNING/ERROR.
+logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 
 
 def _new_http_session() -> requests.Session:
@@ -53,6 +56,7 @@ jsonrpc_client = JSONRPCClient(
 version_info: dict[str, Any] | None = None
 event_data: dict[str, Any] | None = None
 is_in_maintenance = False
+_tracking_idle = False
 _DELIVERY_TIMEOUT_SECONDS = float(getenv("EVENT_TRACKER_DELIVERY_TIMEOUT", "15"))
 _DRAIN_MAX_DURATION_SECONDS = float(getenv("EVENT_TRACKER_DRAIN_MAX_DURATION", "30"))
 _OUTBOX_RETENTION_SECONDS = float(getenv("EVENT_TRACKER_OUTBOX_RETENTION", "86400"))
@@ -76,7 +80,7 @@ def _record_stage(stage: str, started_at: float) -> None:
     duration = max(0.0, time.monotonic() - started_at)
     _metric_counts[f"stage.{stage}.observations"] += 1
     _metric_duration_totals[stage] = _metric_duration_totals.get(stage, 0.0) + duration
-    logger.info(
+    logger.debug(
         "[event_tracker_metrics] stage=%s duration_seconds=%.3f",
         stage,
         duration,
@@ -150,12 +154,12 @@ def get_current_world_link_character(event_id, curr_time):
 
 
 def _track_event_cycle():
-    logger.info("Track event score triggered by cron job")
+    logger.debug("Track event score triggered by cron job")
 
     ver_res = None
     version_started = time.monotonic()
     try:
-        logger.info("[track_event_func] Check game versions")
+        logger.debug("[track_event_func] Check game versions")
         ver_res = request_with_recovery(
             jsonrpc_client,
             "check_versions",
@@ -213,11 +217,13 @@ def track_event_func():
         _track_event_cycle()
     finally:
         _drain_ranking_outbox()
-        logger.info(
+        level = logging.DEBUG if _tracking_idle else logging.INFO
+        logger.log(
+            level,
             "[track_event_func] execution_seconds=%.3f",
             time.monotonic() - started_at,
         )
-        logger.info("[event_tracker_metrics] snapshot=%s", _metrics_snapshot())
+        logger.log(level, "[event_tracker_metrics] snapshot=%s", _metrics_snapshot())
 
 
 scheduler = BlockingScheduler(timezone=timezone("Asia/Tokyo"))
@@ -240,7 +246,7 @@ scheduler.add_listener(_scheduler_listener, EVENT_JOB_MAX_INSTANCES)
 
 
 def refresh_version():
-    logger.info("Refresh version info")
+    logger.debug("Refresh version info")
 
     response = _external_session.get(curr_event_url, timeout=60)
     response.raise_for_status()
@@ -274,7 +280,10 @@ def refresh_version():
         raise RuntimeError(f"Invalid version info response: {error}") from error
 
     global event_data
+    previous_event_id = event_data["id"] if event_data else None
     event_data = current_event
+    if current_event["id"] != previous_event_id:
+        logger.info("Current event is now %s", current_event["id"])
 
     global _world_blooms_cache
     _world_blooms_cache = None
@@ -336,7 +345,16 @@ def _drain_ranking_outbox() -> None:
     _metric_counts["outbox.failed"] += result["failed"]
     _metric_counts["outbox.retained"] += result["retained"]
     metrics = _ranking_outbox().metrics()
-    logger.info(
+    activity = (
+        result["sent"],
+        result["failed"],
+        result["retained"],
+        metrics.pending,
+        metrics.sending,
+        metrics.failed,
+    )
+    logger.log(
+        logging.INFO if any(activity) else logging.DEBUG,
         "[ranking_outbox] sent=%s failed=%s retained=%s pending=%s sending=%s "
         "failed_total=%s oldest_pending_age_seconds=%.3f",
         result["sent"],
@@ -453,16 +471,34 @@ def _track_world_bloom_chapters(
     )
 
 
+def _mark_tracking_idle() -> None:
+    global _tracking_idle
+    if _tracking_idle:
+        logger.debug("No ongoing event, skipping...")
+    else:
+        logger.info("No ongoing event, pausing score tracking")
+    _tracking_idle = True
+
+
+def _mark_tracking_active(event_id: int) -> None:
+    global _tracking_idle
+    if _tracking_idle:
+        logger.info("Resuming score tracking for event %s", event_id)
+    _tracking_idle = False
+
+
 def track_event_scores(curr_time):
-    if _should_skip_event_tracking(curr_time):
-        logger.warning("No ongoing event, skipping...")
-        return
     if _is_tracking_window_closed(curr_time):
-        logger.warning("Current event will expire soon")
-        raise RuntimeError("Current event will expire soon")
+        # The loaded event is closing or closed. Nothing else reloads it while
+        # tracking is idle, so poll for the next event every cycle.
+        refresh_version()
+    if _should_skip_event_tracking(curr_time) or _is_tracking_window_closed(curr_time):
+        _mark_tracking_idle()
+        return
 
     ranking_data = {"time": curr_time}
     event_id = event_data["id"]
+    _mark_tracking_active(event_id)
 
     collection_started = time.monotonic()
     snapshot = request_with_recovery(
