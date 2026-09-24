@@ -1149,6 +1149,12 @@ class APIClient:
     def fetch_user_event_ranking(
         self, target_user_id: str, event_id: int
     ) -> dict[str, Any]:
+        # cn/tw/kr ranking requests have no target-user mode; the server
+        # rejects ``targetUserId``, so fail locally instead of calling it.
+        if self.region in ("cn", "tw", "kr"):
+            raise ValueError(
+                f"target user event ranking is not supported for region {self.region}"
+            )
         return GameAPIService(self, self._user_id_for_api()).fetch_user_event_ranking(
             target_user_id, event_id
         )
@@ -1165,6 +1171,11 @@ class APIClient:
         )
 
     def fetch_event_rank_border(self, event_id: int) -> dict[str, Any]:
+        # cn/tw/kr only serve the user-scoped ranking-border path.
+        if self.region in ("cn", "tw", "kr"):
+            return GameAPIService(
+                self, self._user_id_for_api()
+            ).fetch_event_rank_border(event_id)
         return PublicGameAPIService(self).fetch_event_rank_border(event_id)
 
     def accept_agreement(self):

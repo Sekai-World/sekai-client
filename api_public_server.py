@@ -458,6 +458,12 @@ def fetch_event_ranking_by_user_id(
     Returns:
         JSON response with event ranking data
     """
+    # cn/tw/kr servers have no target-user ranking mode; reject before
+    # contacting the regional client.
+    if region in ("cn", "tw", "kr"):
+        raise BadRequest(
+            f"target user event ranking is not supported for region {region}"
+        )
     client = get_ready_regional_client(region)
     user_profile = client.request(
         "fetch_user_event_ranking", [target_user_id, event_id]

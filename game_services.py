@@ -58,6 +58,10 @@ class GameAPIService:
         )
         return self._require_dict(self._caller.call_pjsk_api(endpoint), endpoint)
 
+    def fetch_event_rank_border(self, event_id: int) -> dict[str, Any]:
+        endpoint = f"/user/{self._user_id}/event/{event_id}/ranking-border"
+        return self._require_dict(self._caller.call_pjsk_api(endpoint), endpoint)
+
     def accept_agreement(self, credential: str) -> object:
         return self._caller.call_pjsk_api(
             f"/user/{self._user_id}/rule-agreement",

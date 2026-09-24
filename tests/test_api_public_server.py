@@ -187,6 +187,52 @@ def test_readiness_passes_short_per_request_timeout(
     )
 
 
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_jp_en_target_user_event_ranking_is_proxied(
+    client: Any, monkeypatch: pytest.MonkeyPatch, region: str
+) -> None:
+    regional = FakeRPC(
+        {
+            "ensure_ready": {
+                "region": region,
+                "state": "READY",
+                "initialized": True,
+                "authenticated": True,
+                "ready": True,
+            },
+            "fetch_user_event_ranking": {"rankings": []},
+        }
+    )
+    monkeypatch.setattr(public_api, "client_map", {region: regional})
+
+    response = client.get(
+        f"/{region}/user/42/event/7/ranking", headers={"x-api-token": "test-token"}
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "success", "data": {"rankings": []}}
+    assert regional.calls == ["ensure_ready", "fetch_user_event_ranking"]
+
+
+@pytest.mark.parametrize("region", ["cn", "tw", "kr"])
+def test_nuverse_target_user_event_ranking_is_rejected_without_regional_rpc(
+    client: Any, monkeypatch: pytest.MonkeyPatch, region: str
+) -> None:
+    regions = {name: FakeRPC({}) for name in ("jp", "en", "tw", "kr")}
+    monkeypatch.setattr(public_api, "client_map", regions)
+
+    response = client.get(
+        f"/{region}/user/42/event/7/ranking", headers={"x-api-token": "test-token"}
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "status": "error",
+        "message": f"target user event ranking is not supported for region {region}",
+    }
+    assert all(not fake.calls for fake in regions.values())
+
+
 def test_unknown_region_keeps_client_error_semantics(client: Any) -> None:
     response = client.get("/xx/user/42/profile", headers={"x-api-token": "test-token"})
 

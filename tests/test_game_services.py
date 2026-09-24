@@ -25,6 +25,27 @@ def test_user_service_includes_account_id_in_suite_user_endpoint():
     caller.call_pjsk_api.assert_called_once_with("/suite/user/self-user")
 
 
+def test_user_service_builds_user_scoped_rank_border_endpoint():
+    caller = Mock()
+    caller.call_pjsk_api.return_value = {"borderRankings": []}
+    service = GameAPIService(caller, "self-user")
+
+    assert service.fetch_event_rank_border(42) == {"borderRankings": []}
+    caller.call_pjsk_api.assert_called_once_with(
+        "/user/self-user/event/42/ranking-border"
+    )
+
+
+def test_public_service_builds_unscoped_rank_border_endpoint():
+    caller = Mock()
+    caller.call_pjsk_api.return_value = {"borderRankings": []}
+
+    assert PublicGameAPIService(caller).fetch_event_rank_border(42) == {
+        "borderRankings": []
+    }
+    caller.call_pjsk_api.assert_called_once_with("/event/42/ranking-border")
+
+
 def test_public_service_owns_non_user_endpoints():
     caller = Mock()
     caller.call_pjsk_api.return_value = {
