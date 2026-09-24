@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -10,8 +11,27 @@ from git.repo import Repo
 from git.util import Actor
 
 from utils.git import GitOutcome, GitResult, push_current_head
+from utils.redaction import REDACTED, redact_text
 
 logger = logging.getLogger(__name__)
+
+_MAX_DETAIL_LENGTH = 500
+# Git errors echo the remote URL, which may embed credentials; drop it whole.
+_URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s'\"<>]+", re.IGNORECASE)
+_GITHUB_TOKEN_RE = re.compile(
+    r"\b(?:gh[oprsu]_|github_pat_)[A-Za-z0-9_]+|x-access-token(?:[:=][^\s@'\"]*)?",
+    re.IGNORECASE,
+)
+
+
+def _redacted_detail(detail: str) -> str:
+    """Return a single-line, credential-free, truncated push failure detail."""
+    text = _URL_RE.sub(REDACTED, detail)
+    text = _GITHUB_TOKEN_RE.sub(REDACTED, text)
+    text = " ".join(redact_text(text).split())
+    if len(text) > _MAX_DETAIL_LENGTH:
+        text = text[:_MAX_DETAIL_LENGTH] + "..."
+    return text
 
 
 def _safe_head_sha(repo: Repo) -> str | None:
@@ -70,9 +90,10 @@ def push_diff(
     result = push_current_head_fn(repo, branch="main", require_remote_branch=True)
     if result.outcome is GitOutcome.PENDING_PUSH:
         logger.warning(
-            "[%s] push pending (commit retained): reason=%s local_sha=%s",
+            "[%s] push pending (commit retained): reason=%s local_sha=%s detail=%s",
             operation,
             result.reason,
             result.local_sha,
+            _redacted_detail(result.detail),
         )
     return result
