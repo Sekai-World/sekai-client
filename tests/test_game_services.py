@@ -12,7 +12,7 @@ def test_user_service_owns_user_endpoint_construction():
     caller.call_pjsk_api.return_value = {"name": "user"}
     service = GameAPIService(caller, "self-user")
 
-    assert service.fetch_user_profile("jp", "target-user") == {"name": "user"}
+    assert service.fetch_user_profile("target-user") == {"name": "user"}
     caller.call_pjsk_api.assert_called_once_with("/user/self-user/target-user/profile")
 
 

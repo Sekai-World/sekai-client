@@ -119,6 +119,22 @@ def test_other_regions_are_unaffected_by_tw_device_environment(monkeypatch, regi
     assert "device_id" not in client.headers
 
 
+@pytest.mark.parametrize("region", ["jp", "en", "tw", "kr"])
+def test_user_profile_uses_viewer_scoped_path_in_every_region(monkeypatch, region):
+    client = APIClient(region=region)
+    client.account_info = {"userId": "self-user"}
+    calls = []
+
+    def call_pjsk_api(endpoint, method="get", body=""):
+        calls.append(endpoint)
+        return {"user": {}}
+
+    monkeypatch.setattr(client, "call_pjsk_api", call_pjsk_api)
+
+    assert client.fetch_user_profile("target-user") == {"user": {}}
+    assert calls == ["/user/self-user/target-user/profile"]
+
+
 def test_refresh_master_split_paths_only_applies_auth_metadata():
     client = Mock()
     client.region = "jp"
