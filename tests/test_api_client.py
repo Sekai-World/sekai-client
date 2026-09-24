@@ -879,15 +879,64 @@ def test_tw_kr_login_propagates_canonical_game_user_id_to_scoped_requests(region
     client.call_pjsk_api = Mock(side_effect=respond)
 
     client.login()
-    client.fetch_user_event_ranking("target-user", 42)
+    client.fetch_event_rank_border(42)
 
     endpoints = [call.args[0] for call in client.call_pjsk_api.call_args_list]
     assert client.account_info["userId"] == "98765"
     assert "/user/98765/login" in endpoints
     assert "/suite/user/98765" in endpoints
     assert "/user/98765/tutorial" in endpoints
-    assert "/user/98765/event/42/ranking?targetUserId=target-user" in endpoints
+    assert "/user/98765/event/42/ranking-border" in endpoints
     assert all("sdk-open-id" not in endpoint for endpoint in endpoints)
+
+
+@pytest.mark.parametrize(
+    ("region", "endpoint"),
+    [
+        ("jp", "/event/42/ranking-border"),
+        ("en", "/event/42/ranking-border"),
+        ("cn", "/user/self-user/event/42/ranking-border"),
+        ("tw", "/user/self-user/event/42/ranking-border"),
+        ("kr", "/user/self-user/event/42/ranking-border"),
+    ],
+)
+def test_event_rank_border_endpoint_matches_region(region, endpoint):
+    client = Mock()
+    client.region = region
+    client._user_id_for_api.return_value = "self-user"
+    client.call_pjsk_api.return_value = {"borderRankings": []}
+
+    assert APIClient.fetch_event_rank_border(client, 42) == {"borderRankings": []}
+    client.call_pjsk_api.assert_called_once_with(endpoint)
+
+
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_jp_en_target_user_event_ranking_uses_target_user_query(region):
+    client = Mock()
+    client.region = region
+    client._user_id_for_api.return_value = "self-user"
+    client.call_pjsk_api.return_value = {"rankings": []}
+
+    result = APIClient.fetch_user_event_ranking(client, "target-user", 42)
+
+    assert result == {"rankings": []}
+    client.call_pjsk_api.assert_called_once_with(
+        "/user/self-user/event/42/ranking?targetUserId=target-user"
+    )
+
+
+@pytest.mark.parametrize("region", ["cn", "tw", "kr"])
+def test_nuverse_target_user_event_ranking_is_rejected_without_request(region):
+    client = Mock()
+    client.region = region
+
+    with pytest.raises(
+        ValueError,
+        match=f"^target user event ranking is not supported for region {region}$",
+    ):
+        APIClient.fetch_user_event_ranking(client, "target-user", 42)
+
+    client.call_pjsk_api.assert_not_called()
 
 
 @pytest.mark.parametrize(
