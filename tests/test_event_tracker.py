@@ -73,6 +73,75 @@ def test_world_bloom_metadata_is_cached(monkeypatch):
     response.raise_for_status.assert_called_once_with()
 
 
+def test_finale_world_bloom_metadata_without_character_returns_sentinels(monkeypatch):
+    response = Mock()
+    response.json.return_value = [
+        {
+            "eventId": 180,
+            "chapterStartAt": 1,
+            "chapterEndAt": 50,
+            "aggregateAt": 100,
+        }
+    ]
+    monkeypatch.setattr(
+        event_tracker._external_session, "get", Mock(return_value=response)
+    )
+    monkeypatch.setattr(event_tracker, "_world_blooms_cache", None)
+
+    assert event_tracker.get_current_world_link_character(180, 75) == (-1, -1)
+
+
+def test_finale_without_character_enqueues_only_event_ranking(monkeypatch):
+    outbox = Mock()
+    monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)
+    monkeypatch.setattr(
+        event_tracker,
+        "event_data",
+        {
+            "id": 180,
+            "eventType": "world_bloom",
+            "startAt": 0,
+            "aggregateAt": 1_000_000,
+            "rankingAnnounceAt": 1_100_000,
+            "closedAt": 2_000_000,
+        },
+    )
+    request = Mock(
+        return_value={
+            "first100": {
+                "isEventAggregate": False,
+                "rankings": [],
+                "userWorldBloomChapterRankings": [],
+            },
+            "border": {
+                "borderRankings": [],
+                "userWorldBloomChapterRankingBorders": [],
+            },
+        }
+    )
+    monkeypatch.setattr(event_tracker.jsonrpc_client, "request", request)
+    response = Mock()
+    response.json.return_value = [
+        {
+            "eventId": 180,
+            "chapterStartAt": 1,
+            "chapterEndAt": 50,
+            "aggregateAt": 100,
+        }
+    ]
+    monkeypatch.setattr(
+        event_tracker._external_session, "get", Mock(return_value=response)
+    )
+    monkeypatch.setattr(event_tracker, "_world_blooms_cache", None)
+
+    event_tracker.track_event_scores(25)
+
+    assert outbox.enqueue.call_count == 1
+    assert [call.kwargs["data_type"] for call in outbox.enqueue.call_args_list] == [
+        "ranking"
+    ]
+
+
 def test_drain_reports_distinct_delivery_state(monkeypatch, caplog):
     outbox = Mock()
     outbox.drain.return_value = {"sent": 0, "failed": 0, "retained": 1}

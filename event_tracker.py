@@ -137,6 +137,10 @@ def get_current_world_link_character(event_id, curr_time):
     curr_id = -1
     aggr_id = -1
     for world_link in json_data:
+        # Finale entries can represent the event without an independent
+        # character chapter. Ignore them for both current and aggregate chapters.
+        if "gameCharacterId" not in world_link:
+            continue
         if (
             world_link["eventId"] == event_id
             and world_link["chapterStartAt"] < curr_time
