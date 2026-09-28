@@ -173,6 +173,79 @@ def test_maintenance_path_drains_pending_outbox(monkeypatch):
     drain.assert_called_once_with()
 
 
+def test_track_event_cycle_skips_refresh_and_rankings_during_maintenance(monkeypatch):
+    cached_version_info = {"appVersion": "1.0.0"}
+    request = Mock(return_value={"maintenance": True, "new_version": False})
+    refresh_version = Mock()
+    track_event_scores = Mock()
+    monkeypatch.setattr(event_tracker, "version_info", cached_version_info)
+    monkeypatch.setattr(event_tracker, "request_with_recovery", request)
+    monkeypatch.setattr(event_tracker, "refresh_version", refresh_version)
+    monkeypatch.setattr(event_tracker, "track_event_scores", track_event_scores)
+    monkeypatch.setattr(event_tracker, "is_in_maintenance", False)
+
+    event_tracker._track_event_cycle()
+
+    request.assert_called_once_with(
+        event_tracker.jsonrpc_client,
+        "check_versions",
+        [cached_version_info],
+        log_warning=event_tracker.logger.warning,
+    )
+    refresh_version.assert_not_called()
+    track_event_scores.assert_not_called()
+    assert event_tracker.is_in_maintenance is True
+
+
+def test_new_version_cycle_reuses_check_version_snapshot(monkeypatch):
+    cached_version_info = {"appVersion": "1.0.0"}
+    version_snapshot = {
+        "appVersion": "2.0.0",
+        "dataVersion": "2.0.0.1",
+        "assetVersion": "2.0.0.1",
+    }
+    check_result = {
+        "maintenance": False,
+        "new_version": True,
+        "version_info": version_snapshot,
+    }
+    rpc_methods = []
+
+    def request_with_recovery(_client, method, *_args, **_kwargs):
+        rpc_methods.append(method)
+        assert method == "check_versions"
+        return check_result
+
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "eventJson": {
+            "id": 12,
+            "eventType": "marathon",
+            "startAt": 0,
+            "aggregateAt": 1_000_000,
+            "rankingAnnounceAt": 1_100_000,
+            "closedAt": 2_000_000,
+        }
+    }
+    monkeypatch.setattr(event_tracker, "version_info", cached_version_info)
+    monkeypatch.setattr(event_tracker, "pjsk_region", "jp")
+    monkeypatch.setattr(event_tracker, "request_with_recovery", request_with_recovery)
+    monkeypatch.setattr(
+        event_tracker._external_session, "get", Mock(return_value=response)
+    )
+    monkeypatch.setattr(event_tracker, "_drain_ranking_outbox", Mock())
+    track_event_scores = Mock()
+    monkeypatch.setattr(event_tracker, "track_event_scores", track_event_scores)
+    monkeypatch.setattr(event_tracker, "is_in_maintenance", False)
+
+    event_tracker._track_event_cycle()
+
+    assert rpc_methods == ["check_versions"]
+    assert event_tracker.version_info == version_snapshot
+    track_event_scores.assert_called_once()
+
+
 def test_collection_uses_combined_snapshot_rpc(monkeypatch):
     outbox = Mock()
     monkeypatch.setattr(event_tracker, "ranking_outbox", outbox)
@@ -433,3 +506,28 @@ def test_refresh_version_accepts_mismatched_upstream_region_marker(monkeypatch):
     assert result == good_version
     assert event_tracker.event_data is not None
     assert event_tracker.event_data["id"] == 12
+
+
+def test_refresh_version_accepts_no_current_event_with_version_snapshot(monkeypatch):
+    version_snapshot = {
+        "appVersion": "1",
+        "dataVersion": "1",
+        "assetVersion": "1",
+    }
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"eventJson": None}
+    monkeypatch.setattr(
+        event_tracker._external_session, "get", Mock(return_value=response)
+    )
+    version_rpc = Mock()
+    monkeypatch.setattr(event_tracker.jsonrpc_client, "request", version_rpc)
+    monkeypatch.setattr(event_tracker, "event_data", _closed_event())
+    monkeypatch.setattr(event_tracker, "version_info", {})
+    monkeypatch.setattr(event_tracker, "pjsk_region", "jp")
+
+    result = event_tracker.refresh_version(version_snapshot)
+
+    assert result == version_snapshot
+    assert event_tracker.event_data is None
+    version_rpc.assert_not_called()

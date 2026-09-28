@@ -141,6 +141,7 @@ def test_refresh_master_split_paths_only_applies_auth_metadata():
     client.master_split_paths = ["master/path"]
     auth_data = {"sessionToken": "new-token"}
     client._authenticate.return_value = auth_data
+    client._run_session_transaction.side_effect = lambda operation: operation()
 
     result = APIClient.refresh_master_split_paths(client)
 
@@ -279,6 +280,255 @@ def test_check_versions_tolerates_missing_maintenance_status(monkeypatch):
     assert res["maintenance"] is False
 
 
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_check_versions_returns_post_update_version_info_snapshot(region):
+    client = APIClient(region=region)
+    client.headers.update(
+        {
+            "x-app-version": "1.0.0",
+            "x-data-version": "1.0.0.1",
+            "x-asset-version": "1.0.0.1",
+        }
+    )
+    client.version_info = {
+        "appVersion": "1.0.0",
+        "dataVersion": "1.0.0.1",
+        "assetVersion": "1.0.0.1",
+        "appHash": "old-hash",
+    }
+    client.fetch_system_data = Mock(
+        return_value={
+            "maintenanceStatus": "available",
+            "appVersions": [
+                {
+                    "appVersion": "2.0.0",
+                    "dataVersion": "2.0.0.1",
+                    "assetVersion": "2.0.0.1",
+                    "appVersionStatus": "available",
+                    "appHash": "new-hash",
+                }
+            ],
+        }
+    )
+
+    result = client.check_versions()
+
+    assert result["new_version"] is True
+    assert result["version_info"] == client.version_info
+    assert result["version_info"]["appVersion"] == "2.0.0"
+    assert result["version_info"] is not client.version_info
+
+
+@pytest.mark.parametrize("region", ["tw", "kr"])
+def test_check_versions_noop_returns_version_info_snapshot(region):
+    client = APIClient(region=region)
+    client.version_info = {"appVersion": "1.0.0"}
+
+    result = client.check_versions()
+
+    assert result == {
+        "maintenance": False,
+        "new_version": False,
+        "version_info": {"appVersion": "1.0.0"},
+    }
+    assert result["version_info"] is not client.version_info
+
+
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_check_versions_preserves_system_maintenance_with_input_version(region):
+    client = APIClient(region=region)
+    client.headers.update(
+        {
+            "x-app-version": "1.0.0",
+            "x-data-version": "1.0.0.1",
+            "x-asset-version": "1.0.0.1",
+        }
+    )
+    client.version_info = {
+        "appVersion": "1.0.0",
+        "dataVersion": "1.0.0.1",
+        "assetVersion": "1.0.0.1",
+        "appVersionStatus": "available",
+    }
+    client.fetch_system_data = Mock(
+        return_value={
+            "maintenanceStatus": "maintenance_in",
+            "appVersions": [
+                {
+                    "appVersion": "1.0.0",
+                    "dataVersion": "1.0.0.1",
+                    "assetVersion": "1.0.0.1",
+                    "appVersionStatus": "available",
+                }
+            ],
+        }
+    )
+
+    result = client.check_versions(
+        {
+            "appVersion": "1.0.0",
+            "dataVersion": "1.0.0.1",
+            "assetVersion": "1.0.0.1",
+        }
+    )
+
+    assert result["maintenance"] is True
+    assert result["new_version"] is False
+    client.fetch_system_data.assert_called_once_with()
+
+
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_version_candidate_discovery_is_non_mutating(region):
+    client = APIClient(region=region)
+    client.headers.update(
+        {
+            "x-app-version": "1.0",
+            "x-data-version": "data-old",
+            "x-asset-version": "asset-old",
+        }
+    )
+    client.version_info = {
+        "appVersion": "1.0",
+        "dataVersion": "data-old",
+        "assetVersion": "asset-old",
+        "appHash": "valid-hash",
+    }
+    client.master_split_paths = ["suite/master/old"]
+    client._master_split_paths_version_identity = {
+        "appVersion": "1.0",
+        "dataVersion": "data-old",
+        "assetVersion": "asset-old",
+    }
+    original_headers = deepcopy(client.headers)
+    original_version = deepcopy(client.version_info)
+    client.fetch_system_data = Mock(
+        return_value={
+            "maintenanceStatus": "available",
+            "appVersions": [
+                {
+                    "appVersion": "1.0",
+                    "dataVersion": "data-new",
+                    "assetVersion": "asset-new",
+                    "appVersionStatus": "available",
+                }
+            ],
+        }
+    )
+
+    result = client._discover_version_candidate()
+
+    assert result["new_version"] is True
+    assert result["candidate_version_info"]["dataVersion"] == "data-new"
+    assert client.headers == original_headers
+    assert client.version_info == original_version
+    assert client.master_split_paths == ["suite/master/old"]
+    client.fetch_system_data.assert_called_once_with()
+
+
+@pytest.mark.parametrize("region", ["jp", "en"])
+def test_update_snapshot_reuses_matching_auth_split_context(region):
+    client = APIClient(region=region)
+    candidate = {
+        "appVersion": "1.0",
+        "dataVersion": "data-1",
+        "assetVersion": "asset-1",
+        "appVersionStatus": "available",
+    }
+    identity = {
+        key: candidate[key] for key in ("appVersion", "dataVersion", "assetVersion")
+    }
+    client.version_info = {**candidate, "appHash": "valid-hash"}
+    client.headers["x-app-version"] = "1.0"
+    client.master_split_paths = ["suite/master/a", "suite/master/b"]
+    client._master_split_paths_version_identity = identity
+    client.fetch_system_data = Mock(
+        return_value={"appVersions": [candidate], "maintenanceStatus": "available"}
+    )
+    client.refresh_master_split_paths = Mock()
+
+    snapshot = client.update_snapshot()
+
+    assert snapshot["candidate_version_info"]["dataVersion"] == "data-1"
+    assert snapshot["master_split_paths"] == ["suite/master/a", "suite/master/b"]
+    assert snapshot["split_path_version_identity"] == identity
+    assert snapshot["split_path_context_digest"] == client._split_path_context_digest()
+    client.fetch_system_data.assert_called_once_with()
+    client.refresh_master_split_paths.assert_not_called()
+    snapshot["master_split_paths"].append("caller-mutation")
+    assert "caller-mutation" not in client.master_split_paths
+
+
+def test_update_snapshot_conditionally_refreshes_mismatched_auth_context():
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "user"}
+    candidate = {
+        "appVersion": "2.0",
+        "dataVersion": "data-2",
+        "assetVersion": "asset-2",
+        "appVersionStatus": "available",
+    }
+    identity = {
+        key: candidate[key] for key in ("appVersion", "dataVersion", "assetVersion")
+    }
+    client.version_info = {
+        "appVersion": "1.0",
+        "dataVersion": "data-1",
+        "assetVersion": "asset-1",
+        "appHash": "old-hash",
+    }
+    client.master_split_paths = ["suite/master/old"]
+    client._master_split_paths_version_identity = {
+        "appVersion": "1.0",
+        "dataVersion": "data-1",
+        "assetVersion": "asset-1",
+    }
+    client.fetch_system_data = Mock(
+        return_value={"appVersions": [candidate], "maintenanceStatus": "available"}
+    )
+
+    def refresh_context():
+        client.master_split_paths = ["suite/master/new"]
+        client._master_split_paths_version_identity = identity
+        client.version_info = {**candidate, "appHash": "new-hash"}
+
+    client.refresh_master_split_paths = Mock(side_effect=refresh_context)
+
+    snapshot = client.update_snapshot()
+
+    assert snapshot["candidate_version_info"]["appHash"] == "new-hash"
+    assert snapshot["master_split_paths"] == ["suite/master/new"]
+    assert snapshot["split_path_version_identity"] == identity
+    client.fetch_system_data.assert_called_once_with()
+    client.refresh_master_split_paths.assert_called_once_with()
+
+
+def test_update_snapshot_fails_closed_when_auth_context_stays_mismatched():
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "user"}
+    candidate = {
+        "appVersion": "2.0",
+        "dataVersion": "data-2",
+        "assetVersion": "asset-2",
+        "appVersionStatus": "available",
+    }
+    client.master_split_paths = ["suite/master/old"]
+    client._master_split_paths_version_identity = {
+        "appVersion": "1.0",
+        "dataVersion": "data-1",
+        "assetVersion": "asset-1",
+    }
+    client.fetch_system_data = Mock(
+        return_value={"appVersions": [candidate], "maintenanceStatus": "available"}
+    )
+    client.refresh_master_split_paths = Mock()
+
+    with pytest.raises(RuntimeError, match="do not match the discovered version"):
+        client.update_snapshot()
+
+    client.fetch_system_data.assert_called_once_with()
+    client.refresh_master_split_paths.assert_called_once_with()
+
+
 def test_jp_403_refreshes_cookie_and_retries_without_xml_content_type(monkeypatch):
     client = APIClient(region="jp")
     rejected = Mock(spec=requests.Response)
@@ -378,7 +628,7 @@ def test_call_pjsk_api_http_error_does_not_expose_response_data():
     assert error == "PJSK API request failed (HTTP 500)"
     assert "upstream-secret-response" not in error
     assert "Invalid PKCS#7 padding" not in error
-    decrypt_response.assert_not_called()
+    decrypt_response.assert_called_once_with(response)
 
 
 def test_redirect_does_not_persist_session_token_and_is_rejected(monkeypatch):
@@ -431,8 +681,86 @@ def test_post_426_invokes_handler_but_does_not_replay_request(monkeypatch):
         client.call_pjsk_api("/user", "post", {"action": "do"})
 
     handler.assert_called_once_with(response, None, endpoint="/user")
-    decrypt_response.assert_not_called()
+    decrypt_response.assert_called_once_with(response)
     assert request.call_count == 1
+
+
+def test_bypass_error_recovery_does_not_invoke_handler_or_replay(monkeypatch):
+    client = APIClient(region="jp")
+    response = Mock(status_code=426, headers={}, content=b"not-encrypted")
+    response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    request = Mock(return_value=response)
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(client, "_encrypt_request_body", lambda method, body: b"data")
+    wait = Mock()
+    monkeypatch.setattr(client, "_wait_before_retry", wait)
+    handler = Mock(return_value=True)
+    client._handle_http_error_retry = handler
+
+    with pytest.raises(RuntimeError, match="HTTP 426"):
+        client.call_pjsk_api(
+            "/system",
+            "get",
+            retry_policy=RetryPolicy.IDEMPOTENT,
+            bypass_error_recovery=True,
+        )
+
+    handler.assert_not_called()
+    request.assert_called_once()
+    wait.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_payload"),
+    [
+        (406, {"errorCode": "rule_not_agreement"}),
+        (403, {"errorCode": "session_error"}),
+    ],
+)
+def test_call_pjsk_api_decodes_recovery_error_payload_and_replays(
+    status_code, error_payload
+):
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "user"}
+    rejected = Mock(status_code=status_code, headers={}, content=b"encrypted-error")
+    rejected.raise_for_status.side_effect = requests.HTTPError(response=rejected)
+    succeeded = Mock(status_code=200, headers={}, content=b"encrypted-success")
+    succeeded.raise_for_status.return_value = None
+    events = []
+    responses = iter([rejected, succeeded])
+
+    def send_request(*args):
+        events.append("send")
+        return next(responses)
+
+    original_handler = client._handle_http_error_retry
+
+    def recover(response, response_data, *, endpoint=None):
+        events.append("recovery")
+        return original_handler(response, response_data, endpoint=endpoint)
+
+    recovery = Mock(side_effect=recover)
+    client._handle_http_error_retry = recovery
+    client._send_api_request = Mock(side_effect=send_request)
+    client._encrypt_request_body = Mock(return_value=b"encrypted-request")
+    client._decrypt_response_data = Mock(side_effect=[error_payload, {"ok": True}])
+    client._wait_before_retry = Mock(side_effect=lambda *args: events.append("wait"))
+    client.accept_agreement = Mock()
+    client.login = Mock()
+
+    result = client.call_pjsk_api(
+        "/user/profile", "get", retry_policy=RetryPolicy.IDEMPOTENT
+    )
+
+    assert result == {"ok": True}
+    recovery.assert_called_once_with(rejected, error_payload, endpoint="/user/profile")
+    assert events == ["send", "recovery", "wait", "send"]
+    if status_code == 406:
+        client.accept_agreement.assert_called_once_with()
+    else:
+        client.accept_agreement.assert_not_called()
+    client.login.assert_called_once_with()
+    assert client._send_api_request.call_count == 2
 
 
 def test_auth_endpoint_426_skips_recursive_login(monkeypatch):
@@ -741,6 +1069,62 @@ def test_post_network_failure_is_not_retried(monkeypatch):
     assert request.call_count == 1
 
 
+@pytest.mark.parametrize(
+    ("method", "policy", "expected_attempts"),
+    [
+        ("get", None, 2),
+        ("post", None, 1),
+        ("post", RetryPolicy.IDEMPOTENT, 2),
+        ("get", RetryPolicy.NEVER, 1),
+    ],
+)
+def test_retry_policy_defaults_and_overrides_preserve_retry_counts(
+    monkeypatch, method, policy, expected_attempts
+):
+    client = APIClient(region="jp")
+    monkeypatch.setattr(api_client.Config, "MAX_API_RETRIES", 1)
+    monkeypatch.setattr(api_client, "sleep", Mock())
+    failed = Mock(status_code=500, headers={}, content=b"")
+    failed.raise_for_status.side_effect = requests.HTTPError(response=failed)
+    succeeded = Mock(status_code=200, headers={}, content=b"")
+    succeeded.raise_for_status.return_value = None
+    send_request = Mock(side_effect=[failed, succeeded])
+    client._send_api_request = send_request
+    client._encrypt_request_body = Mock(return_value=None)
+    client._decrypt_response_data = Mock(return_value=None)
+
+    if expected_attempts == 2:
+        assert client.call_pjsk_api("/retry-check", method, retry_policy=policy) is None
+    else:
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            client.call_pjsk_api("/retry-check", method, retry_policy=policy)
+
+    assert send_request.call_count == expected_attempts
+
+
+def test_idempotent_post_encrypts_once_and_reuses_request_id(monkeypatch):
+    client = APIClient(region="jp")
+    monkeypatch.setattr(api_client.Config, "MAX_API_RETRIES", 1)
+    monkeypatch.setattr(api_client, "sleep", Mock())
+    monkeypatch.setattr(api_client.random, "uniform", lambda low, high: 0)
+    response = Mock(status_code=200, headers={}, content=b"")
+    response.raise_for_status.return_value = None
+    client._encrypt_request_body = Mock(return_value=b"encrypted-body")
+    client._decrypt_response_data = Mock(return_value={"ok": True})
+    client._send_api_request = Mock(
+        side_effect=[requests.ConnectionError("temporary"), response]
+    )
+
+    assert client.call_pjsk_api(
+        "/retry-check", "post", {"once": True}, RetryPolicy.IDEMPOTENT
+    ) == {"ok": True}
+
+    client._encrypt_request_body.assert_called_once_with("post", {"once": True})
+    request_ids = [call.args[3] for call in client._send_api_request.call_args_list]
+    assert len(request_ids) == 2
+    assert request_ids[0] == request_ids[1]
+
+
 def test_get_transient_failure_retries_with_same_request_id(monkeypatch):
     client = APIClient(region="jp")
     response = Mock(status_code=200, headers={}, content=b"")
@@ -771,6 +1155,10 @@ def test_get_429_respects_retry_after(monkeypatch):
     success.raise_for_status.return_value = None
     request = Mock(side_effect=[limited, success])
     sleep_mock = Mock()
+    version_recovery = Mock()
+    login = Mock()
+    client._update_version_after_426 = version_recovery
+    client.login = login
     monkeypatch.setattr(requests, "request", request)
     monkeypatch.setattr(api_client, "sleep", sleep_mock)
 
@@ -778,6 +1166,73 @@ def test_get_429_respects_retry_after(monkeypatch):
 
     sleep_mock.assert_called_once_with(2.5)
     assert client.rate_limited is False
+    version_recovery.assert_not_called()
+    login.assert_not_called()
+
+
+def test_system_426_recovery_refreshes_split_context_only_once(monkeypatch):
+    """A /system 426 recovers normally, then snapshot uses that auth context."""
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "user"}
+    client.headers["x-app-version"] = "1.0"
+    old_identity = {
+        "appVersion": "0.9",
+        "dataVersion": "data-old",
+        "assetVersion": "asset-old",
+    }
+    client.version_info = {
+        "appVersion": "0.9",
+        "dataVersion": "data-old",
+        "assetVersion": "asset-old",
+        "appHash": "old-hash",
+    }
+    client.master_split_paths = ["suite/master/old"]
+    client._master_split_paths_version_identity = old_identity
+    new_identity = {
+        "appVersion": "1.0",
+        "dataVersion": "data-new",
+        "assetVersion": "asset-new",
+    }
+    system_data = {
+        "maintenanceStatus": "available",
+        "appVersions": [
+            {
+                **new_identity,
+                "appVersionStatus": "available",
+            }
+        ],
+    }
+    rejected = Mock(status_code=426, headers={}, content=b"")
+    rejected.raise_for_status.side_effect = requests.HTTPError(response=rejected)
+    accepted = Mock(status_code=200, headers={}, content=b"")
+    accepted.raise_for_status.return_value = None
+    client._send_api_request = Mock(side_effect=[rejected, accepted])
+    client._encrypt_request_body = Mock(return_value=b"request")
+    client._decrypt_response_data = Mock(side_effect=[None, system_data])
+    client._wait_before_retry = Mock()
+    client._refresh_suite_version_headers = Mock()
+    client.check_versions = Mock()
+
+    def recover_login():
+        client.master_split_paths = ["suite/master/new"]
+        client._master_split_paths_version_identity = new_identity
+        client.version_info = {**new_identity, "appHash": "new-hash"}
+
+    client.login = Mock(side_effect=recover_login)
+    client.refresh_master_split_paths = Mock()
+
+    snapshot = client.update_snapshot()
+
+    candidate_identity = {
+        key: snapshot["candidate_version_info"][key] for key in new_identity
+    }
+    assert candidate_identity == snapshot["split_path_version_identity"]
+    assert snapshot["master_split_paths"] == ["suite/master/new"]
+    assert snapshot["split_path_version_identity"] == new_identity
+    assert client._send_api_request.call_count == 2
+    client.check_versions.assert_called_once_with()
+    client.login.assert_called_once_with()
+    client.refresh_master_split_paths.assert_not_called()
 
 
 def test_retry_after_http_date_is_supported(monkeypatch):
@@ -1142,6 +1597,148 @@ def test_fetch_master_split_allows_and_calls():
     client.call_pjsk_api = Mock(return_value={"k": "v"})
     result = client.fetch_master_split("suite/master/valid")
     assert result == {"k": "v"}
+    client.call_pjsk_api.assert_called_once_with("/suite/master/valid")
+
+
+def test_fetch_master_split_reauthenticates_once_for_stale_context():
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "user"}
+    old_identity = {
+        "appVersion": "1.0",
+        "dataVersion": "data-1",
+        "assetVersion": "asset-1",
+    }
+    client.master_split_paths = ["suite/master/valid"]
+    client._master_split_paths_version_identity = old_identity
+    expected_digest = client._split_path_context_digest()
+    client.master_split_paths = ["suite/master/stale"]
+    client._master_split_paths_version_identity = {
+        "appVersion": "2.0",
+        "dataVersion": "data-2",
+        "assetVersion": "asset-2",
+    }
+    client.call_pjsk_api = Mock(return_value={"ok": True})
+
+    def restore_expected_context():
+        client.master_split_paths = ["suite/master/valid"]
+        client._master_split_paths_version_identity = old_identity
+
+    client.refresh_master_split_paths = Mock(side_effect=restore_expected_context)
+
+    result = client.fetch_master_split("suite/master/valid", expected_digest)
+
+    assert result == {"ok": True}
+    client.refresh_master_split_paths.assert_called_once_with()
+    client.call_pjsk_api.assert_called_once_with("/suite/master/valid")
+
+
+def test_fetch_master_split_fails_after_one_stale_context_refresh():
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "user"}
+    client.master_split_paths = ["suite/master/expected"]
+    client._master_split_paths_version_identity = {
+        "appVersion": "1.0",
+        "dataVersion": "data-1",
+        "assetVersion": "asset-1",
+    }
+    expected_digest = client._split_path_context_digest()
+    client.master_split_paths = ["suite/master/current"]
+    client._master_split_paths_version_identity = {
+        "appVersion": "2.0",
+        "dataVersion": "data-2",
+        "assetVersion": "asset-2",
+    }
+    client.refresh_master_split_paths = Mock()
+    client.call_pjsk_api = Mock()
+
+    with pytest.raises(RuntimeError, match="remains stale after auth"):
+        client.fetch_master_split("suite/master/expected", expected_digest)
+
+    client.refresh_master_split_paths.assert_called_once_with()
+    client.call_pjsk_api.assert_not_called()
+
+
+def test_fetch_master_split_fails_closed_after_version_headers_change():
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "user"}
+    old_version_info = {
+        "appVersion": "1.0",
+        "dataVersion": "data-1",
+        "assetVersion": "asset-1",
+        "appHash": "hash-1",
+    }
+    client.version_info = old_version_info.copy()
+    client.headers.update(
+        {
+            "x-app-version": old_version_info["appVersion"],
+            "x-data-version": old_version_info["dataVersion"],
+            "x-asset-version": old_version_info["assetVersion"],
+            "x-app-hash": old_version_info["appHash"],
+        }
+    )
+    client.master_split_paths = ["suite/master/valid"]
+    client._master_split_paths_version_identity = {
+        key: old_version_info[key]
+        for key in ("appVersion", "dataVersion", "assetVersion")
+    }
+    old_digest = client._split_path_context_digest()
+    assert old_digest is not None
+    client.fetch_system_data = Mock(
+        return_value={
+            "maintenanceStatus": "available",
+            "appVersions": [
+                {
+                    "appVersion": "2.0",
+                    "dataVersion": "data-2",
+                    "assetVersion": "asset-2",
+                    "appVersionStatus": "available",
+                    "appHash": "hash-2",
+                }
+            ],
+        }
+    )
+
+    result = client.check_versions()
+
+    assert result["new_version"] is True
+    assert client.headers["x-app-version"] == "2.0"
+    assert client.headers["x-data-version"] == "data-2"
+    assert client.headers["x-asset-version"] == "asset-2"
+    assert client.headers["x-app-hash"] == "hash-2"
+    client.refresh_master_split_paths = Mock()
+    client.call_pjsk_api = Mock()
+
+    with pytest.raises(RuntimeError, match="remains stale after auth"):
+        client.fetch_master_split("suite/master/valid", old_digest)
+
+    client.refresh_master_split_paths.assert_called_once_with()
+    client.call_pjsk_api.assert_not_called()
+
+
+def test_fetch_master_split_rejects_context_changed_during_fetch():
+    client = APIClient(region="jp")
+    client.master_split_paths = ["suite/master/valid"]
+    client._master_split_paths_version_identity = {
+        "appVersion": "1.0",
+        "dataVersion": "data-1",
+        "assetVersion": "asset-1",
+    }
+    expected_digest = client._split_path_context_digest()
+
+    def change_context(_endpoint):
+        client.master_split_paths = ["suite/master/new"]
+        client._master_split_paths_version_identity = {
+            "appVersion": "2.0",
+            "dataVersion": "data-2",
+            "assetVersion": "asset-2",
+        }
+        return {"ok": True}
+
+    client.call_pjsk_api = Mock(side_effect=change_context)
+
+    with pytest.raises(RuntimeError, match="changed while fetching"):
+        client.fetch_master_split("suite/master/valid", expected_digest)
+
     client.call_pjsk_api.assert_called_once_with("/suite/master/valid")
 
 
@@ -1511,3 +2108,167 @@ def test_tw_kr_426_falls_back_to_qooapp_without_feed(monkeypatch):
 
     assert client.headers["x-app-version"] == "6.4.2"
     assert client.headers["x-app-hash"] == configured_hash
+
+
+def _valid_jp_auth_response(**overrides):
+    response = {
+        "sessionToken": "new-session-token",
+        "appVersion": "new-app-version",
+        "dataVersion": "new-data-version",
+        "assetVersion": "new-asset-version",
+        "multiPlayVersion": "new-multiplay-version",
+        "suiteMasterSplitPath": ["new/master/path"],
+    }
+    response.update(overrides)
+    return response
+
+
+def _seed_jp_client_session(client):
+    client.account_info = {
+        "userId": "jp-user",
+        "credential": "credential",
+        "signature": "signature",
+    }
+    client.headers.update(
+        {
+            "x-session-token": "previous-session-token",
+            "x-app-version": "previous-app-version",
+            "x-data-version": "previous-data-version",
+            "x-asset-version": "previous-asset-version",
+            "x-app-hash": "previous-app-hash",
+        }
+    )
+    client.version_info = {
+        "appVersion": "previous-app-version",
+        "dataVersion": "previous-data-version",
+        "assetVersion": "previous-asset-version",
+        "appHash": "previous-app-hash",
+    }
+    client.master_split_paths = ["previous/master/path"]
+    client._master_split_paths_version_identity = {
+        "appVersion": "previous-app-version",
+        "dataVersion": "previous-data-version",
+        "assetVersion": "previous-asset-version",
+    }
+    client.user_info = {"name": "previous-user"}
+
+
+def test_login_failure_after_auth_metadata_restores_previous_session(monkeypatch):
+    client = APIClient(region="jp")
+    _seed_jp_client_session(client)
+    client._pending_game_user_id = 456
+    monkeypatch.setattr(client, "_refresh_suite_version_headers", lambda: None)
+    client.call_pjsk_api = Mock(return_value=_valid_jp_auth_response())
+    client.fetch_suite_user = Mock(side_effect=RuntimeError("profile fetch failed"))
+    previous_state = client._capture_session_state()
+    headers = client.headers
+
+    with pytest.raises(RuntimeError, match="profile fetch failed"):
+        client.login()
+
+    assert client._capture_session_state() == previous_state
+    assert client.headers is headers
+    assert client.protocol.headers is headers
+    assert client._authenticating is False
+
+
+@pytest.mark.parametrize("region", ["tw", "kr"])
+def test_tw_kr_second_step_validation_failure_restores_session(region, monkeypatch):
+    client = APIClient(region=region)
+    client.account_info = dict(_TW_KR_ACCOUNT_INFO)
+    client.headers["x-session-token"] = "previous-session-token"
+    client.headers["x-install-id"] = "previous-install-id"
+    client.version_info = {"appVersion": "previous-app-version"}
+    client.master_split_paths = ["previous/master/path"]
+    client.user_info = {"name": "previous-user"}
+    client._pending_game_user_id = 654
+    monkeypatch.setattr(api_client, "get_app_identity", lambda requested: None)
+    previous_state = client._capture_session_state()
+    headers = client.headers
+
+    def respond(endpoint, method="get", body=""):
+        if endpoint == "/user/auth":
+            return {"userId": 98765, "sessionToken": "provisional-session-token"}
+        assert endpoint == "/user/98765/login"
+        assert client.headers["x-session-token"] == "provisional-session-token"
+        return _valid_tw_login_data(appVersionStatus="")
+
+    client.call_pjsk_api = Mock(side_effect=respond)
+
+    with pytest.raises(ValueError, match=f"Invalid {region.upper()} login response"):
+        client.login()
+
+    assert client._capture_session_state() == previous_state
+    assert client.headers is headers
+    assert client.protocol.headers is headers
+
+
+def test_post_login_failure_restores_pre_login_session(monkeypatch):
+    client = APIClient(region="jp")
+    _seed_jp_client_session(client)
+    monkeypatch.setattr(client, "_refresh_suite_version_headers", lambda: None)
+    client.call_pjsk_api = Mock(return_value=_valid_jp_auth_response())
+    client.fetch_suite_user = Mock(
+        return_value={"userTutorial": {"tutorialStatus": "end"}}
+    )
+    client._post_login_refresh = Mock(
+        side_effect=RuntimeError("post-login refresh failed")
+    )
+    previous_state = client._capture_session_state()
+    headers = client.headers
+
+    with pytest.raises(RuntimeError, match="post-login refresh failed"):
+        client.login()
+
+    assert client._capture_session_state() == previous_state
+    assert client.headers is headers
+    assert client.protocol.headers is headers
+
+
+def test_successful_login_commits_authentication_state(monkeypatch):
+    client = APIClient(region="jp")
+    _seed_jp_client_session(client)
+    monkeypatch.setattr(client, "_refresh_suite_version_headers", lambda: None)
+    client.call_pjsk_api = Mock(return_value=_valid_jp_auth_response())
+    user_info = {"userTutorial": {"tutorialStatus": "end"}}
+    client.fetch_suite_user = Mock(return_value=user_info)
+    client._post_login_refresh = Mock()
+
+    result = client.login()
+
+    assert result is user_info
+    assert client.headers["x-session-token"] == "new-session-token"
+    assert client.headers["x-app-version"] == "new-app-version"
+    assert client.version_info["appVersion"] == "new-app-version"
+    assert client.version_info["dataVersion"] == "new-data-version"
+    assert client.master_split_paths == ["new/master/path"]
+    assert client._master_split_paths_version_identity == {
+        "appVersion": "new-app-version",
+        "dataVersion": "new-data-version",
+        "assetVersion": "new-asset-version",
+    }
+    assert client.user_info is user_info
+    assert client._pending_game_user_id is None
+
+
+def test_426_recovery_failure_restores_pre_recovery_session():
+    client = APIClient(region="jp")
+    _seed_jp_client_session(client)
+    client.account_info = {**client.account_info, "userId": "jp-user"}
+    previous_state = client._capture_session_state()
+
+    def fail_recovery(*, endpoint=None):
+        client.headers["x-session-token"] = "recovery-token"
+        client.version_info["appVersion"] = "recovery-app-version"
+        client.master_split_paths = ["recovery/master/path"]
+        raise RuntimeError("version recovery failed")
+
+    client._update_version_after_426 = fail_recovery
+
+    with pytest.raises(RuntimeError, match="version recovery failed"):
+        client._handle_http_error_retry(
+            Mock(status_code=426), None, endpoint="/user/profile"
+        )
+
+    assert client._capture_session_state() == previous_state
+    assert client._recovering_426 is False

@@ -33,6 +33,13 @@ class QueuedJob:
     enqueued_at: float
 
 
+@dataclass(frozen=True)
+class WorkerFailure:
+    """Transport a non-Exception BaseException back to the waiting caller."""
+
+    error: BaseException
+
+
 type QueueEntry = QueuedJob | tuple[Callable[[], Any], queue.Queue[Any]]
 
 
@@ -129,21 +136,24 @@ def worker() -> None:
             response_queue = entry.response_queue
         else:
             job, response_queue = entry
-        logger.debug("Working on %s", job)
         try:
-            res: Any = job()
-        except Exception as e:
-            res = e
-        logger.debug("Finished %s", job)
-        try:
-            response_queue.put(res, timeout=1)
-        except queue.Full:
-            logger.warning("Dropping stale worker result because caller timed out")
+            try:
+                logger.debug("Working on %s", job)
+                res: Any = job()
+            except Exception as error:
+                res = error
+            except BaseException as error:
+                res = WorkerFailure(error)
+            try:
+                response_queue.put(res, timeout=1)
+            except queue.Full:
+                logger.warning("Dropping stale worker result because caller timed out")
         finally:
             if isinstance(entry, QueuedJob):
                 with _metrics_lock:
                     _metrics.completed_total += 1
             job_queue.task_done()
+        logger.debug("Finished %s", job)
 
 
 def start_worker() -> None:

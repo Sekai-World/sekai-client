@@ -49,7 +49,12 @@ from accounts import (
     credential_to_account_info,
 )
 from accounts.lease_journal import LeaseJournal, LeaseOperation
-from api_client import APIClient, AuthTransition, AuthTransitionKind
+from api_client import (
+    APIClient,
+    AuthTransition,
+    AuthTransitionKind,
+    _ClientSessionState,
+)
 from config import Config
 from logging_config import enable_log_redaction
 from utils.deadline import (
@@ -63,6 +68,7 @@ from utils.jsonrpc_client import INTERNAL_RPC_TIMEOUT_HEADER, INTERNAL_RPC_TOKEN
 from utils.redaction import redact_structure, redact_text
 from utils.task_queue import (
     QueuedJob,
+    WorkerFailure,
     job_queue,
     metrics_snapshot,
     record_accepted,
@@ -315,7 +321,9 @@ def get_answer(response_queue: queue.Queue[Any]) -> Any | JSONRPCInternalError:
         record_timed_out()
         return JSONRPCInternalError(data="Request deadline exceeded")
 
-    if isinstance(res, RuntimeError):
+    if isinstance(res, WorkerFailure):
+        raise res.error
+    elif isinstance(res, RuntimeError):
         err_data = str(res)
         if len(res.args) > 1:
             err_data = str(res.args[1])
@@ -441,7 +449,7 @@ def _effective_user_info() -> dict[str, Any] | None:
         return _lifecycle.user
 
 
-def _client_job(
+def _client_job(  # noqa: C901 - lifecycle rollback decision table
     job: Callable[[], Any],
     operation: _ClientOperation = _ClientOperation.NORMAL,
 ) -> Any:
@@ -459,7 +467,7 @@ def _client_job(
             if deadline is not None:
                 deadline.require_remaining()
             return result
-        except Exception as error:
+        except BaseException as error:
             with _lifecycle.lock:
                 abandoned = isinstance(error, DeadlineExceeded)
                 # A queued job may only restore the client it observed.  In
@@ -467,14 +475,38 @@ def _client_job(
                 # nested initialization or authentication transition.
                 if abandoned:
                     _restore_runtime_locked(previous)
+                elif not isinstance(error, Exception) and client is None:
+                    # Initialization may be interrupted before a client is
+                    # committed. Restore the observed runtime, then leave a
+                    # terminal lifecycle state rather than INITIALIZING.
+                    _restore_runtime_locked(previous)
+                    if operation in (
+                        _ClientOperation.INITIALIZATION,
+                        _ClientOperation.AUTHENTICATION,
+                        _ClientOperation.LIFECYCLE,
+                    ):
+                        state = (
+                            LifecycleState.FAILED
+                            if operation is _ClientOperation.INITIALIZATION
+                            else LifecycleState.DEGRADED
+                        )
+                        _lifecycle.record_failure(error, state)
+                    _publish_snapshot_locked()
                 elif _lifecycle.client is client and client is not None:
                     auth_changed = _lifecycle.auth_generation != auth_generation
                     if not auth_changed:
                         client_state = previous["client_state"]
-                        assert isinstance(client_state, dict)
+                        assert client_state is not None
                         _restore_client_state(client, client_state)
                         _lifecycle.user = deepcopy(previous["user"])
                         _lifecycle.authenticated = bool(previous["authenticated"])
+                        if (
+                            not isinstance(error, Exception)
+                            and _lifecycle.active_auth_transaction_id is not None
+                        ):
+                            _lifecycle.active_auth_transaction_id = None
+                            _lifecycle.record_failure(error, LifecycleState.DEGRADED)
+                            _lifecycle.hidden_auth_failure_pending = True
                         hidden_failure = _consume_hidden_auth_failure()
                         if (
                             operation
@@ -551,14 +583,9 @@ def _attach_lifecycle_callback(client: APIClient) -> None:
     client.lifecycle_callback = _api_lifecycle_transition
 
 
-def _snapshot_client_state(client: APIClient) -> dict[str, Any]:
-    return {
-        "headers": deepcopy(client.headers),
-        "account_info": deepcopy(client.account_info),
-        "version_info": deepcopy(client.version_info),
-        "master_split_paths": deepcopy(client.master_split_paths),
-        "user_info": deepcopy(client.user_info),
-    }
+def _snapshot_client_state(client: APIClient) -> _ClientSessionState:
+    """Capture the same typed session state used by APIClient transactions."""
+    return APIClient._capture_session_state(client)
 
 
 def _snapshot_runtime_locked() -> dict[str, Any]:
@@ -587,7 +614,7 @@ def _restore_runtime_locked(state: dict[str, Any]) -> None:
     client = state["client"]
     _lifecycle.client = client
     client_state = state["client_state"]
-    if client is not None and isinstance(client_state, dict):
+    if client is not None and client_state is not None:
         _restore_client_state(client, client_state)
     _lifecycle.authenticated = bool(state["authenticated"])
     _lifecycle.user = deepcopy(state["user"])
@@ -604,20 +631,9 @@ def _restore_runtime_locked(state: dict[str, Any]) -> None:
     _publish_snapshot_locked()
 
 
-def _restore_client_state(client: APIClient, state: dict[str, Any]) -> None:
-    """Roll back client session state captured by ``_snapshot_client_state``.
-
-    Headers must be mutated in place: ``GameProtocolTransport`` shares the
-    dict object with ``APIClient``, so rebinding would detach the transport
-    from future session tokens and version headers, which then never reach
-    the wire.
-    """
-    client.headers.clear()
-    client.headers.update(state["headers"])
-    client.account_info = state["account_info"]
-    client.version_info = state["version_info"]
-    client.master_split_paths = state["master_split_paths"]
-    client.user_info = state["user_info"]
+def _restore_client_state(client: APIClient, state: _ClientSessionState) -> None:
+    """Restore the typed session state without duplicating APIClient logic."""
+    APIClient._restore_session_state(client, state)
 
 
 def get_account_info() -> dict[str, Any]:  # noqa: C901 - lease lifecycle branches
@@ -764,7 +780,7 @@ def _best_effort_release(
 ) -> None:
     try:
         _release_account_lease(provider, lease, operation)
-    except Exception:
+    except BaseException:
         logger.warning("Failed to release account lease")
 
 
@@ -777,19 +793,19 @@ def _best_effort_report_authentication_failure(
         provider.report_invalid(
             lease.lease_id, InvalidAccountReason.AUTHENTICATION_FAILED
         )
-    except Exception:
+    except BaseException:
         logger.warning("Failed to report invalid account lease")
         return False
     journal = _remote_lease_journal(provider)
     if journal is not None and operation is not None:
         try:
             journal.clear(operation)
-        except Exception:
+        except BaseException:
             logger.warning("Failed to clear invalid account lease journal")
     return True
 
 
-def _is_explicit_authentication_rejection(error: Exception) -> bool:
+def _is_explicit_authentication_rejection(error: BaseException) -> bool:
     message = str(error).lower()
     return "http 401" in message or "http 403" in message
 
@@ -901,7 +917,7 @@ def login_account(forced: bool = False) -> dict[str, Any]:
             _lifecycle.hidden_auth_failure_pending = False
             _publish_snapshot_locked()
         return candidate_user
-    except Exception as error:
+    except BaseException as error:
         failed_lease = _active_account_lease
         failed_lease_operation = _active_lease_operation
         invalid_reported = False
@@ -1110,6 +1126,19 @@ def check_versions(input_ver_info: dict[str, Any] | None = None) -> Any:
 
 
 @api.dispatcher.add_method
+def update_snapshot() -> dict[str, Any]:
+    """Capture candidate version data and its matching split context atomically."""
+
+    def capture() -> dict[str, Any]:
+        client = require_api_client()
+        if not _is_logged_in():
+            login_account()
+        return deepcopy(client.update_snapshot())
+
+    return dict(_client_job(capture))
+
+
+@api.dispatcher.add_method
 def version_info() -> dict[str, Any]:
     """Get current game version information."""
     return dict(_read_job(lambda: deepcopy(require_api_client().version_info)))
@@ -1289,7 +1318,10 @@ def call_pjsk_api(endpoint: str, method: str = "get", body: str | dict = "") -> 
 
 
 @api.dispatcher.add_method
-def fetch_master_split(split_path: str) -> Any:
+def fetch_master_split(
+    split_path: str,
+    expected_split_path_digest: str | None = None,
+) -> Any:
     """
     Fetch a single master-data split by path.
 
@@ -1311,6 +1343,8 @@ def fetch_master_split(split_path: str) -> Any:
 
     def fetch() -> Any:
         client = require_api_client()
+        if expected_split_path_digest is not None:
+            return client.fetch_master_split(split_path, expected_split_path_digest)
         if split_path not in client.master_split_paths:
             raise RuntimeError(
                 f"Master split path {split_path!r} is not in the allowlist"

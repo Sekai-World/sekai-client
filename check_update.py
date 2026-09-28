@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import traceback
+from copy import deepcopy
 from datetime import datetime
 from os import getenv, path
 from time import monotonic as _monotonic
@@ -139,6 +140,7 @@ _ACTIVE_TXN_ID: str | None = None
 # candidate for commit construction without indexing the published global
 # ``version_info`` (which stays ``None`` on an i18n-only first run).
 _CYCLE_CANDIDATE: dict[str, Any] | None = None
+_CYCLE_SNAPSHOT: dict[str, Any] | None = None
 _DAILY_DUE_JOURNAL_KEY = "_sekai_daily_due_date"
 
 _PROCESS_LOCK = ProcessCycleLock()
@@ -534,23 +536,41 @@ def _require_dict_response(value: Any, operation: str) -> dict[str, Any]:
     return value
 
 
-def get_splitted_master_data() -> dict[str, Any]:
+def get_splitted_master_data(
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     global pjsk_region
     global version_info
 
-    master_split_paths: list[str] = request_with_recovery(
-        jsonrpc_client, "master_split_paths", log_warning=logger.warning
-    )
+    expected_split_path_digest: str | None = None
+    if snapshot is None:
+        master_split_paths: list[str] = request_with_recovery(
+            jsonrpc_client, "master_split_paths", log_warning=logger.warning
+        )
+    else:
+        paths = snapshot.get("master_split_paths")
+        if not isinstance(paths, list) or not all(
+            isinstance(split_path, str) for split_path in paths
+        ):
+            raise RuntimeError("Update snapshot has invalid master split paths")
+        master_split_paths = list(paths)
+        digest = snapshot.get("split_path_context_digest")
+        if not isinstance(digest, str) or not digest:
+            raise RuntimeError("Update snapshot has no split-path context digest")
+        expected_split_path_digest = digest
 
     # download every split via the scoped, allowlisted RPC
     master_data_raw = []
     for split_path in master_split_paths:
         logger.debug("[get_splitted_master_data] fetch split %s", split_path)
+        params = [split_path]
+        if expected_split_path_digest is not None:
+            params.append(expected_split_path_digest)
         master_data_raw.append(
             request_with_recovery(
                 jsonrpc_client,
                 "fetch_master_split",
-                [split_path],
+                params,
                 log_warning=logger.warning,
             )
         )
@@ -650,32 +670,6 @@ def check_versions_simple() -> dict[str, Any]:
     }
 
 
-def _refresh_version_info_from_source() -> dict[str, Any]:
-    logger.info("[refresh_version] fetching version info from %s server", pjsk_region)
-    if check_update_simple_mode:
-        return fetch_simple_version_info()
-
-    if not request_with_recovery(
-        jsonrpc_client, "is_login", log_warning=logger.warning
-    ):
-        request_with_recovery(jsonrpc_client, "login", log_warning=logger.warning)
-    elif pjsk_region in ("jp", "en"):
-        logger.debug(
-            "[refresh_version] refresh split master data list without "
-            "running full login workflow"
-        )
-        request_with_recovery(
-            jsonrpc_client, "refresh_master_split_paths", log_warning=logger.warning
-        )
-    return _validate_fetched_version_info(
-        request_with_recovery(
-            jsonrpc_client, "version_info", log_warning=logger.warning
-        ),
-        require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
-        require_app_hash=pjsk_region in ("jp", "en"),
-    )
-
-
 def _validate_fetched_version_info(
     raw: object,
     *,
@@ -700,11 +694,12 @@ def _validate_fetched_version_info(
         raise RuntimeError(f"Invalid version info response: {error}") from error
 
 
-def _fetch_master_data_by_region(candidate: dict[str, Any] | None) -> dict[str, Any]:
+def _fetch_master_data_by_region(
+    candidate: dict[str, Any],
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if pjsk_region in ("jp", "en"):
-        return get_splitted_master_data()
-    if candidate is None:
-        raise RuntimeError("Refresh version info before fetching master data")
+        return get_splitted_master_data(snapshot)
     return download_nuverse_master_data(candidate["cdnVersion"])
 
 
@@ -822,41 +817,39 @@ def _write_compact_master_alias_if_needed(key: str, file_data: Any) -> None:
     _write_master_file(f"{new_key}.json", new_file_data)
 
 
-def refresh_version(candidate: dict[str, Any] | None = None) -> dict[str, Any]:
+def refresh_version(
+    candidate: dict[str, Any],
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Fetch master data and generate all master/i18n JSON for a candidate.
 
-    The cycle passes the explicit candidate version (returned by
-    ``_refresh_version_info_from_source``) so generation, conversion, and the
-    ``versions.json`` write all use the *candidate* — not the published global
-    ``version_info``. The global is only advanced by ``_generate_and_publish``
-    after every staged file is generated, validated, and published with
-    ``os.replace``. A generation/validation failure therefore leaves both the
-    global published ``version_info`` and the formal ``versions.json`` unchanged.
+    The cycle passes the explicit candidate and, for JP/EN, its matching split
+    snapshot so generation, conversion, and the ``versions.json`` write all use
+    the same source context — not the published global ``version_info``. The
+    global is only advanced by ``_generate_and_publish`` after every staged file
+    is generated, validated, and published with ``os.replace``. A
+    generation/validation failure therefore leaves both the global published
+    ``version_info`` and the formal ``versions.json`` unchanged.
 
     Returns the candidate used for this generation so the caller can advance the
-    published global only after publication succeeds. When called without a
-    candidate (legacy/standalone path) the source is fetched here and used
-    locally; the global is still not advanced inside this function so callers
-    remain responsible for publication.
+    published global only after publication succeeds. A candidate is required;
+    this function never fetches version info on its own.
     """
     logger.debug("[refresh_version] called")
 
-    if candidate is None:
-        candidate = _refresh_version_info_from_source()
-    else:
-        # Validate the explicit candidate boundary before writing ``versions.json``
-        # or using it for generation; a malformed candidate must fail closed rather
-        # than publish a corrupt ``versions.json`` or drive generation from bad data.
-        candidate = _validate_fetched_version_info(
-            candidate,
-            require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
-            require_app_hash=pjsk_region in ("jp", "en"),
-        )
+    # Validate the explicit candidate boundary before writing ``versions.json``
+    # or using it for generation; a malformed candidate must fail closed rather
+    # than publish a corrupt ``versions.json`` or drive generation from bad data.
+    candidate = _validate_fetched_version_info(
+        candidate,
+        require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
+        require_app_hash=pjsk_region in ("jp", "en"),
+    )
     logger.debug("[refresh_version] using candidate version info: %s", candidate)
     _write_master_file("versions.json", candidate)
 
     logger.debug("[refresh_version] fetching master db")
-    master_data: dict[str, Any] = _fetch_master_data_by_region(candidate)
+    master_data: dict[str, Any] = _fetch_master_data_by_region(candidate, snapshot)
     logger.debug("[refresh_version] write master db to separate json files by keys")
     structures_app_ver = candidate.get("appVersion") or getenv("APP_VER", "")
     current_structures = get_structures_for_app_ver(structures_app_ver)
@@ -1620,10 +1613,10 @@ def _generate_and_publish(  # noqa: C901
     staging parent and drops the journal (an aborted attempt); a *crash* leaves
     both on disk for recovery (see :func:`_recover_transaction`).
 
-    The candidate version is fetched up front and used locally for every
-    generated file. The global published ``version_info`` is *not* advanced until
-    every staged file has been generated, validated, and published into both
-    working trees.
+    The candidate version captured by the locked cycle is required here and is
+    used locally for every generated file. The global published ``version_info``
+    is *not* advanced until every staged file has been generated, validated, and
+    published into both working trees.
 
     Cooperative deadline (Oracle Gate 1): the LAST safe check happens AFTER all
     staging generation + validation but BEFORE the first formal ``os.replace``
@@ -1642,7 +1635,9 @@ def _generate_and_publish(  # noqa: C901
     global _MASTER_STAGING_ROOT, _I18N_STAGING_ROOT, _STAGING_MANIFEST
     global version_info, _CYCLE_CANDIDATE, _ACTIVE_TXN_ID
 
-    _CYCLE_CANDIDATE = None
+    cycle_candidate = _CYCLE_CANDIDATE
+    if cycle_candidate is None:
+        raise RuntimeError("Update cycle has no version candidate")
 
     # Phase 2: journal-owned staging sub-directory under the legacy parent.
     txn_id = new_transaction_id()
@@ -1664,7 +1659,13 @@ def _generate_and_publish(  # noqa: C901
         _I18N_STAGING_ROOT = i18n_staging
         _STAGING_MANIFEST = manifest
 
-        candidate = refresh_version()
+        if _CYCLE_SNAPSHOT is not None:
+            candidate = refresh_version(
+                candidate=deepcopy(cycle_candidate),
+                snapshot=deepcopy(_CYCLE_SNAPSHOT),
+            )
+        else:
+            candidate = refresh_version(candidate=deepcopy(cycle_candidate))
     except Exception:
         logger.exception("[cycle] generation/validation failed; discarding staging")
         _STAGING_MANIFEST = None
@@ -2759,6 +2760,27 @@ def _push_enabled_repositories(commits: dict[str, GitResult]) -> str | None:
     return _recover_push(journal)
 
 
+def _candidate_differs_from_published(candidate: dict[str, Any]) -> bool:
+    """Compare one authoritative cycle candidate with the published baseline."""
+    if version_info is None:
+        return True
+    if candidate["appVersion"] != version_info.get("appVersion") or candidate[
+        "assetVersion"
+    ] != version_info.get("assetVersion"):
+        return True
+    if (
+        "dataVersion" in candidate
+        and "dataVersion" in version_info
+        and candidate["dataVersion"] != version_info["dataVersion"]
+    ):
+        return True
+    if ("cdnVersion" in candidate or "cdnVersion" in version_info) and candidate.get(
+        "cdnVersion"
+    ) != version_info.get("cdnVersion"):
+        return True
+    return False
+
+
 def _cycle_should_proceed(daily: bool) -> str | None:
     """Honor maintenance / candidate gating while inside the cycle lock.
 
@@ -2770,50 +2792,51 @@ def _cycle_should_proceed(daily: bool) -> str | None:
     Maintenance and the simple-mode candidate are determined here (under the
     held process + repo locks) so no decision is taken outside the locked cycle.
     """
-    global is_in_maintenance
+    global is_in_maintenance, _CYCLE_CANDIDATE, _CYCLE_SNAPSHOT
     if check_update_simple_mode:
         # Simple mode: only proceed when a new version is detected. The candidate
         # is computed here but never pushed to the published global.
         ver_res = check_versions_simple()
+        _CYCLE_CANDIDATE = deepcopy(ver_res["candidate_version_info"])
+        _CYCLE_SNAPSHOT = None
         if not ver_res["new_version"]:
             logger.info("[cycle] simple mode: no new version; skipping")
             return "no_new_version"
         is_in_maintenance = False
         return None
 
-    if daily:
-        # Daily / full-refresh run: request the server version/CN info only to
-        # honor maintenance. The new-version gate is intentionally bypassed so a
-        # daily run always re-fetches and republishes the full data set; the
-        # published global is still not advanced when maintenance is active.
-        check_version_res = request_with_recovery(
-            jsonrpc_client,
-            "check_versions",
-            [version_info],
-            log_warning=logger.warning,
-        )
-        if check_version_res["maintenance"]:
-            logger.warning("PJSK server is in maintenance, skipping cycle")
-            is_in_maintenance = True
-            return "maintenance"
-        is_in_maintenance = False
-        return None
-
-    # Ordinary run: standard mode must respect the new-version gate computed by
-    # the server. When the candidate version matches the published global there
-    # is nothing to publish, so we skip cleanly.
-    check_version_res = request_with_recovery(
-        jsonrpc_client,
-        "check_versions",
-        [version_info],
-        log_warning=logger.warning,
+    snapshot = request_with_recovery(
+        jsonrpc_client, "update_snapshot", log_warning=logger.warning
     )
-    if check_version_res["maintenance"]:
+    if not isinstance(snapshot, dict):
+        raise RuntimeError("Update snapshot returned invalid data")
+    _CYCLE_SNAPSHOT = deepcopy(snapshot)
+    candidate_info = snapshot.get("candidate_version_info")
+    _CYCLE_CANDIDATE = (
+        deepcopy(candidate_info) if isinstance(candidate_info, dict) else None
+    )
+    if snapshot.get("maintenance"):
         logger.warning("PJSK server is in maintenance, skipping cycle")
         is_in_maintenance = True
         return "maintenance"
     is_in_maintenance = False
-    if not check_version_res.get("new_version", False):
+
+    if not isinstance(candidate_info, dict):
+        raise RuntimeError("Update snapshot has no candidate version info")
+    candidate = _validate_fetched_version_info(
+        candidate_info,
+        require_cdn_version=pjsk_region in ("cn", "tw", "kr"),
+        require_app_hash=pjsk_region in ("jp", "en"),
+    )
+    _CYCLE_CANDIDATE = deepcopy(candidate)
+    _CYCLE_SNAPSHOT["candidate_version_info"] = deepcopy(candidate)
+
+    # Daily/full-refresh cycles honor maintenance but intentionally skip the
+    # no-change gate. Ordinary cycles compare the retained candidate directly
+    # with the published baseline; no source read is repeated after this point.
+    if daily:
+        return None
+    if not _candidate_differs_from_published(candidate):
         logger.info("[cycle] ordinary run: versions match, nothing to publish")
         return "no_new_version"
     return None
@@ -3057,12 +3080,19 @@ def _run_update_cycle_locked(
     success completes the cycle normally; no external Strapi notification gates
     or follows the update cycle.
     """
-    return _run_update_cycle_locked_body(
-        daily,
-        deadline=deadline,
-        daily_due_date=daily_due_date,
-        daily_context=daily_context,
-    )
+    global _CYCLE_CANDIDATE, _CYCLE_SNAPSHOT
+    _CYCLE_CANDIDATE = None
+    _CYCLE_SNAPSHOT = None
+    try:
+        return _run_update_cycle_locked_body(
+            daily,
+            deadline=deadline,
+            daily_due_date=daily_due_date,
+            daily_context=daily_context,
+        )
+    finally:
+        _CYCLE_CANDIDATE = None
+        _CYCLE_SNAPSHOT = None
 
 
 def _run_update_cycle_locked_body(  # noqa: C901
@@ -3106,13 +3136,6 @@ def _run_update_cycle_locked_body(  # noqa: C901
     should_not_proceed = _cycle_should_proceed(daily)
     if should_not_proceed is not None:
         return should_not_proceed
-
-    # Reset the cycle-scoped candidate so a stale value from a prior (possibly
-    # faked) cycle cannot leak into commit construction. ``_generate_and_publish``
-    # re-stashes it on the real path; tests that fake generation must set it
-    # explicitly if they need an explicit candidate.
-    global _CYCLE_CANDIDATE
-    _CYCLE_CANDIDATE = None
 
     # Safe seam: after gating, before any repo/network preparation work.
     _check_deadline(deadline)
@@ -3262,14 +3285,16 @@ def _run_update_cycle(  # noqa: C901
         logger.info("[cycle] skipped: another update cycle is already running")
         return "skipped:in_process"
 
-    # Capture only after this invocation owns the process lock.  A contended
-    # invocation cannot overwrite the active cycle's provenance.
-    if daily_due_date is None and daily:
-        daily_due_date = _tokyo_calendar_date()
-    cycle_context: dict[str, str | None] = {}
-
-    lock_files = _cycle_lock_paths()
+    global _CYCLE_CANDIDATE, _CYCLE_SNAPSHOT
+    _CYCLE_CANDIDATE = None
+    _CYCLE_SNAPSHOT = None
     try:
+        # Capture only after this invocation owns the process lock. A contended
+        # invocation cannot overwrite the active cycle's provenance.
+        if daily_due_date is None and daily:
+            daily_due_date = _tokyo_calendar_date()
+        cycle_context: dict[str, str | None] = {}
+        lock_files = _cycle_lock_paths()
         try:
             status = _run_with_authoritative_locks(
                 daily,
@@ -3300,6 +3325,8 @@ def _run_update_cycle(  # noqa: C901
                 )
         return status
     finally:
+        _CYCLE_CANDIDATE = None
+        _CYCLE_SNAPSHOT = None
         _PROCESS_LOCK.release()
 
 

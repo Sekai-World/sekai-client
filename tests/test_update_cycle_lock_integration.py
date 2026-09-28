@@ -119,11 +119,26 @@ def _prepare_ok():
 
 
 def _stub_gate(monkeypatch):
-    """Stub the JSONRPC client so the in-cycle gate always proceeds (no server)."""
+    """Stub the serialized candidate snapshot so the gate proceeds."""
 
     def _request(method, params=None):
-        if method in ("check_versions", "check_versions_simple"):
-            return {"maintenance": False, "new_version": True}
+        if method == "update_snapshot":
+            candidate = {
+                "appVersion": "1",
+                "dataVersion": "1",
+                "assetVersion": "1",
+                "appHash": "test-hash",
+            }
+            return {
+                "maintenance": False,
+                "candidate_version_info": candidate,
+                "master_split_paths": ["suite/master/test"],
+                "split_path_version_identity": {
+                    key: candidate[key]
+                    for key in ("appVersion", "dataVersion", "assetVersion")
+                },
+                "split_path_context_digest": "a" * 64,
+            }
         return {}
 
     monkeypatch.setattr(cu.jsonrpc_client, "request", _request)
