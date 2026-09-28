@@ -10,18 +10,18 @@ Supported full API regions: 'jp' (Japan), 'en' (English), 'tw' (Taiwan),
                             simplified checkUpdate process (see D-001).
 """
 
+import json
 import logging
 import random
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from enum import StrEnum
+from hashlib import sha256
 from time import sleep
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import urlparse
-from uuid import uuid4
 
 import requests
 
@@ -51,17 +51,28 @@ from utils.constants import (
     pjsk_region,
 )
 from utils.crypto import decrypt_msgpack
-from utils.deadline import DeadlineExceeded, bounded_timeout, current_deadline
+from utils.deadline import bounded_timeout
 from utils.get_app_ver import (
     get_app_identity,
     get_app_ver_and_hash_en,
     get_app_ver_and_hash_jp,
     get_app_ver_qooapp,
 )
+from utils.request_execution import (
+    APIResponse,
+    RetryPolicy,
+    execute_request,
+)
+from utils.request_execution import (
+    retry_after_seconds as parse_retry_after_seconds,
+)
+from utils.request_execution import (
+    wait_before_retry as wait_request_before_retry,
+)
 
 logger = logging.getLogger(__name__)
 
-type APIResponse = bytes | dict[str, Any] | None
+_SessionResult = TypeVar("_SessionResult")
 
 
 class AuthTransitionKind(StrEnum):
@@ -72,13 +83,6 @@ class AuthTransitionKind(StrEnum):
     FAILURE = "failure"
 
 
-class RetryPolicy(StrEnum):
-    """Whether a logical game API operation may be repeated safely."""
-
-    NEVER = "never"
-    IDEMPOTENT = "idempotent"
-
-
 @dataclass(frozen=True)
 class AuthTransition:
     """Typed, paired lifecycle notification for hidden authentication."""
@@ -86,6 +90,19 @@ class AuthTransition:
     transaction_id: int
     kind: AuthTransitionKind
     error: BaseException | None = None
+
+
+@dataclass(frozen=True)
+class _ClientSessionState:
+    """Deep-copied APIClient state that must commit or roll back together."""
+
+    headers: dict[str, Any]
+    account_info: dict[str, Any]
+    version_info: dict[str, Any]
+    user_info: dict[str, Any]
+    master_split_paths: list[str]
+    master_split_paths_version_identity: dict[str, Any] | None
+    pending_game_user_id: int | None
 
 
 class APIClient:
@@ -119,6 +136,7 @@ class APIClient:
         self._user_info: dict[str, Any] = {}
         self._region: str = ""
         self._master_split_paths: list[str] = []
+        self._master_split_paths_version_identity: dict[str, Any] | None = None
         self._pending_game_user_id: int | None = None
 
         self.logger = logger
@@ -130,6 +148,56 @@ class APIClient:
         self.rate_limited = False
         self._recovering_426 = False
         self._authenticating = False
+
+    def _capture_session_state(self) -> _ClientSessionState:
+        """Capture mutable client state at an authentication boundary.
+
+        The version document is captured alongside master split paths because
+        its app version identifies the master metadata currently in use.
+        """
+        pending_game_user_id = getattr(self, "_pending_game_user_id", None)
+        if not isinstance(pending_game_user_id, int) or isinstance(
+            pending_game_user_id, bool
+        ):
+            pending_game_user_id = None
+        split_paths_identity = getattr(
+            self, "_master_split_paths_version_identity", None
+        )
+        if not isinstance(split_paths_identity, dict):
+            split_paths_identity = None
+        return _ClientSessionState(
+            headers=deepcopy(self.headers),
+            account_info=deepcopy(self.account_info),
+            version_info=deepcopy(self.version_info),
+            user_info=deepcopy(self.user_info),
+            master_split_paths=deepcopy(self.master_split_paths),
+            master_split_paths_version_identity=deepcopy(split_paths_identity),
+            pending_game_user_id=pending_game_user_id,
+        )
+
+    def _restore_session_state(self, state: _ClientSessionState) -> None:
+        """Restore a captured session without detaching the protocol headers."""
+        self.headers.clear()
+        self.headers.update(deepcopy(state.headers))
+        self.account_info = deepcopy(state.account_info)
+        self.version_info = deepcopy(state.version_info)
+        self.user_info = deepcopy(state.user_info)
+        self.master_split_paths = deepcopy(state.master_split_paths)
+        self._master_split_paths_version_identity = deepcopy(
+            state.master_split_paths_version_identity
+        )
+        self._pending_game_user_id = state.pending_game_user_id
+
+    def _run_session_transaction(
+        self, operation: Callable[[], _SessionResult]
+    ) -> _SessionResult:
+        """Commit an operation on success, restoring session state on failure."""
+        previous_state = self._capture_session_state()
+        try:
+            return operation()
+        except BaseException:
+            self._restore_session_state(previous_state)
+            raise
 
     @property
     def account_info(self) -> dict[str, Any]:
@@ -188,6 +256,7 @@ class APIClient:
     def master_split_paths(self, data: list[str]) -> None:
         """Set master data split paths."""
         self._master_split_paths = data
+        self._master_split_paths_version_identity = None
 
     def init_cookie(self) -> None:
         """
@@ -359,8 +428,10 @@ class APIClient:
                 transaction_id = self._begin_auth_transition()
             self._recovering_426 = True
             try:
-                self._update_version_after_426(endpoint=endpoint)
-            except Exception as error:
+                self._run_session_transaction(
+                    lambda: self._update_version_after_426(endpoint=endpoint)
+                )
+            except BaseException as error:
                 if transaction_id is not None:
                     self._finish_auth_transition(transaction_id, error)
                 raise
@@ -379,11 +450,15 @@ class APIClient:
             transaction_id = None
             if self.account_info:
                 transaction_id = self._begin_auth_transition()
-            try:
+
+            def accept_and_reauthenticate() -> None:
                 self.accept_agreement()
                 if self.account_info:
                     self.login()
-            except Exception as error:
+
+            try:
+                self._run_session_transaction(accept_and_reauthenticate)
+            except BaseException as error:
                 if transaction_id is not None:
                     self._finish_auth_transition(transaction_id, error)
                 raise
@@ -422,8 +497,8 @@ class APIClient:
                 transaction_id = self._begin_auth_transition()
             try:
                 if self.account_info:
-                    self.login()
-            except Exception as error:
+                    self._run_session_transaction(self.login)
+            except BaseException as error:
                 if transaction_id is not None:
                     self._finish_auth_transition(transaction_id, error)
                 raise
@@ -495,6 +570,108 @@ class APIClient:
             or self.headers["x-asset-version"] != curr_ver_info["assetVersion"]
             or self.headers["x-app-version"] != curr_ver_info["appVersion"]
         )
+
+    @staticmethod
+    def _auth_version_identity(version_info: dict[str, Any]) -> dict[str, Any]:
+        """Return the version fields that bind auth-provided split paths."""
+        return {
+            key: deepcopy(version_info[key])
+            for key in ("appVersion", "dataVersion", "assetVersion", "cdnVersion")
+            if key in version_info
+        }
+
+    def _split_path_context_digest(self) -> str | None:
+        identity = self._master_split_paths_version_identity
+        if identity is None:
+            return None
+        context = {
+            "master_split_paths": list(self.master_split_paths),
+            "version_identity": identity,
+            "version_headers": {
+                header: self.headers.get(header)
+                for header in (
+                    "x-app-version",
+                    "x-data-version",
+                    "x-asset-version",
+                    "x-app-hash",
+                )
+            },
+        }
+        encoded = json.dumps(
+            context, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        return sha256(encoded).hexdigest()
+
+    def _candidate_for_version_identity(
+        self, candidate: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Complete optional candidate fields from matching authenticated state."""
+        result = deepcopy(candidate)
+        current = self.version_info
+        if result.get("appVersion") == current.get("appVersion"):
+            for key in ("dataVersion", "appHash", "assetHash", "multiPlayVersion"):
+                if key not in result and key in current:
+                    result[key] = deepcopy(current[key])
+            if (
+                (not isinstance(result.get("appHash"), str) or not result["appHash"])
+                and isinstance(current.get("appHash"), str)
+                and current["appHash"]
+            ):
+                result["appHash"] = current["appHash"]
+        return result
+
+    def _candidate_matches_split_path_identity(self, candidate: dict[str, Any]) -> bool:
+        identity = self._master_split_paths_version_identity
+        if identity is None or not self.master_split_paths:
+            return False
+        candidate_identity = self._auth_version_identity(candidate)
+        return bool(identity) and all(
+            candidate_identity.get(key) == value for key, value in identity.items()
+        )
+
+    def update_snapshot(self) -> dict[str, Any]:
+        """Capture one candidate and its matching auth-derived split context.
+
+        This method is intended to run as one serialized shared-client job. It
+        performs at most one system discovery and only refreshes JP/EN auth when
+        the installed split context does not identify that candidate.
+        """
+        discovery = self._discover_version_candidate()
+        candidate = discovery["candidate_version_info"]
+        snapshot: dict[str, Any] = {
+            "maintenance": discovery["maintenance"],
+            "candidate_version_info": deepcopy(candidate),
+            "master_split_paths": deepcopy(self.master_split_paths)
+            if self.region in ("jp", "en")
+            else [],
+            "split_path_version_identity": deepcopy(
+                self._master_split_paths_version_identity
+            ),
+            "split_path_context_digest": self._split_path_context_digest(),
+        }
+        if discovery["maintenance"] or self.region not in ("jp", "en"):
+            return snapshot
+
+        candidate = self._candidate_for_version_identity(candidate)
+        if not self._candidate_matches_split_path_identity(candidate):
+            if not self.account_info:
+                raise RuntimeError(
+                    "Cannot refresh master split context without an account"
+                )
+            self.refresh_master_split_paths()
+            candidate = self._candidate_for_version_identity(candidate)
+            if not self._candidate_matches_split_path_identity(candidate):
+                raise RuntimeError(
+                    "Master split paths do not match the discovered version"
+                )
+
+        snapshot["candidate_version_info"] = deepcopy(candidate)
+        snapshot["master_split_paths"] = deepcopy(self.master_split_paths)
+        snapshot["split_path_version_identity"] = deepcopy(
+            self._master_split_paths_version_identity
+        )
+        snapshot["split_path_context_digest"] = self._split_path_context_digest()
+        return snapshot
 
     def _apply_new_version_info(self, curr_ver_info: dict[str, Any]) -> None:
         if "dataVersion" in curr_ver_info:
@@ -570,6 +747,9 @@ class APIClient:
         # succeeded, so a malformed TW/KR auth response cannot leave stale/partial
         # split paths on the client.
         self.master_split_paths = list(result.master_split_paths)
+        self._master_split_paths_version_identity = self._auth_version_identity(
+            auth_data
+        )
         if self.region in ("tw", "kr"):
             self._pending_game_user_id = result.canonical_user_id
         return auth_data
@@ -873,129 +1053,86 @@ class APIClient:
         if self.rate_limited:
             raise RuntimeError("Cooling down for rate limit...")
 
-        normalized_method = method.lower()
-        data = self._encrypt_request_body(normalized_method, body)
-        policy = (
-            RetryPolicy(retry_policy)
-            if retry_policy is not None
-            else (
-                RetryPolicy.IDEMPOTENT
-                if normalized_method == "get"
-                else RetryPolicy.NEVER
+        def recover_http_error(
+            response: requests.Response | None, response_data: Any
+        ) -> bool:
+            return self._handle_http_error_retry(
+                response, response_data, endpoint=endpoint
             )
-        )
 
-        max_retries = Config.MAX_API_RETRIES if policy is RetryPolicy.IDEMPOTENT else 0
-        request_id = str(uuid4())
-        self.logger.debug(
-            "call_pjsk_api endpoint=%s method=%s request_id=%s "
-            "body=%s encrypted_len=%s",
+        recovery_handler = None if bypass_error_recovery else recover_http_error
+        return execute_request(
             endpoint,
-            normalized_method,
-            request_id,
-            "<redacted>" if body else "",
-            len(data) if data is not None else None,
+            method,
+            body,
+            retry_policy,
+            max_retries=Config.MAX_API_RETRIES,
+            logger=self.logger,
+            encrypt_request_body=self._encrypt_request_body,
+            send_request=self._send_api_request,
+            decrypt_response=self._decrypt_response_data,
+            recovery_handler=recovery_handler,
+            wait_for_retry=self._wait_before_retry,
         )
-        attempt = 0
-        while True:
-            r = None
-            res_data: APIResponse = None
-            try:
-                r = self._send_api_request(
-                    endpoint, normalized_method, data, request_id
-                )
-
-                if 300 <= r.status_code < 400:
-                    raise requests.HTTPError(response=r)
-                r.raise_for_status()
-                if not 200 <= r.status_code < 300:
-                    raise requests.HTTPError(response=r)
-                res_data = self._decrypt_response_data(r)
-                return res_data
-            except requests.HTTPError:
-                status_code = r.status_code if r is not None else "unknown"
-                self.logger.error(
-                    "Request PJSK api error, endpoint=%s, method=%s, "
-                    "body=%s, status=%s",
-                    endpoint,
-                    method,
-                    "<redacted>",
-                    status_code,
-                )
-
-                if bypass_error_recovery:
-                    handled = False
-                else:
-                    handled = self._handle_http_error_retry(
-                        r, res_data, endpoint=endpoint
-                    )
-                should_retry = policy is RetryPolicy.IDEMPOTENT and handled
-
-                transient = r is not None and (
-                    r.status_code == 429 or 500 <= r.status_code < 600
-                )
-                if (should_retry or transient) and attempt < max_retries:
-                    attempt += 1
-                    self._wait_before_retry(r, attempt)
-                    continue
-
-                raise RuntimeError(
-                    f"PJSK API request failed (HTTP {status_code})"
-                ) from None
-            except requests.RequestException as err:
-                self.logger.error(
-                    "Request PJSK api request exception, endpoint=%s, "
-                    "method=%s, error=%s",
-                    endpoint,
-                    method,
-                    err,
-                )
-                if attempt < max_retries:
-                    attempt += 1
-                    self._wait_before_retry(None, attempt)
-                    continue
-                raise RuntimeError("PJSK API request failed") from None
 
     @staticmethod
     def _retry_after_seconds(response: requests.Response | None) -> float | None:
-        if response is None or response.status_code != 429:
-            return None
-        value = response.headers.get("Retry-After")
-        if value is None:
-            return None
-        try:
-            return max(0.0, float(value))
-        except ValueError:
-            try:
-                retry_at = parsedate_to_datetime(value)
-            except (TypeError, ValueError, OverflowError):
-                return None
-            if retry_at.tzinfo is None:
-                retry_at = retry_at.replace(tzinfo=UTC)
-            return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+        return parse_retry_after_seconds(response, now=lambda: datetime.now(UTC))
 
     def _wait_before_retry(
         self, response: requests.Response | None, attempt: int
     ) -> None:
-        retry_after = self._retry_after_seconds(response)
-        if retry_after is None:
-            base = min(30.0, 2.0 ** (attempt - 1))
-            delay = random.uniform(base * 0.5, base * 1.5)
+        wait_request_before_retry(
+            response,
+            attempt,
+            get_retry_after=self._retry_after_seconds,
+            set_rate_limited=lambda value: setattr(self, "rate_limited", value),
+            sleep_fn=sleep,
+            jitter_fn=random.uniform,
+        )
+
+    def _discover_version_candidate(self) -> dict[str, Any]:
+        """Read a candidate without applying it to client state on success.
+
+        A successful ``/system`` response is only inspected here; version
+        headers and ``version_info`` are not updated. An HTTP 426 still follows
+        ``call_pjsk_api``'s established recovery path before this method receives
+        a response. That recovery may intentionally refresh version/auth state
+        (including a login for the non-auth ``/system`` endpoint); discovery
+        neither bypasses nor changes those semantics.
+        """
+        if self.region not in ("jp", "en"):
+            candidate = deepcopy(self.version_info)
+            return {
+                "maintenance": candidate.get("appVersionStatus") == "maintenance",
+                "new_version": False,
+                "candidate_version_info": candidate,
+                "current_version_info": candidate,
+                "fallback_selected": False,
+            }
+
+        system_data = self.fetch_system_data()
+        maintenance = system_data.get("maintenanceStatus") == "maintenance_in"
+        curr_ver_info, fallback_selected = self._find_current_version_info(
+            system_data["appVersions"], self.headers["x-app-version"]
+        )
+        if curr_ver_info["appVersionStatus"] == "maintenance" and fallback_selected:
+            maintenance = True
+            new_version = False
+        elif fallback_selected:
+            new_version = True
         else:
-            delay = retry_after
+            new_version = self._is_version_updated(curr_ver_info)
 
-        deadline = current_deadline()
-        if deadline is not None and delay >= deadline.remaining():
-            raise DeadlineExceeded("Request deadline exceeded")
-
-        rate_limited = response is not None and response.status_code == 429
-        if rate_limited:
-            self.rate_limited = True
-        try:
-            sleep(delay)
-        finally:
-            if rate_limited:
-                self.rate_limited = False
+        return {
+            "maintenance": maintenance,
+            "new_version": new_version,
+            "candidate_version_info": self._candidate_for_version_identity(
+                curr_ver_info
+            ),
+            "current_version_info": curr_ver_info,
+            "fallback_selected": fallback_selected,
+        }
 
     def check_versions(
         self, input_ver_info: dict[str, Any] | None = None
@@ -1010,33 +1147,22 @@ class APIClient:
             input_ver_info: Optional version info to compare against
 
         Returns:
-            Dictionary with 'maintenance' and 'new_version' boolean flags
+            Maintenance and version-change flags plus the current version info
+            snapshot after any update has been applied.
         """
-        res = {"maintenance": False, "new_version": False}
+        res: dict[str, Any] = {
+            "maintenance": False,
+            "new_version": False,
+            "version_info": deepcopy(self.version_info),
+        }
 
         if self.region in ("cn", "tw", "kr"):
             return res
 
-        system_data = self.fetch_system_data()
-        if self.region in ("jp", "en"):
-            # maintenanceStatus is optional in upstream responses; absence
-            # means the server is not reporting a maintenance window.
-            res["maintenance"] = (
-                system_data.get("maintenanceStatus") == "maintenance_in"
-            )
-
-        all_ver_infos = system_data["appVersions"]
-        curr_app_ver = self.headers["x-app-version"]
-        curr_ver_info, fallback_selected = self._find_current_version_info(
-            all_ver_infos, curr_app_ver
-        )
-        if curr_ver_info["appVersionStatus"] == "maintenance" and fallback_selected:
-            res["maintenance"] = True
-            res["new_version"] = False
-        elif fallback_selected:
-            res["new_version"] = True
-        else:
-            res["new_version"] = self._is_version_updated(curr_ver_info)
+        discovery = self._discover_version_candidate()
+        res["maintenance"] = discovery["maintenance"]
+        res["new_version"] = discovery["new_version"]
+        curr_ver_info = discovery["current_version_info"]
 
         if res["new_version"]:
             self._apply_new_version_info(curr_ver_info)
@@ -1066,7 +1192,6 @@ class APIClient:
             self.version_info[key] = value
 
         if input_ver_info:
-            res["maintenance"] = self.version_info["appVersionStatus"] == "maintenance"
             res["new_version"] = (
                 (
                     "dataVersion" in input_ver_info
@@ -1077,6 +1202,7 @@ class APIClient:
                 or input_ver_info["appVersion"] != curr_ver_info["appVersion"]
             )
 
+        res["version_info"] = deepcopy(self.version_info)
         return res
 
     def register_new_account(self) -> dict[str, Any]:
@@ -1101,37 +1227,44 @@ class APIClient:
         if self._authenticating:
             raise RuntimeError("authentication already in progress")
         self._authenticating = True
-        self._pending_game_user_id = None
         try:
-            self.logger.info("simulate login process")
-            self.logger.debug("do auth")
-            auth_data = self._authenticate()
-            self._apply_auth_headers_and_version_info(auth_data)
-
-            self.logger.debug("get suite user")
-            user_id = self._user_id_for_api()
-            user_info = self.fetch_suite_user()
-
-            self.logger.debug("check and skip tutorial")
-            self._complete_tutorial_if_needed(user_id, user_info)
-            self._post_login_refresh(user_id)
-
-            if self._pending_game_user_id is not None:
-                self.account_info["userId"] = str(self._pending_game_user_id)
-            self.user_info = user_info
-            return user_info
+            return self._run_session_transaction(self._login)
         finally:
-            self._pending_game_user_id = None
             self._authenticating = False
+
+    def _login(self) -> dict[str, Any]:
+        """Perform login work inside ``login``'s session transaction."""
+        self._pending_game_user_id = None
+        self.logger.info("simulate login process")
+        self.logger.debug("do auth")
+        auth_data = self._authenticate()
+        self._apply_auth_headers_and_version_info(auth_data)
+
+        self.logger.debug("get suite user")
+        user_id = self._user_id_for_api()
+        user_info = self.fetch_suite_user()
+
+        self.logger.debug("check and skip tutorial")
+        self._complete_tutorial_if_needed(user_id, user_info)
+        self._post_login_refresh(user_id)
+
+        if self._pending_game_user_id is not None:
+            self.account_info["userId"] = str(self._pending_game_user_id)
+        self.user_info = user_info
+        self._pending_game_user_id = None
+        return user_info
 
     def refresh_master_split_paths(self) -> list[str]:
         """Refresh authentication metadata without running post-login user requests."""
         if self.region not in ("jp", "en"):
             raise ValueError("Split master paths are only available for jp and en")
 
-        auth_data = self._authenticate()
-        self._apply_auth_headers_and_version_info(auth_data)
-        return self.master_split_paths
+        def refresh() -> list[str]:
+            auth_data = self._authenticate()
+            self._apply_auth_headers_and_version_info(auth_data)
+            return self.master_split_paths
+
+        return self._run_session_transaction(refresh)
 
     def fetch_suite_user(self, update_user_info: bool = False) -> dict[str, Any]:
         res = GameAPIService(self, self._user_id_for_api()).fetch_suite_user()
@@ -1181,18 +1314,42 @@ class APIClient:
             str(self.account_info["credential"]),
         )
 
-    def fetch_master_split(self, split_path: str) -> Any:
+    def fetch_master_split(
+        self,
+        split_path: str,
+        expected_split_path_digest: str | None = None,
+    ) -> Any:
         """Fetch a single master-data split by path (GET only).
 
         Only allowlisted split paths (present in ``master_split_paths``) are
         permitted. This is the safe, scoped replacement for the generic
-        ``call_pjsk_api("/<split>")`` passthrough.
+        ``call_pjsk_api("/<split>")`` passthrough. An optional digest binds the
+        fetch to the snapshot used by a caller; one re-authentication is allowed
+        to repair stale local context, but a second mismatch fails closed.
         """
+        if expected_split_path_digest is not None:
+            if len(expected_split_path_digest) != 64 or any(
+                char not in "0123456789abcdef" for char in expected_split_path_digest
+            ):
+                raise ValueError("Invalid expected master split context digest")
+            if self._split_path_context_digest() != expected_split_path_digest:
+                if self.region not in ("jp", "en") or not self.account_info:
+                    raise RuntimeError("Master split context is stale")
+                self.refresh_master_split_paths()
+                if self._split_path_context_digest() != expected_split_path_digest:
+                    raise RuntimeError("Master split context remains stale after auth")
+
         if split_path not in self.master_split_paths:
             raise ValueError(
                 f"Master split path {split_path!r} is not in the allowlist"
             )
-        return self.call_pjsk_api(f"/{split_path}")
+        result = self.call_pjsk_api(f"/{split_path}")
+        if (
+            expected_split_path_digest is not None
+            and self._split_path_context_digest() != expected_split_path_digest
+        ):
+            raise RuntimeError("Master split context changed while fetching")
+        return result
 
     def request_and_decrypt(
         self,

@@ -66,6 +66,27 @@ class TestTaskQueue:
         except queue.Empty:
             pytest.fail("Worker didn't process job")
 
+    def test_worker_transports_baseexception_and_remains_usable(self, monkeypatch):
+        from shared_client import run_job
+        from utils.task_queue import job_queue
+
+        monkeypatch.setattr(Config, "ANSWER_QUEUE_TIMEOUT", 2)
+        monkeypatch.setattr(Config, "JOB_QUEUE_TIMEOUT", 2)
+        failure = SystemExit("stop queued job")
+
+        def fail_job():
+            raise failure
+
+        with pytest.raises(SystemExit) as raised:
+            run_job(fail_job)
+
+        assert raised.value is failure
+        job_queue.join()
+        assert job_queue.unfinished_tasks == 0
+        assert run_job(lambda: "worker survived") == "worker survived"
+        job_queue.join()
+        assert job_queue.unfinished_tasks == 0
+
     def test_worker_drops_stale_results(self, caplog):
         """Test worker drops results if caller already timed out."""
         import logging

@@ -198,7 +198,7 @@ def _track_event_cycle():
     is_in_maintenance = False
     if ver_res["new_version"]:
         logger.info("Got a new version during tracking event score")
-        refresh_version()
+        refresh_version(ver_res["version_info"])
 
     curr_time = int(time.time() * 1000)
     logger.debug("[track_event_func] call track_event_scores now at %s", curr_time)
@@ -249,7 +249,7 @@ def _scheduler_listener(event: JobEvent) -> None:
 scheduler.add_listener(_scheduler_listener, EVENT_JOB_MAX_INSTANCES)
 
 
-def refresh_version():
+def refresh_version(version_info_snapshot: dict[str, Any] | None = None):
     logger.debug("Refresh version info")
 
     response = _external_session.get(curr_event_url, timeout=60)
@@ -269,13 +269,16 @@ def refresh_version():
     except ResponseValidationError as error:
         raise RuntimeError(f"Invalid current event response: {error}") from error
 
-    # Fetch and validate the version_info boundary before assigning it. Both the
-    # current-event payload and the version_info are fully validated before any
-    # of ``event_data``/``_world_blooms_cache``/``version_info`` is overwritten,
-    # so if either fails the last-known-good values are preserved.
-    raw_version_info = request_with_recovery(
-        jsonrpc_client, "version_info", log_warning=logger.warning
-    )
+    # Validate the version_info boundary before assigning it. A caller may pass
+    # the snapshot returned by check_versions to avoid a second RPC and ensure
+    # both event tracking and version state use the same candidate.
+    # Both payloads are fully validated before any state is overwritten, so a
+    # failure preserves the last-known-good values.
+    raw_version_info = version_info_snapshot
+    if raw_version_info is None:
+        raw_version_info = request_with_recovery(
+            jsonrpc_client, "version_info", log_warning=logger.warning
+        )
     try:
         validated_version_info = validate_version_info(
             raw_version_info, require_cdn_version=pjsk_region in ("cn", "tw", "kr")
@@ -284,9 +287,10 @@ def refresh_version():
         raise RuntimeError(f"Invalid version info response: {error}") from error
 
     global event_data
-    previous_event_id = event_data["id"] if event_data else None
+    previous_event = event_data
+    previous_event_id = previous_event["id"] if previous_event else None
     event_data = current_event
-    if current_event["id"] != previous_event_id:
+    if current_event is not None and current_event["id"] != previous_event_id:
         logger.info("Current event is now %s", current_event["id"])
 
     global _world_blooms_cache

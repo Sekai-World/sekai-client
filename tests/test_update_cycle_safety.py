@@ -45,6 +45,7 @@ import json
 import os
 import threading
 from datetime import datetime
+from unittest.mock import Mock
 
 import git
 import pytest
@@ -234,13 +235,46 @@ def _snap_version(repo: git.Repo):
         return json.load(f)
 
 
+def _snapshot_for_gate(*, maintenance=False, new_version=True):
+    candidate = {
+        "appVersion": "6.4.1",
+        "dataVersion": "candidate-data",
+        "assetVersion": "candidate-asset",
+        "appHash": "snapshot-app-hash",
+    }
+    if isinstance(cu.version_info, dict):
+        candidate.update(cu.version_info)
+        candidate.setdefault("appVersion", "6.4.1")
+        candidate.setdefault("appHash", "snapshot-app-hash")
+    if new_version:
+        candidate["dataVersion"] = "candidate-data"
+        candidate["assetVersion"] = "candidate-asset"
+        if isinstance(cu.version_info, dict):
+            for key in ("dataVersion", "assetVersion"):
+                if candidate[key] == cu.version_info.get(key):
+                    candidate[key] = f"{candidate[key]}-next"
+    if cu.pjsk_region in ("cn", "tw", "kr"):
+        candidate.setdefault("cdnVersion", "candidate-cdn")
+    identity = {
+        key: candidate[key]
+        for key in ("appVersion", "dataVersion", "assetVersion", "cdnVersion")
+        if key in candidate
+    }
+    return {
+        "maintenance": maintenance,
+        "candidate_version_info": candidate,
+        "master_split_paths": ["suite/master/test"],
+        "split_path_version_identity": identity,
+        "split_path_context_digest": "a" * 64,
+    }
+
+
 def _stub_jsonrpc_no_maintenance(monkeypatch, simple_new_version=True):
-    """Stub the JSONRPC client so the in-cycle maintenance/simple gate returns
-    'proceed' without a real server (no INTERNAL_RPC_TOKEN needed)."""
+    """Stub the serialized snapshot RPC without requiring a local server."""
 
     def _request(method, params=None):
-        if method == "check_versions":
-            return {"maintenance": False, "new_version": True}
+        if method == "update_snapshot":
+            return _snapshot_for_gate(new_version=True)
         if method == "check_versions_simple":
             return {"maintenance": False, "new_version": simple_new_version}
         return {}
@@ -251,12 +285,11 @@ def _stub_jsonrpc_no_maintenance(monkeypatch, simple_new_version=True):
 def _stub_jsonrpc(
     monkeypatch, *, maintenance=False, new_version=True, simple_new_version=True
 ):
-    """Controllable stub for the in-cycle gate: pick maintenance / new_version /
-    simple-new-version independently."""
+    """Controllable candidate snapshot for the in-cycle update gate."""
 
     def _request(method, params=None):
-        if method == "check_versions":
-            return {"maintenance": maintenance, "new_version": new_version}
+        if method == "update_snapshot":
+            return _snapshot_for_gate(maintenance=maintenance, new_version=new_version)
         if method == "check_versions_simple":
             return {"maintenance": maintenance, "new_version": simple_new_version}
         return {}
@@ -1321,6 +1354,16 @@ def test_candidate_passed_through_to_generation_and_commit_message(
     )
     monkeypatch.setattr(cu, "check_update_simple_mode", False)
     monkeypatch.setattr(cu, "pjsk_region", "jp")
+    monkeypatch.setattr(
+        cu,
+        "version_info",
+        {
+            "appVersion": "6.4.1",
+            "dataVersion": "base-data",
+            "assetVersion": "base-asset",
+            "appHash": "base-hash",
+        },
+    )
     master_repo = _init_repo(tmp_path, "master_repo")
     _write_commit(master_repo, "seed.txt", "seed", "seed master")
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
@@ -1328,13 +1371,28 @@ def test_candidate_passed_through_to_generation_and_commit_message(
     monkeypatch.setattr(cu, "prepare_repo_for_update", lambda *a, **k: _prepare_ok())
     monkeypatch.setattr(cu, "_push_enabled_repositories", lambda *a: None)
 
+    candidate = {
+        "appVersion": "6.4.1",
+        "dataVersion": "7",
+        "assetVersion": "7",
+        "appHash": "candidate-hash",
+    }
+    snapshot = {
+        "maintenance": False,
+        "candidate_version_info": candidate,
+        "master_split_paths": ["suite/master/7"],
+        "split_path_version_identity": {
+            key: candidate[key] for key in ("appVersion", "dataVersion", "assetVersion")
+        },
+        "split_path_context_digest": "7" * 64,
+    }
     captured_candidate = {}
 
-    def _fake_refresh(candidate=None):
-        candidate = {"dataVersion": "7", "assetVersion": "7"}
+    def _fake_refresh(candidate=None, snapshot=None):
         # Mirror production: write versions.json from candidate, then return it.
         cu._write_master_file("versions.json", candidate)
         captured_candidate["value"] = candidate
+        captured_candidate["snapshot"] = snapshot
         return candidate
 
     monkeypatch.setattr(cu, "refresh_version", _fake_refresh)
@@ -1365,10 +1423,13 @@ def test_candidate_passed_through_to_generation_and_commit_message(
 
     monkeypatch.setattr(cu, "_commit_enabled_repositories", _fake_commit_enabled)
 
-    _stub_jsonrpc_no_maintenance(monkeypatch)
+    monkeypatch.setattr(
+        cu.jsonrpc_client, "request", lambda method, params=None: snapshot
+    )
     cu._run_update_cycle_locked(daily=True)
     # The candidate that drove generation equals the one used for the commit msg.
     assert captured_candidate["value"]["dataVersion"] == "7"
+    assert captured_candidate["snapshot"]["master_split_paths"] == ["suite/master/7"]
     # And the published global was advanced to that candidate after success.
     assert cu.version_info["dataVersion"] == "7"
     assert captured_msg["master"] == "master version 7 asset version 7"
@@ -1437,7 +1498,16 @@ def test_cycle_should_proceed_daily_bypasses_new_version_gate(monkeypatch):
     """daily=True must proceed even when the server reports no new version (the
     new-version gate only blocks ordinary runs); maintenance still stops it."""
     monkeypatch.setattr(cu, "check_update_simple_mode", False)
-    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
+    monkeypatch.setattr(
+        cu,
+        "version_info",
+        {
+            "appVersion": "6.4.1",
+            "dataVersion": "candidate-data",
+            "assetVersion": "candidate-asset",
+            "appHash": "snapshot-app-hash",
+        },
+    )
 
     # Ordinary-style "no change" response: daily must still proceed.
     _stub_jsonrpc(monkeypatch, maintenance=False, new_version=False)
@@ -1452,7 +1522,16 @@ def test_cycle_should_proceed_ordinary_requires_new_version(monkeypatch):
     """ordinary run must respect the new-version gate and return no_new_version
     when the server reports no change."""
     monkeypatch.setattr(cu, "check_update_simple_mode", False)
-    monkeypatch.setattr(cu, "version_info", {"dataVersion": "1", "assetVersion": "1"})
+    monkeypatch.setattr(
+        cu,
+        "version_info",
+        {
+            "appVersion": "6.4.1",
+            "dataVersion": "candidate-data",
+            "assetVersion": "candidate-asset",
+            "appHash": "snapshot-app-hash",
+        },
+    )
 
     _stub_jsonrpc(monkeypatch, maintenance=False, new_version=False)
     assert cu._cycle_should_proceed(daily=False) == "no_new_version"
@@ -1495,6 +1574,16 @@ def test_cycle_locked_returns_no_new_version_when_ordinary_unchanged(
     )
     monkeypatch.setattr(cu, "check_update_simple_mode", False)
     monkeypatch.setattr(cu, "pjsk_region", "jp")
+    monkeypatch.setattr(
+        cu,
+        "version_info",
+        {
+            "appVersion": "6.4.1",
+            "dataVersion": "candidate-data",
+            "assetVersion": "candidate-asset",
+            "appHash": "snapshot-app-hash",
+        },
+    )
     master_repo = _init_repo(tmp_path, "master_repo")
     monkeypatch.setattr(cu, "masterdb_diff_repo", master_repo)
     monkeypatch.setattr(cu, "masterdb_diff_folder_path", master_repo.working_dir)
@@ -1513,6 +1602,142 @@ def test_cycle_locked_returns_no_new_version_when_ordinary_unchanged(
     _stub_jsonrpc(monkeypatch, maintenance=False, new_version=False)
     assert cu._run_update_cycle_locked(daily=False) == "no_new_version"
     assert generation_ran["flag"] is False
+
+
+def test_cycle_retains_changed_candidate_and_snapshot_without_repeat_source_read(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        cu, "update_options", {"master": False, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", None)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", str(tmp_path / "master"))
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", str(tmp_path / "i18n"))
+    baseline = {
+        "appVersion": "6.4.1",
+        "dataVersion": "published-data",
+        "assetVersion": "published-asset",
+        "appHash": "published-hash",
+    }
+    monkeypatch.setattr(cu, "version_info", baseline)
+    snapshot = _snapshot_for_gate(new_version=True)
+    requests = []
+
+    def rpc_request(method, params=None):
+        requests.append((method, params))
+        assert method == "update_snapshot"
+        return snapshot
+
+    monkeypatch.setattr(cu.jsonrpc_client, "request", rpc_request)
+    generated = {}
+
+    def refresh(candidate=None, snapshot=None):
+        generated["candidate"] = candidate
+        generated["snapshot"] = snapshot
+        return candidate
+
+    monkeypatch.setattr(cu, "refresh_version", refresh)
+
+    status = cu._run_update_cycle_locked(daily=False)
+
+    assert status == "ok"
+    assert requests == [("update_snapshot", None)]
+    assert generated["candidate"] == snapshot["candidate_version_info"]
+    assert generated["snapshot"]["master_split_paths"] == snapshot["master_split_paths"]
+    assert cu.version_info == baseline
+    assert cu._CYCLE_CANDIDATE is None
+    assert cu._CYCLE_SNAPSHOT is None
+
+
+def test_daily_cycle_generates_even_when_snapshot_candidate_is_unchanged(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        cu, "update_options", {"master": False, "i18n": False, "userInfo": False}
+    )
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    monkeypatch.setattr(cu, "masterdb_diff_repo", None)
+    monkeypatch.setattr(cu, "masterdb_diff_folder_path", str(tmp_path / "master"))
+    monkeypatch.setattr(cu, "i18n_diff_folder_path", str(tmp_path / "i18n"))
+    baseline = {
+        "appVersion": "6.4.1",
+        "dataVersion": "published-data",
+        "assetVersion": "published-asset",
+        "appHash": "published-hash",
+    }
+    monkeypatch.setattr(cu, "version_info", baseline)
+    snapshot = _snapshot_for_gate(new_version=False)
+    snapshot["candidate_version_info"].update(baseline)
+    captured = []
+    monkeypatch.setattr(
+        cu.jsonrpc_client, "request", lambda method, params=None: snapshot
+    )
+    monkeypatch.setattr(
+        cu,
+        "refresh_version",
+        lambda candidate=None, snapshot=None: (
+            captured.append((candidate, snapshot)) or candidate
+        ),
+    )
+
+    status = cu._run_update_cycle_locked(daily=True)
+
+    assert status == "ok"
+    assert len(captured) == 1
+    assert captured[0][0] == baseline
+    assert captured[0][1]["candidate_version_info"] == baseline
+
+
+def test_daily_maintenance_stops_before_prepare_and_generation(monkeypatch):
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    monkeypatch.setattr(cu, "version_info", {"appVersion": "published"})
+    _stub_jsonrpc(monkeypatch, maintenance=True, new_version=False)
+    prepare = Mock()
+    generate = Mock()
+    monkeypatch.setattr(cu, "_prepare_enabled_repositories", prepare)
+    monkeypatch.setattr(cu, "_generate_and_publish", generate)
+
+    assert cu._run_update_cycle_locked(daily=True) == "maintenance"
+    assert cu.is_in_maintenance is True
+    assert cu._CYCLE_CANDIDATE is None
+    assert cu._CYCLE_SNAPSHOT is None
+    prepare.assert_not_called()
+    generate.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "no_new_version",
+        "maintenance",
+        "recovered",
+        "deadline_exceeded",
+        "not_ready:master:dirty",
+        "generation_failed",
+        "publication_failed",
+        "commit_failed",
+        "push_failed:master:rejected",
+    ],
+)
+def test_outer_cycle_clears_candidate_snapshot_on_all_statuses(monkeypatch, status):
+    def run(status):
+        cu._CYCLE_CANDIDATE = {"dataVersion": "stale"}
+        cu._CYCLE_SNAPSHOT = {"candidate_version_info": {"dataVersion": "stale"}}
+        return status
+
+    monkeypatch.setattr(
+        cu,
+        "_run_with_authoritative_locks",
+        lambda *a, **k: run(status),
+    )
+
+    assert cu._run_update_cycle(daily=False) == status
+    assert cu._CYCLE_CANDIDATE is None
+    assert cu._CYCLE_SNAPSHOT is None
 
 
 # --------------------------------------------------------------------------- #
@@ -1550,7 +1775,7 @@ def test_generation_master_disabled_writes_no_master(monkeypatch, tmp_path):
         captured_manifest["master"] = list(cu._STAGING_MANIFEST["master"])
         captured_manifest["i18n"] = list(cu._STAGING_MANIFEST["i18n"])
 
-    monkeypatch.setattr(cu, "refresh_version", lambda *a: _tracked_gen() or {})
+    monkeypatch.setattr(cu, "refresh_version", lambda *a, **k: _tracked_gen() or {})
     monkeypatch.setattr(cu, "save_info_from_suite_user", lambda *a: None)
     monkeypatch.setattr(cu, "refresh_information", lambda *a: None)
 
@@ -1588,7 +1813,7 @@ def test_generation_all_disabled_writes_nothing(monkeypatch, tmp_path):
         captured_manifest["master"] = list(cu._STAGING_MANIFEST["master"])
         captured_manifest["i18n"] = list(cu._STAGING_MANIFEST["i18n"])
 
-    monkeypatch.setattr(cu, "refresh_version", lambda *a: _tracked_gen() or {})
+    monkeypatch.setattr(cu, "refresh_version", lambda *a, **k: _tracked_gen() or {})
     monkeypatch.setattr(cu, "save_info_from_suite_user", lambda *a: None)
     monkeypatch.setattr(cu, "refresh_information", lambda *a: None)
 
@@ -1629,7 +1854,7 @@ def test_generation_userinfo_true_master_false(monkeypatch, tmp_path):
         cu._write_master_file("userInformations.json", [{"id": 1}])
         cu._write_i18n_file("card_prefix.json", {"1": "p"})
 
-    monkeypatch.setattr(cu, "refresh_version", lambda *a: _tracked_gen() or {})
+    monkeypatch.setattr(cu, "refresh_version", lambda *a, **k: _tracked_gen() or {})
 
     _stub_jsonrpc(monkeypatch, maintenance=False, new_version=True)
     status = cu._run_update_cycle_locked(daily=True)

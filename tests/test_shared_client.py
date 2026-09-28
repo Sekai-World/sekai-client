@@ -23,7 +23,12 @@ from accounts import (
     JpEnCredential,
     TwKrCredential,
 )
-from api_client import AuthTransition, AuthTransitionKind
+from api_client import (
+    APIClient,
+    AuthTransition,
+    AuthTransitionKind,
+    _ClientSessionState,
+)
 from utils import deadline as deadline_module
 from utils.deadline import (
     Deadline,
@@ -145,6 +150,9 @@ def test_restore_client_state_keeps_headers_dict_identity(logged_in_client):
     headers_dict = logged_in_client.headers
     state = shared_client._snapshot_client_state(logged_in_client)
 
+    assert isinstance(state, _ClientSessionState)
+    assert state.account_info == {"userId": "current-user"}
+
     headers_dict["x-session-token"] = "rotated-token"
     shared_client._restore_client_state(logged_in_client, state)
 
@@ -179,6 +187,58 @@ def test_injected_provider_lease_is_released_when_login_fails(
     provider.acquire.assert_called_once()
     provider.release.assert_called_once_with("lease-new")
     assert shared_client._active_account_lease is None
+
+
+def test_baseexception_login_releases_candidate_and_restores_previous_lease(
+    monkeypatch, logged_in_client
+):
+    previous_lease = AccountLease(
+        "lease-old",
+        "shared-client-jp",
+        datetime.now(UTC) - timedelta(seconds=1),
+        JpEnCredential(AccountRegion.JP, "old-user", "old-credential", "old-signature"),
+    )
+    failed_lease = AccountLease(
+        "lease-new",
+        "shared-client-jp",
+        datetime.now(UTC) + timedelta(minutes=5),
+        JpEnCredential(AccountRegion.JP, "new-user", "credential", "signature"),
+    )
+    previous_operation = Mock()
+    provider = Mock()
+    provider.acquire.return_value = failed_lease
+    monkeypatch.undo()
+    monkeypatch.setattr(shared_client._lifecycle, "region", "jp")
+    monkeypatch.setattr(shared_client, "_account_provider", provider)
+    monkeypatch.setattr(shared_client, "_active_account_lease", previous_lease)
+    monkeypatch.setattr(shared_client, "_active_lease_operation", previous_operation)
+    monkeypatch.setattr(shared_client, "_lease_renewal_retry_until", None)
+    day_change_job = Mock()
+    monkeypatch.setattr(shared_client, "day_change_job", day_change_job)
+    failure = SystemExit("stop login after lease acquisition")
+    previous_state = shared_client._snapshot_client_state(logged_in_client)
+
+    def abort_login():
+        logged_in_client.headers.pop("x-session-token")
+        logged_in_client.version_info = {"dataVersion": "partial-data"}
+        logged_in_client.master_split_paths = ["partial-path"]
+        logged_in_client.user_info = {"name": "partial-user"}
+        raise failure
+
+    logged_in_client.login.side_effect = abort_login
+
+    with pytest.raises(SystemExit) as raised:
+        shared_client.login_account(True)
+
+    assert raised.value is failure
+    provider.acquire.assert_called_once()
+    provider.release.assert_called_once_with("lease-new")
+    assert shared_client._active_account_lease is previous_lease
+    assert shared_client._active_lease_operation is previous_operation
+    assert shared_client._snapshot_client_state(logged_in_client) == previous_state
+    assert shared_client._lifecycle.state is shared_client.LifecycleState.DEGRADED
+    day_change_job.pause.assert_called_once_with()
+    day_change_job.resume.assert_called_once_with()
 
 
 def test_release_failure_does_not_mask_login_failure(monkeypatch, logged_in_client):
@@ -598,6 +658,49 @@ def test_authentication_failure_degrades_and_sets_retry_gate(
     assert status["next_retry_at"] is not None
 
 
+def test_client_job_restores_and_degrades_on_base_exception(
+    monkeypatch, logged_in_client
+):
+    failure = SystemExit("stop login")
+    headers = logged_in_client.headers
+
+    def abort_login():
+        logged_in_client.headers.pop("x-session-token")
+        logged_in_client.account_info = {"userId": "partial-user"}
+        logged_in_client.version_info = {"dataVersion": "partial-data"}
+        logged_in_client.master_split_paths = ["partial-path"]
+        logged_in_client.user_info = {"name": "partial-user"}
+        raise failure
+
+    logged_in_client.login.side_effect = abort_login
+    monkeypatch.setattr(
+        shared_client, "get_account_info", lambda: {"userId": "replacement-user"}
+    )
+    monkeypatch.setattr(shared_client, "day_change_job", Mock())
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+
+    with pytest.raises(SystemExit) as raised:
+        shared_client._client_job(
+            lambda: shared_client.login_account(True),
+            shared_client._ClientOperation.AUTHENTICATION,
+        )
+
+    assert raised.value is failure
+    assert logged_in_client.headers is headers
+    assert logged_in_client.headers["x-session-token"] == "active-token"
+    assert logged_in_client.account_info == {"userId": "current-user"}
+    assert logged_in_client.version_info == {"dataVersion": "current-data"}
+    assert logged_in_client.master_split_paths == ["current-path"]
+    assert logged_in_client.user_info == {"name": "current-user"}
+    with shared_client._lifecycle.lock:
+        assert shared_client._lifecycle.state is shared_client.LifecycleState.DEGRADED
+        assert shared_client._lifecycle.state not in (
+            shared_client.LifecycleState.INITIALIZING,
+            shared_client.LifecycleState.REAUTHENTICATING,
+        )
+        assert shared_client._lifecycle.active_auth_transaction_id is None
+
+
 @pytest.mark.parametrize("region", [AccountRegion.TW, AccountRegion.KR])
 @pytest.mark.parametrize("status", [401, 403])
 def test_tw_kr_auth_rejection_reports_and_discards_lease(
@@ -692,6 +795,39 @@ def test_fetch_master_split_allowlisted_calls_client(monkeypatch, reset_lifecycl
 
     assert result == {"k": "v"}
     client.call_pjsk_api.assert_called_once_with("/suite/master/valid")
+
+
+def test_fetch_master_split_forwards_expected_context(monkeypatch, logged_in_client):
+    digest = "a" * 64
+    logged_in_client.master_split_paths = ["suite/master/valid"]
+    logged_in_client.fetch_master_split.return_value = {"k": "v"}
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+
+    result = shared_client.fetch_master_split("suite/master/valid", digest)
+
+    assert result == {"k": "v"}
+    logged_in_client.fetch_master_split.assert_called_once_with(
+        "suite/master/valid", digest
+    )
+
+
+def test_update_snapshot_runs_through_serialized_client_job(
+    monkeypatch, logged_in_client
+):
+    snapshot = {
+        "maintenance": False,
+        "candidate_version_info": {"appVersion": "1"},
+        "master_split_paths": ["suite/master/valid"],
+        "split_path_version_identity": {"appVersion": "1"},
+        "split_path_context_digest": "a" * 64,
+    }
+    logged_in_client.update_snapshot.return_value = snapshot
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+
+    result = shared_client.update_snapshot()
+
+    assert result == snapshot
+    logged_in_client.update_snapshot.assert_called_once_with()
 
 
 def test_generic_call_pjsk_api_disabled_by_default(monkeypatch):
@@ -804,6 +940,131 @@ def test_hidden_auth_callback_success_and_failure(reset_lifecycle):
     status = shared_client.lifecycle_status()
     assert status["state"] == shared_client.LifecycleState.DEGRADED
     assert "secret" not in str(status["error"])
+
+
+def test_hidden_recovery_base_exception_finalizes_lifecycle_and_restores_client(
+    monkeypatch, reset_lifecycle
+):
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "user"}
+    client.headers["x-session-token"] = "previous-token"
+    client.version_info = {"appVersion": "previous-app"}
+    client.master_split_paths = ["previous-path"]
+    client.user_info = {"name": "previous-user"}
+    previous_state = client._capture_session_state()
+    failure = KeyboardInterrupt("interrupt hidden auth")
+
+    def abort_login():
+        client.headers["x-session-token"] = "partial-token"
+        client.version_info = {"appVersion": "partial-app"}
+        client.master_split_paths = ["partial-path"]
+        client.user_info = {"name": "partial-user"}
+        raise failure
+
+    client.login = Mock(side_effect=abort_login)
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.user = {"name": "previous-user"}
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
+        shared_client._publish_snapshot_locked()
+    shared_client._attach_lifecycle_callback(client)
+    monkeypatch.setattr(shared_client, "run_job", lambda job: job())
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        shared_client._client_job(
+            lambda: client._handle_http_error_retry(
+                Mock(status_code=403),
+                {"errorCode": "session_error"},
+                endpoint="/user/profile",
+            )
+        )
+
+    assert raised.value is failure
+    assert client._capture_session_state() == previous_state
+    assert client.protocol.headers is client.headers
+    with shared_client._lifecycle.lock:
+        assert shared_client._lifecycle.state is shared_client.LifecycleState.DEGRADED
+        assert shared_client._lifecycle.state not in (
+            shared_client.LifecycleState.INITIALIZING,
+            shared_client.LifecycleState.REAUTHENTICATING,
+        )
+        assert shared_client._lifecycle.active_auth_transaction_id is None
+        assert shared_client._lifecycle.hidden_auth_failure_pending is False
+
+
+@pytest.mark.parametrize("recovery", ["426", "agreement", "session"])
+def test_worker_recovery_baseexception_paths_finalize_lifecycle(
+    monkeypatch, reset_lifecycle, recovery
+):
+    from utils.task_queue import job_queue
+
+    monkeypatch.setattr(shared_client.Config, "ANSWER_QUEUE_TIMEOUT", 3)
+    monkeypatch.setattr(shared_client.Config, "JOB_QUEUE_TIMEOUT", 3)
+    client = APIClient(region="jp")
+    client.account_info = {"userId": "user"}
+    client.headers["x-session-token"] = "previous-token"
+    client.version_info = {"appVersion": "previous-app"}
+    client.master_split_paths = ["previous-path"]
+    client.user_info = {"name": "previous-user"}
+    previous_state = client._capture_session_state()
+    failure = KeyboardInterrupt(f"interrupt {recovery} recovery")
+
+    def mutate_and_fail():
+        client.headers["x-session-token"] = "partial-token"
+        client.version_info = {"appVersion": "partial-app"}
+        client.master_split_paths = ["partial-path"]
+        client.user_info = {"name": "partial-user"}
+        raise failure
+
+    if recovery == "426":
+        client._update_version_after_426 = lambda **kwargs: mutate_and_fail()
+        status_code = 426
+        response_data = None
+    elif recovery == "agreement":
+        client.accept_agreement = Mock(
+            side_effect=lambda: client.headers.update(
+                {"x-session-token": "agreement-token"}
+            )
+        )
+        client.login = Mock(side_effect=mutate_and_fail)
+        status_code = 406
+        response_data = {"errorCode": "rule_not_agreement"}
+    else:
+        client.login = Mock(side_effect=mutate_and_fail)
+        status_code = 403
+        response_data = {"errorCode": "session_error"}
+
+    with shared_client._lifecycle.lock:
+        shared_client._lifecycle.client = client
+        shared_client._lifecycle.authenticated = True
+        shared_client._lifecycle.user = {"name": "previous-user"}
+        shared_client._lifecycle.state = shared_client.LifecycleState.READY
+        shared_client._publish_snapshot_locked()
+    shared_client._attach_lifecycle_callback(client)
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        shared_client._client_job(
+            lambda: client._handle_http_error_retry(
+                Mock(status_code=status_code),
+                response_data,
+                endpoint="/user/profile",
+            )
+        )
+
+    assert raised.value is failure
+    assert client._capture_session_state() == previous_state
+    assert client.protocol.headers is client.headers
+    with shared_client._lifecycle.lock:
+        assert shared_client._lifecycle.state is shared_client.LifecycleState.DEGRADED
+        assert shared_client._lifecycle.state not in (
+            shared_client.LifecycleState.INITIALIZING,
+            shared_client.LifecycleState.REAUTHENTICATING,
+        )
+        assert shared_client._lifecycle.active_auth_transaction_id is None
+        assert shared_client._lifecycle.hidden_auth_failure_pending is False
+    job_queue.join()
+    assert job_queue.unfinished_tasks == 0
 
 
 def test_hidden_auth_callback_records_fresh_attempt_on_success_and_failure(

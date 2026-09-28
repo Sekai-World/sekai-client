@@ -490,8 +490,23 @@ def test_coordinator_prepare_passes_allow_push_false(monkeypatch, tmp_path):
         cu.jsonrpc_client,
         "request",
         lambda m, p=None: (
-            {"maintenance": False, "new_version": False}
-            if m in ("check_versions", "check_versions_simple")
+            {
+                "maintenance": False,
+                "candidate_version_info": {
+                    "appVersion": "1",
+                    "dataVersion": "1",
+                    "assetVersion": "1",
+                    "appHash": "test-hash",
+                },
+                "master_split_paths": ["suite/master/test"],
+                "split_path_version_identity": {
+                    "appVersion": "1",
+                    "dataVersion": "1",
+                    "assetVersion": "1",
+                },
+                "split_path_context_digest": "a" * 64,
+            }
+            if m == "update_snapshot"
             else {}
         ),
     )

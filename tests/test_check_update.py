@@ -1,4 +1,4 @@
-"""Unit tests for update source refresh selection."""
+"""Unit tests for checkUpdate behavior."""
 
 import json
 from unittest.mock import Mock, call
@@ -9,133 +9,20 @@ import check_update
 from utils.git import GitOutcome
 
 
-def test_jp_refresh_updates_split_paths_without_full_relogin(monkeypatch):
-    client = Mock()
-    client.request.side_effect = [
-        True,
-        ["master/path"],
-        {
-            "appVersion": "1.0",
-            "dataVersion": "1.0",
-            "assetVersion": "1.0",
-            "appHash": "hash-valid",
-        },
-    ]
-    monkeypatch.setattr(check_update, "jsonrpc_client", client)
-    monkeypatch.setattr(check_update, "pjsk_region", "jp")
-    monkeypatch.setattr(check_update, "check_update_simple_mode", False)
+def test_generate_and_publish_requires_cycle_candidate_before_staging(monkeypatch):
+    new_transaction_id = Mock(
+        side_effect=RuntimeError("staging setup started without a candidate")
+    )
+    clear_staging = Mock()
+    monkeypatch.setattr(check_update, "_CYCLE_CANDIDATE", None)
+    monkeypatch.setattr(check_update, "new_transaction_id", new_transaction_id)
+    monkeypatch.setattr(check_update, "_clear_staging_dir", clear_staging)
 
-    result = check_update._refresh_version_info_from_source()
+    with pytest.raises(RuntimeError, match="no version candidate"):
+        check_update._generate_and_publish(daily=False)
 
-    assert result == {
-        "appVersion": "1.0",
-        "dataVersion": "1.0",
-        "assetVersion": "1.0",
-        "appHash": "hash-valid",
-    }
-    assert client.request.call_args_list == [
-        call("is_login"),
-        call("refresh_master_split_paths"),
-        call("version_info"),
-    ]
-
-
-def test_jp_refresh_logs_in_when_client_has_no_session(monkeypatch):
-    client = Mock()
-    client.request.side_effect = [
-        False,
-        {"user": "info"},
-        {
-            "appVersion": "1.0",
-            "dataVersion": "1.0",
-            "assetVersion": "1.0",
-            "appHash": "hash-valid",
-        },
-    ]
-    monkeypatch.setattr(check_update, "jsonrpc_client", client)
-    monkeypatch.setattr(check_update, "pjsk_region", "jp")
-    monkeypatch.setattr(check_update, "check_update_simple_mode", False)
-
-    result = check_update._refresh_version_info_from_source()
-
-    assert result == {
-        "appVersion": "1.0",
-        "dataVersion": "1.0",
-        "assetVersion": "1.0",
-        "appHash": "hash-valid",
-    }
-    assert client.request.call_args_list == [
-        call("is_login"),
-        call("login"),
-        call("version_info"),
-    ]
-
-
-def test_kr_refresh_logs_in_before_requiring_cdn_version(monkeypatch):
-    client = Mock()
-    candidate = {
-        "appVersion": "1.0",
-        "dataVersion": "1.0",
-        "assetVersion": "1.0",
-        "cdnVersion": "cdn-kr",
-    }
-    client.request.side_effect = [False, {"loggedIn": True}, candidate]
-    monkeypatch.setattr(check_update, "jsonrpc_client", client)
-    monkeypatch.setattr(check_update, "pjsk_region", "kr")
-    monkeypatch.setattr(check_update, "check_update_simple_mode", False)
-
-    result = check_update._refresh_version_info_from_source()
-
-    assert result == candidate
-    assert client.request.call_args_list == [
-        call("is_login"),
-        call("login"),
-        call("version_info"),
-    ]
-
-
-def test_kr_refresh_skips_login_when_already_authenticated(monkeypatch):
-    client = Mock()
-    candidate = {
-        "appVersion": "1.0",
-        "dataVersion": "1.0",
-        "assetVersion": "1.0",
-        "cdnVersion": "cdn-kr",
-    }
-    client.request.side_effect = [True, candidate]
-    monkeypatch.setattr(check_update, "jsonrpc_client", client)
-    monkeypatch.setattr(check_update, "pjsk_region", "kr")
-    monkeypatch.setattr(check_update, "check_update_simple_mode", False)
-
-    result = check_update._refresh_version_info_from_source()
-
-    assert result == candidate
-    assert client.request.call_args_list == [
-        call("is_login"),
-        call("version_info"),
-    ]
-
-
-def test_refresh_recovers_when_is_login_rpc_fails(monkeypatch):
-    client = Mock()
-    candidate = {
-        "appVersion": "1.0",
-        "dataVersion": "1.0",
-        "assetVersion": "1.0",
-        "cdnVersion": "cdn-kr",
-    }
-    client.request.side_effect = [RuntimeError("rpc"), {"ready": True}, True, candidate]
-    monkeypatch.setattr(check_update, "jsonrpc_client", client)
-    monkeypatch.setattr(check_update, "pjsk_region", "kr")
-    monkeypatch.setattr(check_update, "check_update_simple_mode", False)
-
-    assert check_update._refresh_version_info_from_source() == candidate
-    assert client.request.call_args_list == [
-        call("is_login"),
-        call("ensure_ready"),
-        call("is_login"),
-        call("version_info"),
-    ]
+    new_transaction_id.assert_not_called()
+    clear_staging.assert_not_called()
 
 
 def test_merge_existing_file_data_replaces_matching_ids(tmp_path):
@@ -369,6 +256,32 @@ def test_get_splitted_master_data_uses_fetch_master_split(monkeypatch):
     )
 
 
+def test_get_splitted_master_data_uses_retained_snapshot_context(monkeypatch):
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, params=None):
+            self.calls.append((method, params))
+            assert method == "fetch_master_split"
+            return {"cards": [{"id": 1}]}
+
+    fake = FakeClient()
+    snapshot = {
+        "master_split_paths": ["suite/master/a"],
+        "split_path_context_digest": "d" * 64,
+    }
+    monkeypatch.setattr(check_update, "jsonrpc_client", fake)
+    monkeypatch.setattr(check_update, "pjsk_region", "jp")
+
+    result = check_update.get_splitted_master_data(snapshot)
+
+    assert result == {"cards": [{"id": 1}]}
+    assert fake.calls == [
+        ("fetch_master_split", ["suite/master/a", "d" * 64]),
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Deadline unit tests (cooperative update-cycle deadline)
 # --------------------------------------------------------------------------- #
@@ -411,7 +324,7 @@ def test_deadline_rejects_infinite():
 
 def test_deadline_rejects_non_number():
     with pytest.raises(ValueError):
-        check_update.Deadline("3600")  # type: ignore[arg-type]
+        check_update.Deadline("3600")
 
 
 def test_deadline_expires_after_interval(monkeypatch):
