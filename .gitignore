@@ -204,6 +204,8 @@ strapi-api-token
 
 # Local check-update durable runtime state
 .check_update_daily_due.json
+/.check_update_daily_due.*.json
+/.check_update_daily_due.*.json.tmp.*
 
 
 # Credentials, identity, and local secrets

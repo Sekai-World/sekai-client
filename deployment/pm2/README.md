@@ -44,6 +44,18 @@ default terminal-record retention is 24 hours, the per-run drain budget is 30
 seconds, and the individual delivery timeout is 15 seconds; tune these only
 with measured scheduler and upstream latency evidence.
 
+## Regional check-update state
+
+Each `checkUpdate-*` process must set `SEKAI_REGION` to its supported region
+(`jp`, `en`, `tw`, `kr`, or `cn`). When several regional updater processes share
+one code worktree, keep their regional repositories, event-tracker outboxes,
+and daily-completion markers distinct. Daily markers default to a
+region-specific file beside the updater code. To store a marker elsewhere, set
+`CHECK_UPDATE_DAILY_DUE_STATE_PATH` to an absolute path on persistent storage;
+configure a different path for each process sharing a worktree. The legacy
+unqualified daily marker is not read or migrated automatically. If a regional
+marker is absent, that region's daily update remains due until successful.
+
 ## Security requirements
 
 - Use the same non-empty `INTERNAL_RPC_TOKEN` for all formal shared clients,

@@ -44,6 +44,7 @@ import inspect
 import json
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from unittest.mock import Mock
 
@@ -339,8 +340,115 @@ def test_scheduler_trigger_uses_asia_tokyo_timezone():
     assert str(cu.scheduler.timezone) in ("Asia/Tokyo", "Japan")
 
 
+def test_daily_due_state_default_paths_are_regional_and_normalized(monkeypatch):
+    monkeypatch.delenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", raising=False)
+
+    paths = {
+        region: cu._daily_due_state_path(region.upper())
+        for region in ("jp", "en", "tw", "kr", "cn")
+    }
+
+    assert len(set(paths.values())) == 5
+    for region, state_path in paths.items():
+        assert os.path.basename(state_path) == f".check_update_daily_due.{region}.json"
+
+    assert cu._daily_due_state_path(" EN ") == paths["en"]
+
+
+@pytest.mark.parametrize("region", ["", "JP/../../tmp", "jp\\..\\en", "xx"])
+def test_daily_due_state_rejects_invalid_region(region, monkeypatch):
+    monkeypatch.delenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", raising=False)
+
+    with pytest.raises(ValueError, match="SEKAI_REGION"):
+        cu._daily_due_state_path(region)
+
+
+def test_daily_due_state_absolute_override(monkeypatch, tmp_path):
+    configured_path = tmp_path / "persistent" / "daily-due.json"
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(configured_path))
+
+    assert cu._daily_due_state_path("jp") == str(configured_path)
+
+
+def test_daily_due_state_rejects_relative_override_before_bootstrap_side_effects(
+    monkeypatch,
+):
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", "relative/due.json")
+    monkeypatch.setattr(cu, "check_update_simple_mode", False)
+    init_client = Mock()
+    prepare_repositories = Mock()
+    try_refresh = Mock()
+    monkeypatch.setattr(cu, "_bootstrap_init_client", init_client)
+    monkeypatch.setattr(cu, "_bootstrap_prepare_repositories", prepare_repositories)
+    monkeypatch.setattr(cu, "_bootstrap_try_refresh", try_refresh)
+
+    with pytest.raises(ValueError, match="must be absolute"):
+        cu.bootstrap()
+
+    init_client.assert_not_called()
+    prepare_repositories.assert_not_called()
+    try_refresh.assert_not_called()
+
+
+def test_legacy_daily_due_marker_is_ignored_and_left_untouched(monkeypatch, tmp_path):
+    module_path = tmp_path / "check_update.py"
+    legacy_path = tmp_path / ".check_update_daily_due.json"
+    legacy_contents = '{"last_completed_tokyo_date":"2026-01-01"}\n'
+    legacy_path.write_text(legacy_contents, encoding="utf-8")
+    monkeypatch.setattr(cu, "__file__", str(module_path))
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    monkeypatch.delenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", raising=False)
+
+    assert cu._daily_due_state_path() == str(
+        tmp_path / ".check_update_daily_due.jp.json"
+    )
+    assert cu._read_last_completed_daily_date() is None
+    assert legacy_path.read_text(encoding="utf-8") == legacy_contents
+
+
+def test_jp_daily_success_does_not_complete_en_marker(monkeypatch, tmp_path):
+    monkeypatch.setattr(cu, "__file__", str(tmp_path / "check_update.py"))
+    monkeypatch.delenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", raising=False)
+    monkeypatch.setattr(cu, "pjsk_region", "jp")
+    jp_path = cu._daily_due_state_path()
+
+    cu._mark_daily_completed(due_date="2026-01-01")
+
+    monkeypatch.setattr(cu, "pjsk_region", "en")
+    en_path = cu._daily_due_state_path()
+    assert jp_path != en_path
+    assert cu._read_last_completed_daily_date() is None
+    assert cu._read_last_completed_daily_date(jp_path) == "2026-01-01"
+
+
+def test_concurrent_regional_daily_marker_writes_are_atomic(tmp_path):
+    regions = ("jp", "en", "tw", "kr", "cn")
+    state_paths = {
+        region: tmp_path / f".check_update_daily_due.{region}.json"
+        for region in regions
+    }
+
+    def write_region_marker(region):
+        cu._write_last_completed_daily_date(
+            f"2026-01-0{regions.index(region) + 1}", str(state_paths[region])
+        )
+
+    with ThreadPoolExecutor(max_workers=len(regions)) as pool:
+        list(pool.map(write_region_marker, regions))
+
+    for index, region in enumerate(regions, start=1):
+        state_path = state_paths[region]
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        assert payload == {
+            "last_completed_tokyo_date": f"2026-01-0{index}",
+            "timezone": "Asia/Tokyo",
+        }
+    assert list(tmp_path.glob(".check_update_daily_due.*.json.tmp.*")) == []
+
+
 def test_daily_due_before_0400_never_daily(tmp_path, monkeypatch):
-    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
     # Incomplete prior day must not promote pre-04:00 callbacks.
     assert cu._is_daily_run(datetime(2026, 1, 1, 3, 59)) is False
     assert cu._is_daily_run(datetime(2026, 1, 1, 0, 0)) is False
@@ -348,7 +456,7 @@ def test_daily_due_before_0400_never_daily(tmp_path, monkeypatch):
 
 
 def test_daily_due_after_0400_until_completed(tmp_path, monkeypatch):
-    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
     # Calendar-date identity: any at/after 04:00 Tokyo is daily while incomplete.
     assert cu._is_daily_run(datetime(2026, 1, 1, 4, 0)) is True
     assert cu._is_daily_run(datetime(2026, 1, 1, 4, 30)) is True
@@ -366,7 +474,7 @@ def test_daily_due_after_0400_until_completed(tmp_path, monkeypatch):
 
 def test_daily_due_late_coalesced_callback_still_daily(tmp_path, monkeypatch):
     """A late/coalesced half-hour callback after 04:00 still promotes to daily."""
-    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
     calls = []
 
     def _fake_cycle(daily):
@@ -392,7 +500,7 @@ def test_daily_due_late_coalesced_callback_still_daily(tmp_path, monkeypatch):
 
 def test_daily_due_persistence_survives_restart_and_success_only(tmp_path, monkeypatch):
     state_path = tmp_path / "due.json"
-    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(state_path))
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(state_path))
     real_datetime = cu.datetime
     tokyo = cu._TOKYO_TZ
 
@@ -439,7 +547,7 @@ def test_daily_due_persistence_survives_restart_and_success_only(tmp_path, monke
 
     # An ordinary recovered transaction has no durable daily-date proof and
     # must not count as completion for the current daily due date.
-    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due2.json"))
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(tmp_path / "due2.json"))
     monkeypatch.setattr(
         cu, "_run_with_authoritative_locks", lambda *a, **k: "recovered"
     )
@@ -452,7 +560,7 @@ def test_daily_success_marks_dispatch_date_when_publish_crosses_midnight(
 ):
     """The due marker belongs to dispatch, not the clock at publish completion."""
     state_path = tmp_path / "due.json"
-    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(state_path))
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(state_path))
     monkeypatch.setattr(cu, "_tokyo_calendar_date", lambda now=None: "2026-01-01")
 
     def _cross_midnight(*args, **kwargs):
@@ -468,7 +576,7 @@ def test_daily_success_marks_dispatch_date_when_publish_crosses_midnight(
 
 def test_overlapping_trigger_cannot_change_active_daily_due_date(monkeypatch, tmp_path):
     state_path = tmp_path / "due.json"
-    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(state_path))
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(state_path))
     dates = iter(["2026-01-01", "2026-01-02"])
     monkeypatch.setattr(cu, "_tokyo_calendar_date", lambda: next(dates))
     entered = threading.Event()
@@ -491,7 +599,7 @@ def test_overlapping_trigger_cannot_change_active_daily_due_date(monkeypatch, tm
 
 def test_daily_due_write_is_atomic_and_fsynced(tmp_path, monkeypatch):
     state_path = tmp_path / "subdir" / "due.json"
-    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(state_path))
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(state_path))
     cu._write_last_completed_daily_date("2026-07-21")
     assert state_path.is_file()
     payload = json.loads(state_path.read_text(encoding="utf-8"))
@@ -505,7 +613,7 @@ def test_daily_due_write_is_atomic_and_fsynced(tmp_path, monkeypatch):
 def test_scheduled_dispatch_daily_when_due_ordinary_when_complete(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(cu, "_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
+    monkeypatch.setenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH", str(tmp_path / "due.json"))
     calls = []
 
     def _fake_cycle(daily):

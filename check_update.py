@@ -158,11 +158,7 @@ _TOKYO_TZ = timezone("Asia/Tokyo")
 # Calendar-date daily window starts at 04:00 Asia/Tokyo. Before that hour a
 # scheduled callback is never treated as daily, even if yesterday is incomplete.
 _DAILY_DUE_HOUR = 4
-# Durable, repo-adjacent state for the last fully successful Tokyo daily cycle.
-# Kept outside the transaction journal so recovery ambiguity cannot clear it.
-_DAILY_DUE_STATE_PATH = path.join(
-    path.dirname(path.abspath(__file__)), ".check_update_daily_due.json"
-)
+_SUPPORTED_DAILY_DUE_REGIONS = frozenset({"jp", "en", "tw", "kr", "cn"})
 
 
 class CycleDeadlineExceeded(Exception):
@@ -1288,9 +1284,25 @@ def _tokyo_calendar_date(now: datetime | None = None) -> str:
     return _tokyo_now(now).strftime("%Y-%m-%d")
 
 
-def _daily_due_state_path() -> str:
-    """Default durable path for Tokyo daily completion state (repo-adjacent)."""
-    return _DAILY_DUE_STATE_PATH
+def _daily_due_state_path(region: str | None = None) -> str:
+    """Resolve the durable Tokyo daily marker for one supported region."""
+    configured_region = pjsk_region if region is None else region
+    if not isinstance(configured_region, str):
+        raise ValueError("SEKAI_REGION must be one of jp, en, tw, kr, cn")
+    normalized_region = configured_region.strip().lower()
+    if normalized_region not in _SUPPORTED_DAILY_DUE_REGIONS:
+        raise ValueError("SEKAI_REGION must be one of jp, en, tw, kr, cn")
+
+    configured_path = getenv("CHECK_UPDATE_DAILY_DUE_STATE_PATH")
+    if configured_path is not None:
+        if not configured_path or not path.isabs(configured_path):
+            raise ValueError("CHECK_UPDATE_DAILY_DUE_STATE_PATH must be absolute")
+        return path.abspath(configured_path)
+
+    return path.join(
+        path.dirname(path.abspath(__file__)),
+        f".check_update_daily_due.{normalized_region}.json",
+    )
 
 
 def _read_last_completed_daily_date(state_path: str | None = None) -> str | None:
@@ -3363,6 +3375,7 @@ def _bootstrap_try_refresh() -> bool:
 
 
 def bootstrap():
+    _daily_due_state_path()
     if check_update_simple_mode:
         bootstrap_simple()
         return
@@ -3397,6 +3410,7 @@ def bootstrap():
 
 
 def bootstrap_simple():
+    _daily_due_state_path()
     if pjsk_region not in ("cn", "tw", "kr"):
         raise RuntimeError(
             "Simple check-update mode only supports Nuverse servers: cn, tw, kr"
