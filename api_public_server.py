@@ -21,8 +21,8 @@ from math import ceil
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, json, jsonify, send_file
-from werkzeug.exceptions import BadRequest
+from flask import Flask, Response, json, jsonify, request, send_file
+from werkzeug.exceptions import BadRequest, HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.wrappers import Response as WerkzeugResponse
 
@@ -30,7 +30,13 @@ from config import Config
 from logging_config import enable_log_redaction
 from service_dashboard import dashboard_status, restart_region, restart_service
 from utils.decorators import require_apikey
-from utils.jsonrpc_client import JSONRPCClient
+from utils.jsonrpc_client import (
+    ERROR_KIND_DEADLINE_EXCEEDED,
+    ERROR_KIND_QUEUE_FULL,
+    JSONRPCClient,
+    JSONRPCError,
+    JSONRPCUnavailable,
+)
 
 enable_log_redaction()
 logger = logging.getLogger(__name__)
@@ -171,9 +177,23 @@ def _lifecycle_error_status(region: str, error: BaseException) -> dict[str, Any]
     return _safe_lifecycle_status(region, {}, unavailable=True)
 
 
+def _snapshot_is_ready(client: JSONRPCClient, region: str) -> bool:
+    """Whether the region reports READY, read without using its job queue."""
+    try:
+        snapshot = client.request("readiness", [], timeout=READINESS_PROBE_TIMEOUT)
+    except Exception:
+        return False
+    return _safe_lifecycle_status(region, snapshot)["ready"]
+
+
 def get_ready_regional_client(region: str) -> JSONRPCClient:
     """Return a known-region client after a target-only readiness transition."""
     client = get_regional_client(region)
+    # ``ensure_ready`` is itself a queued job on the region's single worker, so
+    # it would wait behind any running game call just to report "ready".  Only
+    # a region that is not already ready needs that transition.
+    if _snapshot_is_ready(client, region):
+        return client
     try:
         lifecycle = client.request("ensure_ready", [])
     except Exception as error:
@@ -212,6 +232,51 @@ def handle_regional_lifecycle_unavailable(
     error: RegionalLifecycleUnavailable,
 ) -> tuple[Response, int]:
     return _regional_lifecycle_response(error)
+
+
+def _error_response(
+    code: str, message: str, status: int, *, retry_after: float | None = None
+) -> tuple[Response, int]:
+    """Build a JSON error that never contains upstream text."""
+    payload: dict[str, Any] = {"status": "error", "code": code, "message": message}
+    region = (request.view_args or {}).get("region")
+    if region in client_map:
+        payload["region"] = region
+    response = jsonify(payload)
+    if retry_after is not None:
+        response.headers["Retry-After"] = str(max(1, ceil(retry_after)))
+    return response, status
+
+
+@app.errorhandler(JSONRPCError)
+def handle_rpc_error(error: JSONRPCError) -> tuple[Response, int]:
+    """Map a regional RPC failure to a status callers can act on."""
+    if error.kind == ERROR_KIND_QUEUE_FULL:
+        return _error_response(
+            "region_busy",
+            "region is busy; retry shortly",
+            503,
+            retry_after=error.retry_after or 1,
+        )
+    if error.kind == ERROR_KIND_DEADLINE_EXCEEDED:
+        return _error_response("upstream_timeout", "region did not answer in time", 504)
+    logger.warning("Regional RPC returned an error (code=%s)", error.code)
+    return _error_response("upstream_error", "region request failed", 502)
+
+
+@app.errorhandler(JSONRPCUnavailable)
+def handle_rpc_unavailable(error: JSONRPCUnavailable) -> tuple[Response, int]:
+    logger.warning("Regional RPC unavailable: %s", type(error).__name__)
+    return _error_response("region_unavailable", "region is unavailable", 503)
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(error: Exception) -> Any:
+    """Keep every failure JSON; HTTP errors keep their own semantics."""
+    if isinstance(error, HTTPException):
+        return error
+    logger.exception("Unhandled error in public API request")
+    return _error_response("internal_error", "internal server error", 500)
 
 
 def init_regional_client(region: str) -> None:

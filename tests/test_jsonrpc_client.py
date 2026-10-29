@@ -10,7 +10,7 @@ import pytest
 import requests
 
 from config import Config
-from utils.jsonrpc_client import JSONRPCClient
+from utils.jsonrpc_client import JSONRPCClient, JSONRPCError, JSONRPCUnavailable
 
 
 @pytest.fixture(autouse=True)
@@ -170,6 +170,54 @@ class TestJSONRPCClient:
         assert error == "JSON-RPC HTTP error (HTTP 502)"
         assert "upstream-secret-response" not in error
         assert "raw-response-secret" not in error
+
+    @pytest.mark.parametrize(
+        ("data", "kind", "retry_after"),
+        [
+            (
+                {"code": "queue_full", "retryable": True, "retry_after": 1},
+                "queue_full",
+                1.0,
+            ),
+            ({"code": "queue_full", "retry_after": "soon"}, "queue_full", None),
+            ({"code": "queue_full", "retry_after": -5}, "queue_full", None),
+            ({"code": "queue_full", "retry_after": True}, "queue_full", None),
+            ("Request deadline exceeded", "deadline_exceeded", None),
+            ("PJSK API request failed (HTTP 500)", None, None),
+            ({"code": "other", "retry_after": 1}, None, None),
+            (None, None, None),
+        ],
+    )
+    @patch("requests.post")
+    def test_error_keeps_only_allow_listed_kind(
+        self, mock_post, data, kind, retry_after
+    ):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "jsonrpc": "2.0",
+            "error": {"code": -32603, "message": "upstream-secret", "data": data},
+            "id": 1,
+        }
+        mock_post.return_value = response
+
+        with pytest.raises(JSONRPCError) as excinfo:
+            JSONRPCClient().request("method")
+
+        assert excinfo.value.code == -32603
+        assert excinfo.value.kind == kind
+        assert excinfo.value.retry_after == retry_after
+        assert str(excinfo.value) == "JSON-RPC error (code=-32603)"
+
+    @patch("requests.post")
+    def test_transport_failure_is_unavailable(self, mock_post):
+        mock_post.side_effect = requests.ConnectionError("upstream-secret")
+
+        with pytest.raises(JSONRPCUnavailable) as excinfo:
+            JSONRPCClient().request("method")
+
+        assert str(excinfo.value) == "JSON-RPC request failed"
+        assert isinstance(excinfo.value, RuntimeError)
 
     def test_loopback_includes_ipv4_mapped_ipv6(self):
         assert JSONRPCClient("http://[::ffff:127.0.0.1]:39390/")._is_loopback_target()
