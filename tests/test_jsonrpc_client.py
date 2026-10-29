@@ -200,9 +200,10 @@ class TestJSONRPCClient:
             "id": 1,
         }
         mock_post.return_value = response
+        client = JSONRPCClient()
 
         with pytest.raises(JSONRPCError) as excinfo:
-            JSONRPCClient().request("method")
+            client.request("method")
 
         assert excinfo.value.code == -32603
         assert excinfo.value.kind == kind
@@ -212,9 +213,10 @@ class TestJSONRPCClient:
     @patch("requests.post")
     def test_transport_failure_is_unavailable(self, mock_post):
         mock_post.side_effect = requests.ConnectionError("upstream-secret")
+        client = JSONRPCClient()
 
         with pytest.raises(JSONRPCUnavailable) as excinfo:
-            JSONRPCClient().request("method")
+            client.request("method")
 
         assert str(excinfo.value) == "JSON-RPC request failed"
         assert isinstance(excinfo.value, RuntimeError)
