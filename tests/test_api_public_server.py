@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 import api_public_server as public_api
+from utils.jsonrpc_client import JSONRPCError, JSONRPCUnavailable
 
 
 class FakeRPC:
@@ -35,29 +36,135 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Any:
     return public_api.app.test_client()
 
 
-def test_region_route_only_ensures_target_region(
+READY = {
+    "region": "jp",
+    "state": "READY",
+    "initialized": True,
+    "authenticated": True,
+    "ready": True,
+}
+
+
+def test_ready_region_skips_queued_ensure_ready(
     client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    jp = FakeRPC(
-        {
-            "ensure_ready": {
-                "region": "jp",
-                "state": "READY",
-                "initialized": True,
-                "authenticated": True,
-                "ready": True,
-            },
-            "fetch_user_profile": {"id": "user"},
-        }
-    )
+    jp = FakeRPC({"readiness": READY, "fetch_user_profile": {"id": "user"}})
     others = {region: FakeRPC({}) for region in ("en", "tw", "kr")}
     monkeypatch.setattr(public_api, "client_map", {"jp": jp, **others})
 
     response = client.get("/jp/user/42/profile", headers={"x-api-token": "test-token"})
 
     assert response.status_code == 200
-    assert jp.calls == ["ensure_ready", "fetch_user_profile"]
+    assert jp.calls == ["readiness", "fetch_user_profile"]
+    assert jp.timeouts == {"readiness": public_api.READINESS_PROBE_TIMEOUT}
     assert all(not fake.calls for fake in others.values())
+
+
+def test_unready_region_falls_back_to_ensure_ready(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jp = FakeRPC(
+        {
+            "readiness": {"region": "jp", "state": "DEGRADED", "ready": False},
+            "ensure_ready": READY,
+            "fetch_user_profile": {"id": "user"},
+        }
+    )
+    monkeypatch.setattr(public_api, "client_map", {"jp": jp})
+
+    response = client.get("/jp/user/42/profile", headers={"x-api-token": "test-token"})
+
+    assert response.status_code == 200
+    assert jp.calls == ["readiness", "ensure_ready", "fetch_user_profile"]
+
+
+def test_failed_readiness_probe_falls_back_to_ensure_ready(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jp = FakeRPC(
+        {
+            "readiness": JSONRPCUnavailable("down"),
+            "ensure_ready": READY,
+            "fetch_user_profile": {"id": "user"},
+        }
+    )
+    monkeypatch.setattr(public_api, "client_map", {"jp": jp})
+
+    response = client.get("/jp/user/42/profile", headers={"x-api-token": "test-token"})
+
+    assert response.status_code == 200
+    assert jp.calls == ["readiness", "ensure_ready", "fetch_user_profile"]
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code", "retry_after"),
+    [
+        (
+            JSONRPCError(
+                "JSON-RPC error (code=-32603)",
+                code=-32603,
+                kind="queue_full",
+                retry_after=1,
+            ),
+            503,
+            "region_busy",
+            "1",
+        ),
+        (
+            JSONRPCError("JSON-RPC error", kind="queue_full", retry_after=2.2),
+            503,
+            "region_busy",
+            "3",
+        ),
+        (JSONRPCError("JSON-RPC error", kind="queue_full"), 503, "region_busy", "1"),
+        (
+            JSONRPCError("JSON-RPC error", kind="deadline_exceeded"),
+            504,
+            "upstream_timeout",
+            None,
+        ),
+        (
+            JSONRPCError("JSON-RPC error (code=-32603)", code=-32603),
+            502,
+            "upstream_error",
+            None,
+        ),
+        (
+            JSONRPCUnavailable("JSON-RPC request failed"),
+            503,
+            "region_unavailable",
+            None,
+        ),
+        (RuntimeError("secret-detail"), 500, "internal_error", None),
+    ],
+)
+def test_regional_failures_are_json_with_actionable_status(
+    client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    status: int,
+    code: str,
+    retry_after: str | None,
+) -> None:
+    jp = FakeRPC({"readiness": READY, "fetch_user_profile": error})
+    monkeypatch.setattr(public_api, "client_map", {"jp": jp})
+
+    response = client.get("/jp/user/42/profile", headers={"x-api-token": "test-token"})
+
+    assert response.status_code == status
+    assert response.is_json
+    body = response.get_json()
+    assert body["status"] == "error"
+    assert body["code"] == code
+    assert body["region"] == "jp"
+    assert response.headers.get("Retry-After") == retry_after
+    assert "secret-detail" not in response.get_data(as_text=True)
+
+
+def test_http_errors_keep_their_own_status(client: Any) -> None:
+    response = client.get("/jp/user/42/profile")
+
+    assert response.status_code == 401
 
 
 def test_unready_region_returns_redacted_503_and_retry_after(
@@ -193,13 +300,7 @@ def test_jp_en_target_user_event_ranking_is_proxied(
 ) -> None:
     regional = FakeRPC(
         {
-            "ensure_ready": {
-                "region": region,
-                "state": "READY",
-                "initialized": True,
-                "authenticated": True,
-                "ready": True,
-            },
+            "readiness": {**READY, "region": region},
             "fetch_user_event_ranking": {"rankings": []},
         }
     )
@@ -211,7 +312,7 @@ def test_jp_en_target_user_event_ranking_is_proxied(
 
     assert response.status_code == 200
     assert response.get_json() == {"status": "success", "data": {"rankings": []}}
-    assert regional.calls == ["ensure_ready", "fetch_user_event_ranking"]
+    assert regional.calls == ["readiness", "fetch_user_event_ranking"]
 
 
 @pytest.mark.parametrize("region", ["cn", "tw", "kr"])

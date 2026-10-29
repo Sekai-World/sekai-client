@@ -21,6 +21,55 @@ from config import Config
 INTERNAL_RPC_TOKEN_HEADER = "x-internal-rpc-token"
 INTERNAL_RPC_TIMEOUT_HEADER = "x-internal-rpc-timeout-ms"
 
+# The only upstream error conditions whose meaning may cross this boundary.
+# Everything else about an upstream error (message, data) stays hidden.
+ERROR_KIND_QUEUE_FULL = "queue_full"
+ERROR_KIND_DEADLINE_EXCEEDED = "deadline_exceeded"
+_DEADLINE_EXCEEDED_DATA = "Request deadline exceeded"
+_MAX_RETRY_AFTER_SECONDS = 3600.0
+
+
+class JSONRPCError(RuntimeError):
+    """The remote JSON-RPC server answered with an error response.
+
+    Only the numeric error code and an allow-listed ``kind`` are retained, so
+    callers can tell a retryable overload from a real failure without ever
+    seeing upstream error text.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: int | None = None,
+        kind: str | None = None,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.kind = kind
+        self.retry_after = retry_after
+
+
+class JSONRPCUnavailable(RuntimeError):
+    """The remote JSON-RPC server could not be reached or timed out."""
+
+
+def _classify_error_data(data: Any) -> tuple[str | None, float | None]:
+    """Reduce upstream error ``data`` to an allow-listed kind and retry delay."""
+    if data == _DEADLINE_EXCEEDED_DATA:
+        return ERROR_KIND_DEADLINE_EXCEEDED, None
+    if isinstance(data, dict) and data.get("code") == ERROR_KIND_QUEUE_FULL:
+        retry_after = data.get("retry_after")
+        if (
+            isinstance(retry_after, (int, float))
+            and not isinstance(retry_after, bool)
+            and 0 < retry_after <= _MAX_RETRY_AFTER_SECONDS
+        ):
+            return ERROR_KIND_QUEUE_FULL, float(retry_after)
+        return ERROR_KIND_QUEUE_FULL, None
+    return None, None
+
 
 class JSONRPCClient:
     """
@@ -158,7 +207,7 @@ class JSONRPCClient:
                 allow_redirects=False,
             )
         except requests.RequestException:
-            raise RuntimeError("JSON-RPC request failed") from None
+            raise JSONRPCUnavailable("JSON-RPC request failed") from None
 
         status_code = r.status_code
         if isinstance(status_code, int) and 300 <= status_code < 400:
@@ -185,12 +234,18 @@ class JSONRPCClient:
         if not isinstance(parsed, Error):
             raise RuntimeError("Batch JSON-RPC responses are not supported")
 
+        kind, retry_after = _classify_error_data(getattr(parsed, "data", None))
         error_code = getattr(parsed, "code", None)
         if isinstance(error_code, int) and not isinstance(error_code, bool):
             # Error codes are useful for callers, but never expose the
             # upstream message or data and keep the context bounded.
-            raise RuntimeError(f"JSON-RPC error (code={str(error_code)[:32]})")
-        raise RuntimeError("JSON-RPC error")
+            raise JSONRPCError(
+                f"JSON-RPC error (code={str(error_code)[:32]})",
+                code=error_code,
+                kind=kind,
+                retry_after=retry_after,
+            )
+        raise JSONRPCError("JSON-RPC error", kind=kind, retry_after=retry_after)
 
     @property
     def url(self) -> str:
