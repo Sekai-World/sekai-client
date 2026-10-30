@@ -10,7 +10,12 @@ import pytest
 import requests
 
 from config import Config
-from utils.jsonrpc_client import JSONRPCClient, JSONRPCError, JSONRPCUnavailable
+from utils.jsonrpc_client import (
+    JSONRPCClient,
+    JSONRPCError,
+    JSONRPCTimeout,
+    JSONRPCUnavailable,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -220,6 +225,21 @@ class TestJSONRPCClient:
 
         assert str(excinfo.value) == "JSON-RPC request failed"
         assert isinstance(excinfo.value, RuntimeError)
+        assert not isinstance(excinfo.value, JSONRPCTimeout)
+
+    @pytest.mark.parametrize(
+        "failure", [requests.ReadTimeout, requests.ConnectTimeout, requests.Timeout]
+    )
+    @patch("requests.post")
+    def test_transport_timeout_is_distinguished(self, mock_post, failure):
+        mock_post.side_effect = failure("upstream-secret")
+        client = JSONRPCClient()
+
+        with pytest.raises(JSONRPCTimeout) as excinfo:
+            client.request("method")
+
+        assert str(excinfo.value) == "JSON-RPC request timed out"
+        assert isinstance(excinfo.value, JSONRPCUnavailable)
 
     def test_loopback_includes_ipv4_mapped_ipv6(self):
         assert JSONRPCClient("http://[::ffff:127.0.0.1]:39390/")._is_loopback_target()

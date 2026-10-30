@@ -57,6 +57,7 @@ Some files need to have specific environment variables, listed below
 | `GIT_FOLDER_SEKAI_I18N` | sekai i18n git project name (default: sekai-i18n) | | ✅ | | |
 | `GIT_FOLDER_SEKAI_MASTER_DB_DIFF` | sekai master db diff git project name (default: sekai-master-db-diff) | | ✅ | | |
 | `REMOTE_GIT_BASE_URL` | git remote base url | | ✅ | | |
+| `PUBLIC_REQUEST_TIMEOUT` | Seconds a public API data request may take, queue wait included (default: 30). Exceeding it returns `504 upstream_timeout`. | | | | ✅ |
 | `STRAPI_BASE_URL` | strapi base url | | | ✅ | |
 | `SEKAI_API_KEY` | sekai api key | | | ✅ | |
 | `JSONRPC_PORT` | Shared client jsonrpc port | | ✅ | ✅ | |

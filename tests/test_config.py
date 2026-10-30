@@ -92,6 +92,11 @@ class TestConfigValues:
         assert Config.REQUEST_TIMEOUT > 0
         assert Config.REQUEST_TIMEOUT == 150.0
 
+    def test_public_request_timeout_is_shorter_than_internal_default(self):
+        """Public requests get a tighter budget than internal game calls."""
+        assert Config.PUBLIC_REQUEST_TIMEOUT == 30.0
+        assert Config.PUBLIC_REQUEST_TIMEOUT < Config.REQUEST_TIMEOUT
+
     def test_job_queue_timeout_default(self):
         """Test JOB_QUEUE_TIMEOUT has reasonable default."""
         assert Config.JOB_QUEUE_TIMEOUT > 0

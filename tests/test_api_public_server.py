@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 import api_public_server as public_api
-from utils.jsonrpc_client import JSONRPCError, JSONRPCUnavailable
+from utils.jsonrpc_client import JSONRPCError, JSONRPCTimeout, JSONRPCUnavailable
 
 
 class FakeRPC:
@@ -56,7 +56,10 @@ def test_ready_region_skips_queued_ensure_ready(
 
     assert response.status_code == 200
     assert jp.calls == ["readiness", "fetch_user_profile"]
-    assert jp.timeouts == {"readiness": public_api.READINESS_PROBE_TIMEOUT}
+    assert jp.timeouts == {
+        "readiness": public_api.READINESS_PROBE_TIMEOUT,
+        "fetch_user_profile": public_api.Config.PUBLIC_REQUEST_TIMEOUT,
+    }
     assert all(not fake.calls for fake in others.values())
 
 
@@ -133,6 +136,12 @@ def test_failed_readiness_probe_falls_back_to_ensure_ready(
             JSONRPCUnavailable("JSON-RPC request failed"),
             503,
             "region_unavailable",
+            None,
+        ),
+        (
+            JSONRPCTimeout("JSON-RPC request timed out"),
+            504,
+            "upstream_timeout",
             None,
         ),
         (RuntimeError("secret-detail"), 500, "internal_error", None),
@@ -313,6 +322,10 @@ def test_jp_en_target_user_event_ranking_is_proxied(
     assert response.status_code == 200
     assert response.get_json() == {"status": "success", "data": {"rankings": []}}
     assert regional.calls == ["readiness", "fetch_user_event_ranking"]
+    assert (
+        regional.timeouts["fetch_user_event_ranking"]
+        == public_api.Config.PUBLIC_REQUEST_TIMEOUT
+    )
 
 
 @pytest.mark.parametrize("region", ["cn", "tw", "kr"])
