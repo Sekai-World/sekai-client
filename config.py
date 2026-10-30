@@ -122,6 +122,9 @@ class Config:
     REQUEST_TIMEOUT: float = _parse_float_env("REQUEST_TIMEOUT", 150.0)
     """Timeout for all external HTTP requests (in seconds)"""
 
+    PUBLIC_REQUEST_TIMEOUT: float = _parse_float_env("PUBLIC_REQUEST_TIMEOUT", 30.0)
+    """Budget for one public API data request, queue wait included (in seconds)"""
+
     JOB_QUEUE_TIMEOUT: float = _parse_float_env("JOB_QUEUE_TIMEOUT", 30.0)
     """Timeout for enqueuing jobs to the worker (in seconds)"""
 
@@ -328,6 +331,9 @@ class Config:
 
         if cls.REQUEST_TIMEOUT <= 0:
             warnings.append("REQUEST_TIMEOUT must be positive")
+
+        if cls.PUBLIC_REQUEST_TIMEOUT <= 0:
+            warnings.append("PUBLIC_REQUEST_TIMEOUT must be positive")
 
         if cls.JOB_QUEUE_TIMEOUT <= 0:
             warnings.append("JOB_QUEUE_TIMEOUT must be positive")

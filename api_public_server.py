@@ -35,6 +35,7 @@ from utils.jsonrpc_client import (
     ERROR_KIND_QUEUE_FULL,
     JSONRPCClient,
     JSONRPCError,
+    JSONRPCTimeout,
     JSONRPCUnavailable,
 )
 
@@ -262,6 +263,11 @@ def handle_rpc_error(error: JSONRPCError) -> tuple[Response, int]:
         return _error_response("upstream_timeout", "region did not answer in time", 504)
     logger.warning("Regional RPC returned an error (code=%s)", error.code)
     return _error_response("upstream_error", "region request failed", 502)
+
+
+@app.errorhandler(JSONRPCTimeout)
+def handle_rpc_timeout(error: JSONRPCTimeout) -> tuple[Response, int]:
+    return _error_response("upstream_timeout", "region did not answer in time", 504)
 
 
 @app.errorhandler(JSONRPCUnavailable)
@@ -502,7 +508,9 @@ def fetch_user_profile_by_user_id(region: str, user_id: str) -> Response:
         JSON response with user profile
     """
     client = get_ready_regional_client(region)
-    user_profile = client.request("fetch_user_profile", [user_id])
+    user_profile = client.request(
+        "fetch_user_profile", [user_id], timeout=Config.PUBLIC_REQUEST_TIMEOUT
+    )
 
     return jsonify({"status": "success", "data": user_profile})
 
@@ -531,7 +539,9 @@ def fetch_event_ranking_by_user_id(
         )
     client = get_ready_regional_client(region)
     user_profile = client.request(
-        "fetch_user_event_ranking", [target_user_id, event_id]
+        "fetch_user_event_ranking",
+        [target_user_id, event_id],
+        timeout=Config.PUBLIC_REQUEST_TIMEOUT,
     )
 
     return jsonify({"status": "success", "data": user_profile})

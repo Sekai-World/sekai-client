@@ -52,7 +52,11 @@ class JSONRPCError(RuntimeError):
 
 
 class JSONRPCUnavailable(RuntimeError):
-    """The remote JSON-RPC server could not be reached or timed out."""
+    """The remote JSON-RPC server could not be reached."""
+
+
+class JSONRPCTimeout(JSONRPCUnavailable):
+    """The remote JSON-RPC server did not answer within the request budget."""
 
 
 def _classify_error_data(data: Any) -> tuple[str | None, float | None]:
@@ -206,6 +210,8 @@ class JSONRPCClient:
                 timeout=request_timeout,
                 allow_redirects=False,
             )
+        except requests.Timeout:
+            raise JSONRPCTimeout("JSON-RPC request timed out") from None
         except requests.RequestException:
             raise JSONRPCUnavailable("JSON-RPC request failed") from None
 
