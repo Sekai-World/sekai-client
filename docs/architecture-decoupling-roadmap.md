@@ -242,8 +242,8 @@ Acceptance criteria:
 
 The repository contains a dedicated TW remote-provider PM2 template and
 [canary runbook](account-service-tw-canary.md). The first production canary is
-accepted; the next-region rollout remains gated by the evidence requirements
-below.
+accepted. The remote-provider rollout has since completed for all four regions,
+one region at a time, each with its own rollback path.
 
 Phase 5 remains in progress. A repeatable, read-only acceptance path now exists:
 `deployment/phase5_acceptance.py` validates the formal shared-client PM2/Gunicorn
@@ -255,7 +255,7 @@ real environment; this roadmap does not claim Phase 5 complete.
 
 - [x] Deploy the account service before enabling remote acquisition in clients.
 - [x] Canary one region and one consumer.
-- [ ] Expand one region at a time after inventory, token, and rollback gates
+- [x] Expand one region at a time after inventory, token, and rollback gates
   are recorded.
 - [ ] Monitor lease conflicts, acquisition latency, authentication failures,
   quarantine rate, and account inventory.
