@@ -90,6 +90,12 @@ Behavior:
 - A bounded per-request timeout is applied (default 5.0s).
 - Only `http`/`https` URLs are accepted; non-HTTP schemes (e.g. `file://`) are
   rejected as a failure, never opened.
+- `https` is required by default. For deployments whose public endpoint is not
+  served over TLS, pass `--allow-http-health` to also accept a plain `http` base
+  URL (a port may be included). This relaxes only the scheme check; loopback,
+  private, link-local and reserved addresses, `localhost` names, embedded
+  credentials, query strings and fragments are still rejected. Record in the
+  private operator record that health was verified over plain HTTP.
 - The result is derived from HTTP status and an aggregate health state only.
   Response bodies are never parsed into the report and never printed.
 - Malformed HTTP responses, network errors, or timeouts are reported as a

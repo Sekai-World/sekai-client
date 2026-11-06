@@ -320,6 +320,75 @@ def test_validate_health_requires_https_and_rejects_local_addresses():
         assert health["ready"] == "fail", case
 
 
+def test_validate_health_http_requires_explicit_opt_in():
+    calls = []
+
+    def fake_get(url, timeout):
+        calls.append(url)
+        return 200, "{}"
+
+    denied = phase5.validate_health("http://api.example.com:9393", get=fake_get)
+    assert denied["status"] == "fail"
+    assert calls == []
+
+    allowed = phase5.validate_health(
+        "http://api.example.com:9393", get=fake_get, allow_http=True
+    )
+    assert allowed == {"status": "pass", "live": "pass", "ready": "pass"}
+    assert len(calls) == 2
+
+
+def test_validate_health_http_opt_in_keeps_other_restrictions():
+    def fake_get(url, timeout):
+        raise AssertionError(f"network request must not occur for {url}")
+
+    rejected = [
+        "http://127.0.0.1:9393",
+        "http://10.0.0.1:9393",
+        "http://localhost:9393",
+        "http://user:secret-pass@host.example:9393",
+        "http://host.example:9393/?token=secret",
+        "ftp://host.example",
+        "file:///etc/passwd",
+    ]
+    for case in rejected:
+        health = phase5.validate_health(case, get=fake_get, allow_http=True)
+        assert health["status"] == "fail", case
+
+
+def test_main_allow_http_health_flag(monkeypatch, capsys):
+    seen = {}
+
+    def fake_run(**kwargs):
+        seen.update(kwargs)
+        return 0, {
+            "acceptance": "phase5",
+            "status": "pass",
+            "exit_code": 0,
+            "sections": {
+                "pm2": {"status": "pass", "expected": 4, "present": 4, "online": 4},
+                "gunicorn": {
+                    "status": "pass",
+                    "checked": 4,
+                    "workers_ok": 4,
+                    "bind_ok": 4,
+                    "config_ok": 4,
+                },
+                "health": {"status": "pass", "live": "pass", "ready": "pass"},
+            },
+        }
+
+    monkeypatch.setattr(phase5, "run_acceptance", fake_run)
+    assert phase5.main(["--health-base-url", "http://h.example:1"]) == 0
+    assert seen["allow_http_health"] is False
+    assert (
+        phase5.main(["--health-base-url", "http://h.example:1", "--allow-http-health"])
+        == 0
+    )
+    assert seen["allow_http_health"] is True
+    capsys.readouterr()
+
+
 def test_validate_health_local_success_still_fails():
     # Even a successful local response must fail: the URL is rejected before any
     # request, so `get` is never invoked.

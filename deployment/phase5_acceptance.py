@@ -237,16 +237,18 @@ def http_get(url: str, timeout: float) -> tuple[int, str]:
         return resp.getcode(), resp.read().decode("utf-8", "replace")
 
 
-def _health_url_acceptable(base_url: str) -> bool:
-    """Return True only if ``base_url`` is a safe, public HTTPS health base.
+def _health_url_acceptable(base_url: str, allow_http: bool = False) -> bool:
+    """Return True only if ``base_url`` is a safe, public health base.
 
-    Rejects non-HTTPS schemes, missing netloc, embedded credentials, query or
-    fragment, obvious localhost names, and literal loopback/private/link-local/
-    reserved addresses. Uses only the standard library; no DNS or network
-    resolution is performed, so a non-literal public hostname is accepted.
+    Rejects non-HTTPS schemes (plain ``http`` only when ``allow_http`` is set),
+    missing netloc, embedded credentials, query or fragment, obvious localhost
+    names, and literal loopback/private/link-local/reserved addresses. Uses
+    only the standard library; no DNS or network resolution is performed, so a
+    non-literal public hostname is accepted.
     """
     parsed = urllib.parse.urlparse(base_url)
-    if parsed.scheme != "https":
+    allowed_schemes = ("https", "http") if allow_http else ("https",)
+    if parsed.scheme not in allowed_schemes:
         return False
     if not parsed.netloc:
         return False
@@ -270,6 +272,7 @@ def validate_health(
     base_url: str | None,
     timeout: float = DEFAULT_HEALTH_TIMEOUT,
     get: Callable[[str, float], tuple[int, str]] = http_get,
+    allow_http: bool = False,
 ) -> dict:
     """Validate the public health endpoints without leaking details.
 
@@ -284,7 +287,7 @@ def validate_health(
             "ready": "not_run",
         }
 
-    if not _health_url_acceptable(base_url):
+    if not _health_url_acceptable(base_url, allow_http):
         return {"status": "fail", "live": "fail", "ready": "fail"}
 
     base = base_url.rstrip("/")
@@ -353,6 +356,7 @@ def run_acceptance(
     health_timeout: float = DEFAULT_HEALTH_TIMEOUT,
     allow_not_run: bool = False,
     get: Callable[[str, float], tuple[int, str]] = http_get,
+    allow_http_health: bool = False,
 ) -> tuple[int, dict]:
     """Run the full read-only acceptance check.
 
@@ -378,7 +382,9 @@ def run_acceptance(
     report["sections"]["missing_count"] = proc["missing_count"]
     report["sections"]["duplicate_count"] = proc["duplicate_count"]
 
-    health = validate_health(health_base_url, health_timeout, get=get)
+    health = validate_health(
+        health_base_url, health_timeout, get=get, allow_http=allow_http_health
+    )
     report["sections"]["health"] = {
         "status": health["status"],
         "live": health["live"],
@@ -455,6 +461,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--allow-http-health",
+        action="store_true",
+        help=(
+            "Permit a plain-HTTP health base URL for deployments whose public "
+            "endpoint is not served over TLS. HTTPS remains the default; all "
+            "other URL restrictions still apply."
+        ),
+    )
+    parser.add_argument(
         "--format",
         choices=["text", "json"],
         default="text",
@@ -467,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         health_base_url=args.health_base_url,
         health_timeout=args.health_timeout,
         allow_not_run=args.allow_not_run,
+        allow_http_health=args.allow_http_health,
     )
     print(format_report(report, args.format))
     return exit_code
