@@ -363,6 +363,18 @@ _REJECTED_HOSTS = [
     "0x7f000001",  # hex IPv4
     "0177.0.0.1",  # octal-part IPv4
     "0",  # numeric zero
+    "127.0.0.08",  # leading-zero octet (Darwin resolves as decimal)
+    "10.0.0.09",
+    "127.0.08",
+    "1.2.3.4.5",
+    "[v1.fe80::a]",  # IPvFuture bracket literal
+    "example.com..",  # empty label
+    "example.com:abc",  # invalid port
+    "example.com:99999",
+    "example.com:-1",
+    "example.com\t",  # control chars stripped by urlparse
+    "\texample.com",
+    "example.com\n",
     "localhost",
     "localhost.",  # trailing dot
     "LOCALHOST",
@@ -519,6 +531,10 @@ def test_http_get_ignores_environment_proxies(monkeypatch):
         if isinstance(h, fresh.urllib.request.ProxyHandler)
     ]
     assert all(not h.proxies for h in proxy_handlers)
+
+
+def test_health_url_rejects_leading_whitespace():
+    assert phase5._health_url_acceptable(" https://api.example.com") is False
 
 
 def test_health_url_http_scheme_is_case_insensitive_but_still_opt_in():

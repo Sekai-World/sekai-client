@@ -282,9 +282,17 @@ _EMBEDDED_IPV4_NETWORKS = tuple(
 )
 
 
+# A last label made only of digits or a hex prefix is never a real TLD; some
+# resolvers (e.g. Darwin) still read such strings as IPv4 (``127.0.0.08``).
+_NUMERIC_LAST_LABEL_RE = re.compile(r"0x[0-9a-f]*|[0-9]+", re.IGNORECASE)
+
+
 def _is_numeric_ipv4_form(host: str) -> bool:
-    """True for any IPv4 spelling the system resolver accepts (``127.1``,
-    ``2130706433``, ``0x7f000001``, octal parts), which ``ipaddress`` rejects."""
+    """True for any IPv4 spelling a system resolver may accept (``127.1``,
+    ``2130706433``, ``0x7f000001``, octal parts, leading-zero octets), which
+    ``ipaddress`` rejects."""
+    if _NUMERIC_LAST_LABEL_RE.fullmatch(host.rsplit(".", 1)[-1]):
+        return True
     try:
         socket.inet_aton(host)
     except (OSError, ValueError, UnicodeError):
@@ -307,10 +315,16 @@ def _health_url_host(base_url: str, allow_http: bool) -> str | None:
     """Return the normalized host of a structurally acceptable base URL, or
     ``None`` when the scheme, netloc, credentials, ``?``/``#`` or host
     characters are not acceptable."""
+    # ``urlparse`` silently strips tabs, newlines and surrounding whitespace, so
+    # reject them before parsing to keep the validated host equal to the one
+    # that would be requested.
+    if re.search(r"[^\x21-\x7e]", base_url):
+        return None
     try:
         parsed = urllib.parse.urlparse(base_url)
         host = parsed.hostname
         has_credentials = parsed.username is not None or parsed.password is not None
+        parsed.port  # noqa: B018 - raises ValueError on an invalid port
     except ValueError:
         return None
     allowed_schemes = ("https", "http") if allow_http else ("https",)
@@ -320,7 +334,15 @@ def _health_url_host(base_url: str, allow_http: bool) -> str | None:
         return None
     if _INVALID_HOST_CHARS_RE.search(host):
         return None
-    return host.rstrip(".") or None
+    if parsed.netloc.rpartition("@")[2].startswith("["):
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError:
+            return None
+    host = host.removesuffix(".")
+    if not host or host.startswith(".") or host.endswith(".") or ".." in host:
+        return None
+    return host
 
 
 def _public_host(host: str) -> bool:

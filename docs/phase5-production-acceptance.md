@@ -108,10 +108,12 @@ Behavior:
   evidence shows it.
 - Both schemes reject, before any request is made: loopback, private,
   link-local, multicast and reserved IP literals (including non-canonical
-  spellings such as `127.1` or `2130706433`, and IPv6 forms that embed an IPv4
+  spellings such as `127.1`, `2130706433` or leading-zero octets like
+  `127.0.0.08`, and IPv6 forms that embed an IPv4
   address), `localhost` and `.local`/`.localdomain`/`.internal`/`.home.arpa`
   names (with or without a trailing dot), hosts containing non-ASCII, `%`, `\`
-  or whitespace characters, malformed bracketed hosts, embedded credentials, and
+  or whitespace characters (also anywhere in the URL), malformed bracketed
+  hosts, empty host labels, invalid ports, embedded credentials, and
   any `?` or `#` in the URL. A port may be included. Names that merely resolve
   to a private address are not detected, because no DNS lookup is performed.
 - Redirect responses are never followed (a redirect counts as a failed probe),
