@@ -137,6 +137,18 @@ not ready). Both must return success for the health section to pass.
   `status` as gauges/alerts.
 - Alert on any section transitioning to `fail`. A `not_run` health section should
   alert only when full acceptance (no `--allow-not-run`) is expected.
+- `deployment/phase5_acceptance_push.py` wires the acceptance into a push-style
+  monitor (for example an Uptime Kuma *Push* monitor). Run it from a scheduler
+  on the deployment host, with the monitor's push URL in the
+  `PHASE5_PUSH_URL` environment variable (the URL carries a secret token: keep
+  it in a private, owner-only environment file, never in the repository, a
+  command line or a log). It runs the full acceptance (no `--allow-not-run`) and
+  pushes `status=up` on pass or `status=down` on any failure, with a message of
+  only the three section states. Set the monitor's heartbeat interval to a bit
+  more than the schedule interval so a stopped scheduler or host also alerts.
+  Exit code is the acceptance exit code, or `2` if the push failed or is not
+  configured. Use the same `--pm2-binary`, `--health-base-url` and
+  `--allow-http-health` options as the acceptance tool.
 - Keep the operator record of actual run output private; monitoring should expose
   only aggregate status and small aggregate counts, never URLs, bodies, or IDs.
 
