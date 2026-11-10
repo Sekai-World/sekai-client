@@ -27,6 +27,7 @@ import ipaddress
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import urllib.error
@@ -221,30 +222,72 @@ def validate_processes(entries: list[dict]) -> dict:
     }
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects: health endpoints answer directly, and a redirect target
+    would bypass the base URL validation."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirectHandler)
+
+
 def http_get(url: str, timeout: float) -> tuple[int, str]:
     """Read-only HTTP GET using only the standard library.
 
-    Returns ``(status_code, body_text)``. Raises on network or protocol errors.
-    Only ``http``/``https`` URLs are accepted by callers; this helper never
-    performs mutating requests.
+    Returns ``(status_code, body_text)``. Raises on network or protocol errors,
+    including any redirect response. Only ``http``/``https`` URLs are accepted
+    by callers; this helper never performs mutating requests.
     """
     req = urllib.request.Request(
         url,
         method="GET",
         headers={"User-Agent": "phase5-acceptance"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _OPENER.open(req, timeout=timeout) as resp:
         return resp.getcode(), resp.read().decode("utf-8", "replace")
+
+
+_LOCAL_HOST_NAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
+_LOCAL_HOST_SUFFIXES = (".localhost", ".local", ".localdomain", ".internal")
+# IPv6 ranges that embed or tunnel IPv4 addresses (NAT64, 6to4, Teredo); a
+# literal in these ranges can point at a non-public IPv4 destination.
+_EMBEDDED_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(net)
+    for net in ("64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32")
+)
+
+
+def _is_numeric_ipv4_form(host: str) -> bool:
+    """True for any IPv4 spelling the system resolver accepts (``127.1``,
+    ``2130706433``, ``0x7f000001``, octal parts), which ``ipaddress`` rejects."""
+    try:
+        socket.inet_aton(host)
+    except (OSError, ValueError, UnicodeError):
+        return False
+    return True
+
+
+def _public_ip_literal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None and not ip.ipv4_mapped.is_global:
+            return False
+        if any(ip in net for net in _EMBEDDED_IPV4_NETWORKS):
+            return False
+    return ip.is_global
 
 
 def _health_url_acceptable(base_url: str, allow_http: bool = False) -> bool:
     """Return True only if ``base_url`` is a safe, public health base.
 
     Rejects non-HTTPS schemes (plain ``http`` only when ``allow_http`` is set),
-    missing netloc, embedded credentials, query or fragment, obvious localhost
-    names, and literal loopback/private/link-local/reserved addresses. Uses
-    only the standard library; no DNS or network resolution is performed, so a
-    non-literal public hostname is accepted.
+    missing netloc, embedded credentials, any ``?`` or ``#`` (even when empty),
+    local host names (including trailing-dot and ``.local``/``.localdomain``/
+    ``.internal`` forms), non-canonical numeric IPv4 spellings, and literal
+    loopback/private/link-local/reserved addresses, including IPv6 forms that
+    embed an IPv4 address. Uses only the standard library; no DNS or network
+    resolution is performed, so a non-literal public hostname is accepted.
     """
     parsed = urllib.parse.urlparse(base_url)
     allowed_schemes = ("https", "http") if allow_http else ("https",)
@@ -254,18 +297,21 @@ def _health_url_acceptable(base_url: str, allow_http: bool = False) -> bool:
         return False
     if parsed.username is not None or parsed.password is not None:
         return False
-    if parsed.query or parsed.fragment:
+    if "?" in base_url or "#" in base_url:
         return False
     host = parsed.hostname
     if host is None:
         return False
-    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+    host = host.rstrip(".")
+    if not host:
+        return False
+    if host in _LOCAL_HOST_NAMES or host.endswith(_LOCAL_HOST_SUFFIXES):
         return False
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        return True
-    return ip.is_global
+        return not _is_numeric_ipv4_form(host)
+    return _public_ip_literal(ip)
 
 
 def validate_health(
@@ -311,7 +357,13 @@ def validate_health(
 
     health_ok = result["live"] == "pass" and result["ready"] == "pass"
     status = "pass" if health_ok else "fail"
-    return {"status": status, "live": result["live"], "ready": result["ready"]}
+    transport = urllib.parse.urlparse(base_url).scheme
+    return {
+        "status": status,
+        "live": result["live"],
+        "ready": result["ready"],
+        "transport": transport,
+    }
 
 
 def summarize(sections: dict, allow_not_run: bool) -> tuple[str, int]:
@@ -390,6 +442,8 @@ def run_acceptance(
         "live": health["live"],
         "ready": health["ready"],
     }
+    if "transport" in health:
+        report["sections"]["health"]["transport"] = health["transport"]
 
     overall, exit_code = summarize(report["sections"], allow_not_run)
     report["status"] = overall
@@ -406,6 +460,8 @@ def format_report(report: dict, fmt: str = "text") -> str:
     pm2 = sections["pm2"]
     gunicorn = sections["gunicorn"]
     health = sections["health"]
+    transport = health.get("transport")
+    health_suffix = f", transport {transport}" if transport else ""
     lines = [
         f"phase5 acceptance: {report['status']}",
         "  pm2: {} (expected {}, present {}, online {})".format(
@@ -418,8 +474,8 @@ def format_report(report: dict, fmt: str = "text") -> str:
             gunicorn["bind_ok"],
             gunicorn["config_ok"],
         ),
-        "  health: {} (live {}, ready {})".format(
-            health["status"], health["live"], health["ready"]
+        "  health: {} (live {}, ready {}{})".format(
+            health["status"], health["live"], health["ready"], health_suffix
         ),
     ]
     return "\n".join(lines)

@@ -6,8 +6,12 @@ output, and exit semantics. They never touch real PM2 or network services.
 
 import importlib.util
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 MODULE_PATH = (
     Path(__file__).resolve().parents[1] / "deployment" / "phase5_acceptance.py"
@@ -334,26 +338,185 @@ def test_validate_health_http_requires_explicit_opt_in():
     allowed = phase5.validate_health(
         "http://api.example.com:9393", get=fake_get, allow_http=True
     )
-    assert allowed == {"status": "pass", "live": "pass", "ready": "pass"}
+    assert allowed == {
+        "status": "pass",
+        "live": "pass",
+        "ready": "pass",
+        "transport": "http",
+    }
     assert len(calls) == 2
 
 
-def test_validate_health_http_opt_in_keeps_other_restrictions():
+_REJECTED_HOSTS = [
+    "127.0.0.1:9393",  # loopback literal
+    "[::1]",  # IPv6 loopback literal
+    "10.0.0.1",  # RFC1918 private
+    "192.168.1.1",  # RFC1918 private
+    "172.16.5.5",  # RFC1918 private
+    "169.254.169.254",  # link-local / metadata
+    "0.0.0.0",  # unspecified
+    "[::ffff:127.0.0.1]",  # IPv4-mapped loopback
+    "[64:ff9b::7f00:1]",  # NAT64-embedded loopback
+    "[2002:7f00:1::1]",  # 6to4-embedded loopback
+    "127.1",  # non-canonical numeric IPv4
+    "2130706433",  # decimal IPv4
+    "0x7f000001",  # hex IPv4
+    "0177.0.0.1",  # octal-part IPv4
+    "0",  # numeric zero
+    "localhost",
+    "localhost.",  # trailing dot
+    "LOCALHOST",
+    "ip6-localhost",
+    "host.localhost",
+    "host.local",
+    "foo.local.",
+    "host.localdomain",
+    "metadata.google.internal",
+    "svc.internal.",
+]
+
+
+@pytest.mark.parametrize("scheme", ["https", "http"])
+@pytest.mark.parametrize("host", _REJECTED_HOSTS)
+def test_health_url_rejects_local_and_numeric_hosts(scheme, host):
+    url = f"{scheme}://{host}"
+    assert phase5._health_url_acceptable(url, allow_http=True) is False, url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://host.example",
+        "file:///etc/passwd",
+        "http://user:secret-pass@host.example:9393",
+        "http://:secret-pass@host.example:9393",
+        "http://host.example:9393?token=secret",
+        "http://host.example:9393?",  # empty query
+        "http://host.example:9393#",  # empty fragment
+        "http://host.example:9393/#secret",
+        "https://host.example?",
+        "https://host.example#",
+        "http://",
+        "//host.example",
+    ],
+)
+def test_health_url_rejects_malformed_or_sensitive(url):
+    assert phase5._health_url_acceptable(url, allow_http=True) is False, url
+
+
+def test_health_url_http_scheme_is_case_insensitive_but_still_opt_in():
+    assert phase5._health_url_acceptable("HTTP://host.example") is False
+    assert phase5._health_url_acceptable("HTTP://host.example", allow_http=True)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.com",
+        "https://api.example.com:8443",
+        "https://8.8.8.8",
+        "https://[2606:4700:4700::1111]",
+        "https://api.example.com.",  # trailing dot on a public name
+    ],
+)
+def test_health_url_accepts_public_hosts(url):
+    assert phase5._health_url_acceptable(url) is True, url
+    http_url = "http" + url[len("https") :]
+    assert phase5._health_url_acceptable(http_url) is False
+    assert phase5._health_url_acceptable(http_url, allow_http=True) is True
+
+
+def test_validate_health_http_opt_in_never_requests_rejected_urls():
     def fake_get(url, timeout):
         raise AssertionError(f"network request must not occur for {url}")
 
-    rejected = [
-        "http://127.0.0.1:9393",
-        "http://10.0.0.1:9393",
-        "http://localhost:9393",
-        "http://user:secret-pass@host.example:9393",
-        "http://host.example:9393/?token=secret",
-        "ftp://host.example",
-        "file:///etc/passwd",
-    ]
-    for case in rejected:
-        health = phase5.validate_health(case, get=fake_get, allow_http=True)
-        assert health["status"] == "fail", case
+    for host in _REJECTED_HOSTS:
+        health = phase5.validate_health(f"http://{host}", get=fake_get, allow_http=True)
+        assert health["status"] == "fail", host
+        assert "transport" not in health, host
+
+
+def test_run_acceptance_default_rejects_http_health():
+    def fake_get(url, timeout):
+        raise AssertionError("network request must not occur without opt-in")
+
+    with mock.patch.object(
+        phase5.subprocess,
+        "run",
+        return_value=mock.Mock(stdout=_valid_jlist(), stderr=""),
+    ):
+        exit_code, report = phase5.run_acceptance(
+            health_base_url="http://host.example:9393", get=fake_get
+        )
+    assert exit_code == 1
+    assert report["sections"]["health"]["status"] == "fail"
+
+
+def test_run_acceptance_http_opt_in_records_transport():
+    with mock.patch.object(
+        phase5.subprocess,
+        "run",
+        return_value=mock.Mock(stdout=_valid_jlist(), stderr=""),
+    ):
+        exit_code, report = phase5.run_acceptance(
+            health_base_url="http://host.example:9393",
+            get=lambda u, t: (200, "{}"),
+            allow_http_health=True,
+        )
+        https_code, https_report = phase5.run_acceptance(
+            health_base_url="https://host.example",
+            get=lambda u, t: (200, "{}"),
+        )
+    assert exit_code == 0
+    assert report["sections"]["health"]["transport"] == "http"
+    assert https_code == 0
+    assert https_report["sections"]["health"]["transport"] == "https"
+    assert "transport http" in phase5.format_report(report, "text")
+    assert "host.example" not in phase5.format_report(report, "json")
+    assert "host.example" not in phase5.format_report(report, "text")
+
+
+class _RedirectHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/redirect":
+            self.send_response(302)
+            self.send_header("Location", "/health/live")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"{}")
+
+    def log_message(self, *args):
+        pass
+
+
+def test_http_get_refuses_redirects():
+    server = HTTPServer(("127.0.0.1", 0), _RedirectHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        assert phase5.http_get(base + "/health/live", 5.0)[0] == 200
+        with pytest.raises(phase5.urllib.error.HTTPError) as excinfo:
+            phase5.http_get(base + "/redirect", 5.0)
+        assert excinfo.value.code == 302
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_validate_health_redirect_is_fail():
+    def fake_get(url, timeout):
+        raise phase5.urllib.error.HTTPError(url, 302, "Found", {}, None)
+
+    health = phase5.validate_health(
+        "http://host.example:9393", get=fake_get, allow_http=True
+    )
+    assert health["status"] == "fail"
+    assert health["live"] == "fail"
+    assert health["ready"] == "fail"
 
 
 def test_main_allow_http_health_flag(monkeypatch, capsys):
