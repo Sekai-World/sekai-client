@@ -62,7 +62,8 @@ python deployment/phase5_acceptance.py \
   --format json
 ```
 
-The same checks can be driven by environment variable instead of the flag:
+The base URL can also be supplied by environment variable instead of the flag
+(`--allow-http-health` has no environment equivalent):
 
 ```bash
 export PHASE5_PUBLIC_HEALTH_BASE_URL=<PUBLIC_HEALTH_BASE_URL>
@@ -106,11 +107,15 @@ Behavior:
   exists; the report records `transport: http` in the health section so the
   evidence shows it.
 - Both schemes reject, before any request is made: loopback, private,
-  link-local and reserved IP literals (including non-canonical spellings such as
-  `127.1` or `2130706433` and IPv6 forms that embed an IPv4 address), `localhost`
-  and `.local`/`.localdomain`/`.internal` names (with or without a trailing dot),
-  embedded credentials, and any `?` or `#` in the URL. A port may be included.
-- Redirect responses are never followed; a redirect counts as a failed probe.
+  link-local, multicast and reserved IP literals (including non-canonical
+  spellings such as `127.1` or `2130706433`, and IPv6 forms that embed an IPv4
+  address), `localhost` and `.local`/`.localdomain`/`.internal`/`.home.arpa`
+  names (with or without a trailing dot), hosts containing non-ASCII, `%`, `\`
+  or whitespace characters, malformed bracketed hosts, embedded credentials, and
+  any `?` or `#` in the URL. A port may be included. Names that merely resolve
+  to a private address are not detected, because no DNS lookup is performed.
+- Redirect responses are never followed (a redirect counts as a failed probe),
+  and environment or system proxy settings are ignored.
 - The result is derived from HTTP status and an aggregate health state only.
   Response bodies are never parsed into the report and never printed.
 - Malformed HTTP responses, network errors, or timeouts are reported as a

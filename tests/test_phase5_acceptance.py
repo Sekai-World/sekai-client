@@ -404,6 +404,123 @@ def test_health_url_rejects_malformed_or_sensitive(url):
     assert phase5._health_url_acceptable(url, allow_http=True) is False, url
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://\u00b927.0.0.1:9393",  # superscript one, nameprep -> 127.0.0.1
+        "http://1\u00ad27.0.0.1:9393",  # soft hyphen removed by nameprep
+        "http://127.0.0.\u00b9:9393",
+        "http://loc\u00adalhost:9393",
+        "http://\uff4c\uff4f\uff43\uff41\uff4c\uff48\uff4f\uff53\uff54",
+        "http://\u24db\u24de\u24d2\u24d0\u24db\u24d7\u24de\u24e2\u24e3",
+        "http://local\u200bhost",  # zero-width space
+        "http://\uff11\uff12\uff17.\uff10.\uff10.\uff11",  # full-width digits
+        "http://127\u30020\u30020\u30021",  # ideographic full stop
+        "http://host%2e.example",  # percent-encoded host
+        "http://host.example\\@evil.example",  # backslash userinfo trick
+        "http://host .example",  # whitespace
+    ],
+)
+def test_health_url_rejects_non_ascii_and_encoded_hosts(url):
+    assert phase5._health_url_acceptable(url, allow_http=True) is False, url
+    assert (
+        phase5._health_url_acceptable(url.replace("http", "https", 1), allow_http=True)
+        is False
+    ), url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://[secret-host.example]",
+        "https://[127.0.0.1]",
+        "https://[::1",
+        "http://[::1]]",
+    ],
+)
+def test_health_url_malformed_brackets_fail_without_raising(url):
+    assert phase5._health_url_acceptable(url, allow_http=True) is False, url
+    health = phase5.validate_health(
+        url,
+        get=lambda u, t: (_ for _ in ()).throw(AssertionError("no request")),
+        allow_http=True,
+    )
+    assert health["status"] == "fail"
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "[::7f00:1]",  # IPv4-compatible
+        "[::127.0.0.1]",
+        "[::ffff:0:7f00:1]",  # SIIT IPv4-translated
+        "[fec0::1]",  # deprecated site-local
+        "224.0.0.1",  # IPv4 multicast
+        "[ff02::1]",  # IPv6 multicast
+        "svc.home.arpa",
+    ],
+)
+def test_health_url_rejects_deprecated_and_multicast_ranges(host):
+    assert phase5._health_url_acceptable(f"http://{host}", allow_http=True) is False
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        phase5.http.client.BadStatusLine("SECRET-BODY-LINE token=abc"),
+        phase5.http.client.LineTooLong("header line"),
+        phase5.http.client.IncompleteRead(b"SECRET-BODY-LINE"),
+    ],
+)
+def test_validate_health_malformed_response_is_fail_without_leak(error):
+    def fake_get(url, timeout):
+        raise error
+
+    health = phase5.validate_health("https://api.example.com", get=fake_get)
+    assert health["status"] == "fail"
+    assert health["live"] == "fail"
+    assert health["ready"] == "fail"
+    assert "SECRET" not in json.dumps(health)
+
+
+class _GarbageHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.wfile.write(b"SECRET-BODY-LINE token=abc\r\n\r\n")
+        self.wfile.flush()
+
+    def log_message(self, *args):
+        pass
+
+
+def test_http_get_malformed_response_raises_http_exception():
+    server = HTTPServer(("127.0.0.1", 0), _GarbageHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(phase5.http.client.HTTPException):
+            phase5.http_get(f"http://127.0.0.1:{server.server_port}/x", 5.0)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_http_get_ignores_environment_proxies(monkeypatch):
+    # The opener is built at import time, so reload the module with proxy
+    # variables set and check no environment proxy handler was installed.
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:9")
+    fresh_spec = importlib.util.spec_from_file_location("phase5_proxy", MODULE_PATH)
+    fresh = importlib.util.module_from_spec(fresh_spec)
+    fresh_spec.loader.exec_module(fresh)
+    proxy_handlers = [
+        h
+        for h in fresh._OPENER.handlers
+        if isinstance(h, fresh.urllib.request.ProxyHandler)
+    ]
+    assert all(not h.proxies for h in proxy_handlers)
+
+
 def test_health_url_http_scheme_is_case_insensitive_but_still_opt_in():
     assert phase5._health_url_acceptable("HTTP://host.example") is False
     assert phase5._health_url_acceptable("HTTP://host.example", allow_http=True)

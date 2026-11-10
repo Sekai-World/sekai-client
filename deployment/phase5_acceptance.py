@@ -23,6 +23,7 @@ Run ``--help`` for options.
 from __future__ import annotations
 
 import argparse
+import http.client
 import ipaddress
 import json
 import os
@@ -230,7 +231,11 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirectHandler)
+# An empty ProxyHandler ignores environment/system proxies so the probe goes
+# straight to the validated URL and the URL never travels to a proxy.
+_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _NoRedirectHandler
+)
 
 
 def http_get(url: str, timeout: float) -> tuple[int, str]:
@@ -250,12 +255,30 @@ def http_get(url: str, timeout: float) -> tuple[int, str]:
 
 
 _LOCAL_HOST_NAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
-_LOCAL_HOST_SUFFIXES = (".localhost", ".local", ".localdomain", ".internal")
+_LOCAL_HOST_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".localdomain",
+    ".internal",
+    ".home.arpa",
+)
+# Anything but printable, non-space ASCII (plus ``%`` and ``\\``) in a host is
+# rejected: the resolver applies IDNA/nameprep to non-ASCII text, which can turn
+# a lookalike into a loopback or private literal after validation.
+_INVALID_HOST_CHARS_RE = re.compile(r"[^\x21-\x7e]|[%\\]")
 # IPv6 ranges that embed or tunnel IPv4 addresses (NAT64, 6to4, Teredo); a
 # literal in these ranges can point at a non-public IPv4 destination.
 _EMBEDDED_IPV4_NETWORKS = tuple(
     ipaddress.ip_network(net)
-    for net in ("64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32")
+    for net in (
+        "::/96",  # IPv4-compatible (deprecated)
+        "::ffff:0:0:0/96",  # SIIT IPv4-translated
+        "64:ff9b::/96",
+        "64:ff9b:1::/48",
+        "2002::/16",
+        "2001::/32",
+        "fec0::/10",  # deprecated site-local
+    )
 )
 
 
@@ -270,12 +293,44 @@ def _is_numeric_ipv4_form(host: str) -> bool:
 
 
 def _public_ip_literal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if ip.is_multicast:
+        return False
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None and not ip.ipv4_mapped.is_global:
             return False
         if any(ip in net for net in _EMBEDDED_IPV4_NETWORKS):
             return False
     return ip.is_global
+
+
+def _health_url_host(base_url: str, allow_http: bool) -> str | None:
+    """Return the normalized host of a structurally acceptable base URL, or
+    ``None`` when the scheme, netloc, credentials, ``?``/``#`` or host
+    characters are not acceptable."""
+    try:
+        parsed = urllib.parse.urlparse(base_url)
+        host = parsed.hostname
+        has_credentials = parsed.username is not None or parsed.password is not None
+    except ValueError:
+        return None
+    allowed_schemes = ("https", "http") if allow_http else ("https",)
+    if parsed.scheme not in allowed_schemes or not parsed.netloc or has_credentials:
+        return None
+    if "?" in base_url or "#" in base_url or host is None:
+        return None
+    if _INVALID_HOST_CHARS_RE.search(host):
+        return None
+    return host.rstrip(".") or None
+
+
+def _public_host(host: str) -> bool:
+    if host in _LOCAL_HOST_NAMES or host.endswith(_LOCAL_HOST_SUFFIXES):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return not _is_numeric_ipv4_form(host)
+    return _public_ip_literal(ip)
 
 
 def _health_url_acceptable(base_url: str, allow_http: bool = False) -> bool:
@@ -289,29 +344,19 @@ def _health_url_acceptable(base_url: str, allow_http: bool = False) -> bool:
     embed an IPv4 address. Uses only the standard library; no DNS or network
     resolution is performed, so a non-literal public hostname is accepted.
     """
-    parsed = urllib.parse.urlparse(base_url)
-    allowed_schemes = ("https", "http") if allow_http else ("https",)
-    if parsed.scheme not in allowed_schemes:
-        return False
-    if not parsed.netloc:
-        return False
-    if parsed.username is not None or parsed.password is not None:
-        return False
-    if "?" in base_url or "#" in base_url:
-        return False
-    host = parsed.hostname
-    if host is None:
-        return False
-    host = host.rstrip(".")
-    if not host:
-        return False
-    if host in _LOCAL_HOST_NAMES or host.endswith(_LOCAL_HOST_SUFFIXES):
-        return False
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return not _is_numeric_ipv4_form(host)
-    return _public_ip_literal(ip)
+    host = _health_url_host(base_url, allow_http)
+    return host is not None and _public_host(host)
+
+
+# Malformed responses raise http.client errors that urllib does not wrap; their
+# messages can echo response bytes, so they must be mapped to a plain failure.
+_PROBE_ERRORS = (
+    urllib.error.URLError,
+    urllib.error.HTTPError,
+    http.client.HTTPException,
+    ValueError,
+    OSError,
+)
 
 
 def validate_health(
@@ -343,14 +388,14 @@ def validate_health(
     result = {"live": "fail", "ready": "fail"}
     try:
         live_code, _ = get(live_url, timeout)
-    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+    except _PROBE_ERRORS:
         result["live"] = "fail"
     else:
         result["live"] = "pass" if live_code == 200 else "fail"
 
     try:
         ready_code, _ = get(ready_url, timeout)
-    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+    except _PROBE_ERRORS:
         result["ready"] = "fail"
     else:
         result["ready"] = "pass" if ready_code == 200 else "fail"
