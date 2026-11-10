@@ -51,7 +51,19 @@ python deployment/phase5_acceptance.py \
   --format json
 ```
 
-The same checks can be driven by environment variable instead of the flag:
+If the public endpoint is plain HTTP only, add the explicit opt-in:
+
+```bash
+python deployment/phase5_acceptance.py \
+  --pm2-binary <PM2_BINARY> \
+  --health-base-url http://<PUBLIC_HEALTH_HOST>:<PORT> \
+  --allow-http-health \
+  --health-timeout 5.0 \
+  --format json
+```
+
+The base URL can also be supplied by environment variable instead of the flag
+(`--allow-http-health` has no environment equivalent):
 
 ```bash
 export PHASE5_PUBLIC_HEALTH_BASE_URL=<PUBLIC_HEALTH_BASE_URL>
@@ -88,8 +100,24 @@ Behavior:
 
 - Only `GET` is used; no mutating endpoint is ever called.
 - A bounded per-request timeout is applied (default 5.0s).
-- Only `http`/`https` URLs are accepted; non-HTTP schemes (e.g. `file://`) are
-  rejected as a failure, never opened.
+- Only `https` URLs are accepted by default; other schemes (e.g. `file://`) are
+  rejected as a failure, never opened. For a deployment whose public endpoint is
+  not served over TLS, `--allow-http-health` additionally accepts a plain `http`
+  base URL. Plain HTTP is unauthenticated, so use it only when no HTTPS endpoint
+  exists; the report records `transport: http` in the health section so the
+  evidence shows it.
+- Both schemes reject, before any request is made: loopback, private,
+  link-local, multicast and reserved IP literals (including non-canonical
+  spellings such as `127.1`, `2130706433` or leading-zero octets like
+  `127.0.0.08`, and IPv6 forms that embed an IPv4
+  address), `localhost` and `.local`/`.localdomain`/`.internal`/`.home.arpa`
+  names (with or without a trailing dot), hosts containing non-ASCII, `%`, `\`
+  or whitespace characters (also anywhere in the URL), malformed bracketed
+  hosts, empty host labels, invalid ports, embedded credentials, and
+  any `?` or `#` in the URL. A port may be included. Names that merely resolve
+  to a private address are not detected, because no DNS lookup is performed.
+- Redirect responses are never followed (a redirect counts as a failed probe),
+  and environment or system proxy settings are ignored.
 - The result is derived from HTTP status and an aggregate health state only.
   Response bodies are never parsed into the report and never printed.
 - Malformed HTTP responses, network errors, or timeouts are reported as a

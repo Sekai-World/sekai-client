@@ -23,10 +23,12 @@ Run ``--help`` for options.
 from __future__ import annotations
 
 import argparse
+import http.client
 import ipaddress
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import urllib.error
@@ -221,55 +223,169 @@ def validate_processes(entries: list[dict]) -> dict:
     }
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects: health endpoints answer directly, and a redirect target
+    would bypass the base URL validation."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# An empty ProxyHandler ignores environment/system proxies so the probe goes
+# straight to the validated URL and the URL never travels to a proxy.
+_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _NoRedirectHandler
+)
+
+
 def http_get(url: str, timeout: float) -> tuple[int, str]:
     """Read-only HTTP GET using only the standard library.
 
-    Returns ``(status_code, body_text)``. Raises on network or protocol errors.
-    Only ``http``/``https`` URLs are accepted by callers; this helper never
-    performs mutating requests.
+    Returns ``(status_code, body_text)``. Raises on network or protocol errors,
+    including any redirect response. Only ``http``/``https`` URLs are accepted
+    by callers; this helper never performs mutating requests.
     """
     req = urllib.request.Request(
         url,
         method="GET",
         headers={"User-Agent": "phase5-acceptance"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _OPENER.open(req, timeout=timeout) as resp:
         return resp.getcode(), resp.read().decode("utf-8", "replace")
 
 
-def _health_url_acceptable(base_url: str) -> bool:
-    """Return True only if ``base_url`` is a safe, public HTTPS health base.
+_LOCAL_HOST_NAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
+_LOCAL_HOST_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".localdomain",
+    ".internal",
+    ".home.arpa",
+)
+# Anything but printable, non-space ASCII (plus ``%`` and ``\\``) in a host is
+# rejected: the resolver applies IDNA/nameprep to non-ASCII text, which can turn
+# a lookalike into a loopback or private literal after validation.
+_INVALID_HOST_CHARS_RE = re.compile(r"[^\x21-\x7e]|[%\\]")
+# IPv6 ranges that embed or tunnel IPv4 addresses (NAT64, 6to4, Teredo); a
+# literal in these ranges can point at a non-public IPv4 destination.
+_EMBEDDED_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(net)
+    for net in (
+        "::/96",  # IPv4-compatible (deprecated)
+        "::ffff:0:0:0/96",  # SIIT IPv4-translated
+        "64:ff9b::/96",
+        "64:ff9b:1::/48",
+        "2002::/16",
+        "2001::/32",
+        "fec0::/10",  # deprecated site-local
+    )
+)
 
-    Rejects non-HTTPS schemes, missing netloc, embedded credentials, query or
-    fragment, obvious localhost names, and literal loopback/private/link-local/
-    reserved addresses. Uses only the standard library; no DNS or network
-    resolution is performed, so a non-literal public hostname is accepted.
-    """
-    parsed = urllib.parse.urlparse(base_url)
-    if parsed.scheme != "https":
+
+# A last label made only of digits or a hex prefix is never a real TLD; some
+# resolvers (e.g. Darwin) still read such strings as IPv4 (``127.0.0.08``).
+_NUMERIC_LAST_LABEL_RE = re.compile(r"0x[0-9a-f]*|[0-9]+", re.IGNORECASE)
+
+
+def _is_numeric_ipv4_form(host: str) -> bool:
+    """True for any IPv4 spelling a system resolver may accept (``127.1``,
+    ``2130706433``, ``0x7f000001``, octal parts, leading-zero octets), which
+    ``ipaddress`` rejects."""
+    if _NUMERIC_LAST_LABEL_RE.fullmatch(host.rsplit(".", 1)[-1]):
+        return True
+    try:
+        socket.inet_aton(host)
+    except (OSError, ValueError, UnicodeError):
         return False
-    if not parsed.netloc:
+    return True
+
+
+def _public_ip_literal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if ip.is_multicast:
         return False
-    if parsed.username is not None or parsed.password is not None:
-        return False
-    if parsed.query or parsed.fragment:
-        return False
-    host = parsed.hostname
-    if host is None:
-        return False
-    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None and not ip.ipv4_mapped.is_global:
+            return False
+        if any(ip in net for net in _EMBEDDED_IPV4_NETWORKS):
+            return False
+    return ip.is_global
+
+
+def _health_url_host(base_url: str, allow_http: bool) -> str | None:
+    """Return the normalized host of a structurally acceptable base URL, or
+    ``None`` when the scheme, netloc, credentials, ``?``/``#`` or host
+    characters are not acceptable."""
+    # ``urlparse`` silently strips tabs, newlines and surrounding whitespace, so
+    # reject them before parsing to keep the validated host equal to the one
+    # that would be requested.
+    if re.search(r"[^\x21-\x7e]", base_url):
+        return None
+    try:
+        parsed = urllib.parse.urlparse(base_url)
+        host = parsed.hostname
+        has_credentials = parsed.username is not None or parsed.password is not None
+        parsed.port  # noqa: B018 - raises ValueError on an invalid port
+    except ValueError:
+        return None
+    allowed_schemes = ("https", "http") if allow_http else ("https",)
+    if parsed.scheme not in allowed_schemes or not parsed.netloc or has_credentials:
+        return None
+    if "?" in base_url or "#" in base_url or host is None:
+        return None
+    if _INVALID_HOST_CHARS_RE.search(host):
+        return None
+    if parsed.netloc.rpartition("@")[2].startswith("["):
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError:
+            return None
+    host = host.removesuffix(".")
+    if not host or host.startswith(".") or host.endswith(".") or ".." in host:
+        return None
+    return host
+
+
+def _public_host(host: str) -> bool:
+    if host in _LOCAL_HOST_NAMES or host.endswith(_LOCAL_HOST_SUFFIXES):
         return False
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        return True
-    return ip.is_global
+        return not _is_numeric_ipv4_form(host)
+    return _public_ip_literal(ip)
+
+
+def _health_url_acceptable(base_url: str, allow_http: bool = False) -> bool:
+    """Return True only if ``base_url`` is a safe, public health base.
+
+    Rejects non-HTTPS schemes (plain ``http`` only when ``allow_http`` is set),
+    missing netloc, embedded credentials, any ``?`` or ``#`` (even when empty),
+    local host names (including trailing-dot and ``.local``/``.localdomain``/
+    ``.internal`` forms), non-canonical numeric IPv4 spellings, and literal
+    loopback/private/link-local/reserved addresses, including IPv6 forms that
+    embed an IPv4 address. Uses only the standard library; no DNS or network
+    resolution is performed, so a non-literal public hostname is accepted.
+    """
+    host = _health_url_host(base_url, allow_http)
+    return host is not None and _public_host(host)
+
+
+# Malformed responses raise http.client errors that urllib does not wrap; their
+# messages can echo response bytes, so they must be mapped to a plain failure.
+_PROBE_ERRORS = (
+    urllib.error.URLError,
+    urllib.error.HTTPError,
+    http.client.HTTPException,
+    ValueError,
+    OSError,
+)
 
 
 def validate_health(
     base_url: str | None,
     timeout: float = DEFAULT_HEALTH_TIMEOUT,
     get: Callable[[str, float], tuple[int, str]] = http_get,
+    allow_http: bool = False,
 ) -> dict:
     """Validate the public health endpoints without leaking details.
 
@@ -284,7 +400,7 @@ def validate_health(
             "ready": "not_run",
         }
 
-    if not _health_url_acceptable(base_url):
+    if not _health_url_acceptable(base_url, allow_http):
         return {"status": "fail", "live": "fail", "ready": "fail"}
 
     base = base_url.rstrip("/")
@@ -294,21 +410,27 @@ def validate_health(
     result = {"live": "fail", "ready": "fail"}
     try:
         live_code, _ = get(live_url, timeout)
-    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+    except _PROBE_ERRORS:
         result["live"] = "fail"
     else:
         result["live"] = "pass" if live_code == 200 else "fail"
 
     try:
         ready_code, _ = get(ready_url, timeout)
-    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+    except _PROBE_ERRORS:
         result["ready"] = "fail"
     else:
         result["ready"] = "pass" if ready_code == 200 else "fail"
 
     health_ok = result["live"] == "pass" and result["ready"] == "pass"
     status = "pass" if health_ok else "fail"
-    return {"status": status, "live": result["live"], "ready": result["ready"]}
+    transport = urllib.parse.urlparse(base_url).scheme
+    return {
+        "status": status,
+        "live": result["live"],
+        "ready": result["ready"],
+        "transport": transport,
+    }
 
 
 def summarize(sections: dict, allow_not_run: bool) -> tuple[str, int]:
@@ -353,6 +475,7 @@ def run_acceptance(
     health_timeout: float = DEFAULT_HEALTH_TIMEOUT,
     allow_not_run: bool = False,
     get: Callable[[str, float], tuple[int, str]] = http_get,
+    allow_http_health: bool = False,
 ) -> tuple[int, dict]:
     """Run the full read-only acceptance check.
 
@@ -378,12 +501,16 @@ def run_acceptance(
     report["sections"]["missing_count"] = proc["missing_count"]
     report["sections"]["duplicate_count"] = proc["duplicate_count"]
 
-    health = validate_health(health_base_url, health_timeout, get=get)
+    health = validate_health(
+        health_base_url, health_timeout, get=get, allow_http=allow_http_health
+    )
     report["sections"]["health"] = {
         "status": health["status"],
         "live": health["live"],
         "ready": health["ready"],
     }
+    if "transport" in health:
+        report["sections"]["health"]["transport"] = health["transport"]
 
     overall, exit_code = summarize(report["sections"], allow_not_run)
     report["status"] = overall
@@ -400,6 +527,8 @@ def format_report(report: dict, fmt: str = "text") -> str:
     pm2 = sections["pm2"]
     gunicorn = sections["gunicorn"]
     health = sections["health"]
+    transport = health.get("transport")
+    health_suffix = f", transport {transport}" if transport else ""
     lines = [
         f"phase5 acceptance: {report['status']}",
         "  pm2: {} (expected {}, present {}, online {})".format(
@@ -412,8 +541,8 @@ def format_report(report: dict, fmt: str = "text") -> str:
             gunicorn["bind_ok"],
             gunicorn["config_ok"],
         ),
-        "  health: {} (live {}, ready {})".format(
-            health["status"], health["live"], health["ready"]
+        "  health: {} (live {}, ready {}{})".format(
+            health["status"], health["live"], health["ready"], health_suffix
         ),
     ]
     return "\n".join(lines)
@@ -455,6 +584,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--allow-http-health",
+        action="store_true",
+        help=(
+            "Permit a plain-HTTP health base URL for deployments whose public "
+            "endpoint is not served over TLS. HTTPS remains the default; all "
+            "other URL restrictions still apply."
+        ),
+    )
+    parser.add_argument(
         "--format",
         choices=["text", "json"],
         default="text",
@@ -467,6 +605,7 @@ def main(argv: list[str] | None = None) -> int:
         health_base_url=args.health_base_url,
         health_timeout=args.health_timeout,
         allow_not_run=args.allow_not_run,
+        allow_http_health=args.allow_http_health,
     )
     print(format_report(report, args.format))
     return exit_code
