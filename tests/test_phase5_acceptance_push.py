@@ -12,7 +12,8 @@ sys.path.insert(0, str(DEPLOYMENT))
 spec = importlib.util.spec_from_file_location(
     "phase5_acceptance_push", DEPLOYMENT / "phase5_acceptance_push.py"
 )
-assert spec is not None and spec.loader is not None
+assert spec is not None
+assert spec.loader is not None
 push_mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(push_mod)
 
@@ -83,7 +84,8 @@ def _run(monkeypatch, capsys, exit_code, report, push_ok=True, env=TOKEN_URL):
 def test_pass_pushes_up_and_returns_zero(monkeypatch, capsys):
     code, sent, out = _run(monkeypatch, capsys, 0, _report())
     assert code == 0
-    assert len(sent) == 1 and "status=up" in sent[0]
+    assert len(sent) == 1
+    assert "status=up" in sent[0]
     assert "SECRET-TOKEN" not in out.out + out.err
 
 
@@ -92,7 +94,8 @@ def test_failure_pushes_down_and_keeps_exit_code(monkeypatch, capsys):
     report["status"] = "fail"
     code, sent, out = _run(monkeypatch, capsys, 1, report)
     assert code == 1
-    assert "status=down" in sent[0] and "health%3Dfail" in sent[0]
+    assert "status=down" in sent[0]
+    assert "health%3Dfail" in sent[0]
     assert "SECRET-TOKEN" not in out.out + out.err
 
 
@@ -161,7 +164,8 @@ def test_end_to_end_with_local_monitor_server(monkeypatch, capsys):
     finally:
         server.shutdown()
     assert code == 0
-    assert seen and seen[0].startswith("/api/push/tok?status=up")
+    assert seen
+    assert seen[0].startswith("/api/push/tok?status=up")
 
 
 def _run_real_push(monkeypatch, capsys, url):

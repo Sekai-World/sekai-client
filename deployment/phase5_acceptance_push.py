@@ -63,7 +63,8 @@ def push(url: str, timeout: float) -> bool:
         request = urllib.request.Request(url, method="GET")
         with _OPENER.open(request, timeout=timeout) as response:
             return 200 <= response.status < 300
-    except Exception:  # noqa: BLE001 - never surface URL-bearing error text
+    except Exception:  # noqa: BLE001
+        # Never surface error text: it can contain the secret push URL.
         return False
 
 
@@ -98,7 +99,8 @@ def main(argv: list[str] | None = None) -> int:
             allow_not_run=False,
             allow_http_health=args.allow_http_health,
         )
-    except Exception:  # noqa: BLE001 - report as a failed run, no detail
+    except Exception:  # noqa: BLE001
+        # Report as a failed run without any error detail.
         exit_code, report = 1, {}
     print(acceptance.format_report(report, "text") if report else "acceptance error")
 
