@@ -204,7 +204,22 @@ def validate_processes(entries: list[dict]) -> dict:
         and not has_duplicates
     )
     gunicorn_status = "pass" if gunicorn_ok else "fail"
+    regions = {}
+    for region in FORMAL_REGIONS:
+        name = f"sharedApiClient-{region}"
+        checks = per_region.get(name)
+        usable = checks is not None and name not in duplicates
+        regions[region] = {
+            "pm2": "pass" if usable and checks["online"] == "pass" else "fail",
+            "gunicorn": (
+                "pass"
+                if usable
+                and all(checks[key] == "pass" for key in ("workers", "bind", "config"))
+                else "fail"
+            ),
+        }
     return {
+        "regions": regions,
         "pm2": {
             "status": pm2_status,
             "expected": len(EXPECTED_PROCESS_NAMES),
@@ -238,6 +253,14 @@ _OPENER = urllib.request.build_opener(
 )
 
 
+_NOT_READY_STATUS = 503
+_MAX_BODY_BYTES = 64 * 1024
+
+
+def _read_capped(response) -> str:
+    return response.read(_MAX_BODY_BYTES).decode("utf-8", "replace")
+
+
 def http_get(url: str, timeout: float) -> tuple[int, str]:
     """Read-only HTTP GET using only the standard library.
 
@@ -250,8 +273,17 @@ def http_get(url: str, timeout: float) -> tuple[int, str]:
         method="GET",
         headers={"User-Agent": "phase5-acceptance"},
     )
-    with _OPENER.open(req, timeout=timeout) as resp:
-        return resp.getcode(), resp.read().decode("utf-8", "replace")
+    try:
+        with _OPENER.open(req, timeout=timeout) as resp:
+            return resp.getcode(), _read_capped(resp)
+    except urllib.error.HTTPError as error:
+        # Only 503 carries information used here: the readiness endpoint
+        # answers 503 with the per-region state. Every other error status
+        # (including a refused redirect) still raises and counts as a failure.
+        if error.code != _NOT_READY_STATUS:
+            raise
+        with error:
+            return error.code, _read_capped(error)
 
 
 _LOCAL_HOST_NAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
@@ -381,6 +413,31 @@ _PROBE_ERRORS = (
 )
 
 
+def _region_states(state: str) -> dict[str, str]:
+    return dict.fromkeys(FORMAL_REGIONS, state)
+
+
+def _regions_from_not_ready(body: str) -> dict[str, str]:
+    """Per-region readiness from a 503 readiness body.
+
+    Only the boolean ``ready`` of each formal region is read; nothing else from
+    the body is kept. Anything unparseable counts as not ready for every region.
+    """
+    states = _region_states("fail")
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return states
+    reported = payload.get("regions") if isinstance(payload, dict) else None
+    if not isinstance(reported, dict):
+        return states
+    for region in FORMAL_REGIONS:
+        status = reported.get(region)
+        if isinstance(status, dict) and status.get("ready") is True:
+            states[region] = "pass"
+    return states
+
+
 def validate_health(
     base_url: str | None,
     timeout: float = DEFAULT_HEALTH_TIMEOUT,
@@ -398,16 +455,23 @@ def validate_health(
             "status": "not_run",
             "live": "not_run",
             "ready": "not_run",
+            "regions": _region_states("not_run"),
         }
 
     if not _health_url_acceptable(base_url, allow_http):
-        return {"status": "fail", "live": "fail", "ready": "fail"}
+        return {
+            "status": "fail",
+            "live": "fail",
+            "ready": "fail",
+            "regions": _region_states("fail"),
+        }
 
     base = base_url.rstrip("/")
     live_url = base + HEALTH_LIVE_PATH
     ready_url = base + HEALTH_READY_PATH
 
     result = {"live": "fail", "ready": "fail"}
+    regions = _region_states("fail")
     try:
         live_code, _ = get(live_url, timeout)
     except _PROBE_ERRORS:
@@ -416,11 +480,16 @@ def validate_health(
         result["live"] = "pass" if live_code == 200 else "fail"
 
     try:
-        ready_code, _ = get(ready_url, timeout)
+        ready_code, ready_body = get(ready_url, timeout)
     except _PROBE_ERRORS:
         result["ready"] = "fail"
     else:
         result["ready"] = "pass" if ready_code == 200 else "fail"
+        if ready_code == 200:
+            # The endpoint answers 200 only when every region is ready.
+            regions = _region_states("pass")
+        elif ready_code == _NOT_READY_STATUS:
+            regions = _regions_from_not_ready(ready_body)
 
     health_ok = result["live"] == "pass" and result["ready"] == "pass"
     status = "pass" if health_ok else "fail"
@@ -429,6 +498,7 @@ def validate_health(
         "status": status,
         "live": result["live"],
         "ready": result["ready"],
+        "regions": regions,
         "transport": transport,
     }
 
@@ -451,6 +521,9 @@ def summarize(sections: dict, allow_not_run: bool) -> tuple[str, int]:
 
 def _fail_process_sections() -> dict:
     return {
+        "regions": {
+            region: {"pm2": "fail", "gunicorn": "fail"} for region in FORMAL_REGIONS
+        },
         "pm2": {
             "status": "fail",
             "expected": len(EXPECTED_PROCESS_NAMES),
@@ -511,6 +584,14 @@ def run_acceptance(
     }
     if "transport" in health:
         report["sections"]["health"]["transport"] = health["transport"]
+    report["regions"] = {
+        region: {
+            "pm2": proc["regions"][region]["pm2"],
+            "gunicorn": proc["regions"][region]["gunicorn"],
+            "ready": health["regions"][region],
+        }
+        for region in FORMAL_REGIONS
+    }
 
     overall, exit_code = summarize(report["sections"], allow_not_run)
     report["status"] = overall

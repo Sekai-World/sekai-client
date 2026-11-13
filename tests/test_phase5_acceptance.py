@@ -342,6 +342,7 @@ def test_validate_health_http_requires_explicit_opt_in():
         "status": "pass",
         "live": "pass",
         "ready": "pass",
+        "regions": dict.fromkeys(phase5.FORMAL_REGIONS, "pass"),
         "transport": "http",
     }
     assert len(calls) == 2
@@ -831,3 +832,153 @@ def test_not_run_passes_with_allow_flag():
         )
     assert exit_code == 0
     assert report["status"] == "pass"
+
+
+# --- per-region results -------------------------------------------------------
+
+_HEALTH_URL = "https://api.example.com"
+
+
+def _not_ready_body(**ready_by_region):
+    regions = {
+        r: {"ready": ready_by_region.get(r, True), "reason": "secret-detail"}
+        for r in phase5.FORMAL_REGIONS
+    }
+    return json.dumps({"status": "error", "regions": regions})
+
+
+def _get_with_ready(code, body):
+    def fake_get(url, timeout):
+        if url.endswith("/health/live"):
+            return 200, ""
+        return code, body
+
+    return fake_get
+
+
+def test_health_regions_all_pass_on_200_without_reading_body():
+    health = phase5.validate_health(_HEALTH_URL, get=_get_with_ready(200, "garbage"))
+    assert health["regions"] == dict.fromkeys(phase5.FORMAL_REGIONS, "pass")
+
+
+def test_health_regions_pick_out_not_ready_region_on_503():
+    body = _not_ready_body(tw=False)
+    health = phase5.validate_health(_HEALTH_URL, get=_get_with_ready(503, body))
+    assert health["status"] == "fail"
+    assert health["ready"] == "fail"
+    assert health["regions"] == {"jp": "pass", "en": "pass", "tw": "fail", "kr": "pass"}
+    assert "secret-detail" not in json.dumps(health)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "",
+        "not json",
+        "[]",
+        '{"regions": []}',
+        '{"regions": {"jp": {"ready": "yes"}, "en": true}}',
+    ],
+)
+def test_health_regions_unparseable_503_marks_every_region_fail(body):
+    health = phase5.validate_health(_HEALTH_URL, get=_get_with_ready(503, body))
+    assert health["regions"] == dict.fromkeys(phase5.FORMAL_REGIONS, "fail")
+
+
+def test_health_regions_fail_on_other_codes_and_errors():
+    for code in (500, 404, 302):
+        health = phase5.validate_health(_HEALTH_URL, get=_get_with_ready(code, ""))
+        assert health["regions"] == dict.fromkeys(phase5.FORMAL_REGIONS, "fail")
+
+    def boom(url, timeout):
+        raise OSError("secret")
+
+    health = phase5.validate_health(_HEALTH_URL, get=boom)
+    assert health["regions"] == dict.fromkeys(phase5.FORMAL_REGIONS, "fail")
+
+
+def test_health_regions_not_run_without_url():
+    health = phase5.validate_health("")
+    assert health["regions"] == dict.fromkeys(phase5.FORMAL_REGIONS, "not_run")
+
+
+def _pm2_entry(region, status="online", workers="1", bind="127.0.0.1"):
+    return {
+        "name": f"sharedApiClient-{region}",
+        "pm2_env": {
+            "status": status,
+            "script": "gunicorn",
+            "args": (
+                f"--workers {workers} --bind {bind}:9393 --config gunicorn_conf.py"
+            ),
+        },
+    }
+
+
+def test_process_regions_are_reported_individually():
+    entries = [
+        _pm2_entry("jp"),
+        _pm2_entry("en", status="stopped"),
+        _pm2_entry("tw", workers="2"),
+        # kr missing entirely
+    ]
+    regions = phase5.validate_processes(entries)["regions"]
+    assert regions["jp"] == {"pm2": "pass", "gunicorn": "pass"}
+    assert regions["en"] == {"pm2": "fail", "gunicorn": "pass"}
+    assert regions["tw"] == {"pm2": "pass", "gunicorn": "fail"}
+    assert regions["kr"] == {"pm2": "fail", "gunicorn": "fail"}
+
+
+def test_process_regions_duplicate_entry_fails_that_region_only():
+    entries = [_pm2_entry(r) for r in phase5.FORMAL_REGIONS] + [_pm2_entry("jp")]
+    regions = phase5.validate_processes(entries)["regions"]
+    assert regions["jp"] == {"pm2": "fail", "gunicorn": "fail"}
+    assert regions["en"] == {"pm2": "pass", "gunicorn": "pass"}
+
+
+def test_run_acceptance_report_has_per_region_results():
+    entries = [_pm2_entry(r) for r in phase5.FORMAL_REGIONS]
+    completed = mock.Mock(stdout=json.dumps(entries))
+    with mock.patch.object(phase5.subprocess, "run", return_value=completed):
+        code, report = phase5.run_acceptance(
+            health_base_url=_HEALTH_URL,
+            get=_get_with_ready(503, _not_ready_body(kr=False)),
+        )
+    assert code == 1
+    assert report["regions"]["kr"] == {
+        "pm2": "pass",
+        "gunicorn": "pass",
+        "ready": "fail",
+    }
+    assert report["regions"]["jp"] == {
+        "pm2": "pass",
+        "gunicorn": "pass",
+        "ready": "pass",
+    }
+    assert "secret-detail" not in json.dumps(report)
+
+
+def test_http_get_returns_503_body_but_still_raises_for_other_errors():
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            code = 503 if self.path == "/ready" else 500
+            body = b"x" * (100 * 1024)
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        code, body = phase5.http_get(base + "/ready", 5.0)
+        assert code == 503
+        assert len(body) == 64 * 1024  # body read is capped
+        with pytest.raises(phase5.urllib.error.HTTPError):
+            phase5.http_get(base + "/other", 5.0)
+    finally:
+        server.shutdown()

@@ -18,6 +18,15 @@ push_mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(push_mod)
 
 TOKEN_URL = "https://monitor.example/api/push/SECRET-TOKEN"
+_ALL_PUSH_ENVS = [push_mod.PUSH_URL_ENV] + [
+    push_mod.region_push_env(r) for r in push_mod.acceptance.FORMAL_REGIONS
+]
+
+
+@pytest.fixture(autouse=True)
+def _clean_push_env(monkeypatch):
+    for name in _ALL_PUSH_ENVS:
+        monkeypatch.delenv(name, raising=False)
 
 
 def _report(pm2="pass", gunicorn="pass", health="pass"):
@@ -175,3 +184,122 @@ def _run_real_push(monkeypatch, capsys, url):
     ):
         code = push_mod.main([])
     return code, None, capsys.readouterr()
+
+
+def _regions_report(**overrides):
+    report = _report()
+    report["regions"] = {
+        r: {"pm2": "pass", "gunicorn": "pass", "ready": "pass"}
+        for r in push_mod.acceptance.FORMAL_REGIONS
+    }
+    for region, checks in overrides.items():
+        report["regions"][region].update(checks)
+    return report
+
+
+def test_build_region_message_is_aggregate_only():
+    report = _regions_report(tw={"ready": "fail"})
+    report["regions"]["tw"]["leak"] = "secret-detail"
+    assert push_mod.build_region_message(report, "tw") == (
+        False,
+        "pm2=pass gunicorn=pass ready=fail",
+    )
+    assert push_mod.build_region_message(report, "jp") == (
+        True,
+        "pm2=pass gunicorn=pass ready=pass",
+    )
+    assert push_mod.build_region_message({}, "kr") == (
+        False,
+        "pm2=fail gunicorn=fail ready=fail",
+    )
+    odd = _regions_report(jp={"pm2": "http://evil.example"})
+    assert push_mod.build_region_message(odd, "jp")[1].startswith("pm2=fail ")
+    not_run = _regions_report(en={"ready": "not_run"})
+    assert push_mod.build_region_message(not_run, "en") == (
+        False,
+        "pm2=pass gunicorn=pass ready=not_run",
+    )
+
+
+def _run_regions(monkeypatch, report, exit_code, urls, fail_for=()):
+    for name, url in urls.items():
+        monkeypatch.setenv(name, url)
+    sent = {}
+
+    def fake_push(url, timeout):
+        sent[url.split("?")[0]] = url
+        return not any(token in url for token in fail_for)
+
+    with (
+        mock.patch.object(
+            push_mod.acceptance, "run_acceptance", return_value=(exit_code, report)
+        ),
+        mock.patch.object(push_mod, "push", side_effect=fake_push),
+    ):
+        return push_mod.main([]), sent
+
+
+def test_each_configured_region_gets_its_own_heartbeat(monkeypatch):
+    urls = {
+        push_mod.region_push_env("jp"): "https://m.example/api/push/jp-tok",
+        push_mod.region_push_env("tw"): "https://m.example/api/push/tw-tok",
+    }
+    report = _regions_report(tw={"ready": "fail"})
+    report["status"] = "fail"
+    code, sent = _run_regions(monkeypatch, report, 1, urls)
+    assert code == 1
+    assert set(sent) == {
+        "https://m.example/api/push/jp-tok",
+        "https://m.example/api/push/tw-tok",
+    }
+    assert "status=up" in sent["https://m.example/api/push/jp-tok"]
+    assert "status=down" in sent["https://m.example/api/push/tw-tok"]
+    assert "ready%3Dfail" in sent["https://m.example/api/push/tw-tok"]
+
+
+def test_overall_and_region_monitors_are_independent(monkeypatch):
+    urls = {
+        push_mod.PUSH_URL_ENV: "https://m.example/api/push/all-tok",
+        push_mod.region_push_env("kr"): "https://m.example/api/push/kr-tok",
+    }
+    report = _regions_report(en={"pm2": "fail"})
+    report["status"] = "fail"
+    report["sections"]["pm2"]["status"] = "fail"
+    code, sent = _run_regions(monkeypatch, report, 1, urls)
+    assert code == 1
+    assert "status=down" in sent["https://m.example/api/push/all-tok"]
+    assert "pm2%3Dfail" in sent["https://m.example/api/push/all-tok"]
+    assert "status=up" in sent["https://m.example/api/push/kr-tok"]
+
+
+def test_one_failed_push_does_not_block_the_others(monkeypatch, capsys):
+    urls = {
+        push_mod.region_push_env("jp"): "https://m.example/api/push/jp-tok",
+        push_mod.region_push_env("en"): "https://m.example/api/push/en-tok",
+    }
+    code, sent = _run_regions(
+        monkeypatch, _regions_report(), 0, urls, fail_for=("jp-tok",)
+    )
+    assert code == push_mod.EXIT_PUSH_FAILED
+    assert len(sent) == 2
+    out = capsys.readouterr()
+    assert "tok" not in out.out + out.err
+
+
+def test_acceptance_error_marks_every_configured_region_down(monkeypatch):
+    for region in push_mod.acceptance.FORMAL_REGIONS:
+        monkeypatch.setenv(
+            push_mod.region_push_env(region), f"https://m.example/api/push/{region}"
+        )
+    sent = []
+    with (
+        mock.patch.object(
+            push_mod.acceptance, "run_acceptance", side_effect=RuntimeError("x")
+        ),
+        mock.patch.object(
+            push_mod, "push", side_effect=lambda u, t: sent.append(u) or True
+        ),
+    ):
+        assert push_mod.main([]) == 1
+    assert len(sent) == 4
+    assert all("status=down" in url for url in sent)
