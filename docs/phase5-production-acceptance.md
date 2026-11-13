@@ -119,7 +119,11 @@ Behavior:
 - Redirect responses are never followed (a redirect counts as a failed probe),
   and environment or system proxy settings are ignored.
 - The result is derived from HTTP status and an aggregate health state only.
-  Response bodies are never parsed into the report and never printed.
+  Response bodies are never printed or copied into the report. The one
+  exception is the `503` body of `/health/ready`: only the boolean `ready` of
+  each formal region is read from it (the body read is capped at 64 KiB) so
+  the report can say which region is not ready. Everything else in the body is
+  discarded, and an unparseable body marks every region as not ready.
 - Malformed HTTP responses, network errors, or timeouts are reported as a
   failure, not as `not_run`.
 - When no URL is configured, the health section is `not_run`; this fails
@@ -139,16 +143,26 @@ not ready). Both must return success for the health section to pass.
   alert only when full acceptance (no `--allow-not-run`) is expected.
 - `deployment/phase5_acceptance_push.py` wires the acceptance into a push-style
   monitor (for example an Uptime Kuma *Push* monitor). Run it from a scheduler
-  on the deployment host, with the monitor's push URL in the
-  `PHASE5_PUSH_URL` environment variable (the URL carries a secret token: keep
-  it in a private, owner-only environment file, never in the repository, a
-  command line or a log). It runs the full acceptance (no `--allow-not-run`) and
-  pushes `status=up` on pass or `status=down` on any failure, with a message of
-  only the three section states. Set the monitor's heartbeat interval to a bit
-  more than the schedule interval so a stopped scheduler or host also alerts.
-  Exit code is the acceptance exit code, or `2` if the push failed or is not
-  configured. Use the same `--pm2-binary`, `--health-base-url` and
-  `--allow-http-health` options as the acceptance tool.
+  on the deployment host. It runs the full acceptance (no `--allow-not-run`) and
+  sends one heartbeat per configured monitor, each configured by its own
+  environment variable (every push URL carries a secret token: keep them in a
+  private, owner-only environment file, never in the repository, a command
+  line or a log):
+  - `PHASE5_PUSH_URL`: overall acceptance. `status=up` on pass, `status=down`
+    on any failure; the message holds only the three section states.
+  - `PHASE5_PUSH_URL_JP`, `_EN`, `_TW`, `_KR`: one monitor per region. Up only
+    when that region's PM2 process is online, its Gunicorn launch settings are
+    valid and the readiness endpoint reports it ready; the message holds only
+    those three states. A region monitor therefore says directly which region
+    is unhealthy and which check failed.
+
+  Set each monitor's heartbeat interval to a bit more than the schedule
+  interval so a stopped scheduler or host also alerts. Monitors whose variable
+  is not set are skipped. Exit code is the acceptance exit code, or `2` if any
+  push failed or no push URL is configured. Use the same `--pm2-binary`,
+  `--health-base-url` and `--allow-http-health` options as the acceptance tool.
+  The JSON report from the acceptance tool also carries a `regions` object with
+  the same per-region states.
 - Keep the operator record of actual run output private; monitoring should expose
   only aggregate status and small aggregate counts, never URLs, bodies, or IDs.
 

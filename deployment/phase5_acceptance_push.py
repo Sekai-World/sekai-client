@@ -6,14 +6,20 @@ scheduler on the deployment host; the monitor alerts when a section fails
 (``status=down``) and when the heartbeat stops arriving (the scheduler or the
 host is down).
 
-The push URL carries a secret token, so it is read only from the
-``PHASE5_PUSH_URL`` environment variable and is never printed, logged or put
-in an exception message. The pushed message contains only the three aggregate
-section states (``pm2``, ``gunicorn``, ``health``); nothing else from the
-acceptance report is sent.
+Monitors are configured independently through environment variables; each one
+that is set receives its own heartbeat:
 
-Exit code: the acceptance exit code, or ``2`` when the push itself failed or
-is not configured.
+- ``PHASE5_PUSH_URL``: overall acceptance. The message carries only the three
+  aggregate section states (``pm2``, ``gunicorn``, ``health``).
+- ``PHASE5_PUSH_URL_JP`` / ``_EN`` / ``_TW`` / ``_KR``: one region. Up only when
+  that region's PM2 process, Gunicorn launch settings and readiness all pass;
+  the message carries only those three states.
+
+Each push URL carries a secret token, so it is read only from the environment
+and is never printed, logged or put in an exception message.
+
+Exit code: the acceptance exit code, or ``2`` when any push failed or no push
+URL is configured.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ PUSH_URL_ENV = "PHASE5_PUSH_URL"
 DEFAULT_PUSH_TIMEOUT = 10.0
 EXIT_PUSH_FAILED = 2
 _SECTIONS = ("pm2", "gunicorn", "health")
+_REGION_CHECKS = ("pm2", "gunicorn", "ready")
 _STATES = frozenset({"pass", "fail", "not_run"})
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -41,6 +48,21 @@ def build_message(report: dict) -> str:
         state = report.get("sections", {}).get(name, {}).get("status")
         parts.append(f"{name}={state if state in _STATES else 'fail'}")
     return " ".join(parts)
+
+
+def region_push_env(region: str) -> str:
+    return f"{PUSH_URL_ENV}_{region.upper()}"
+
+
+def build_region_message(report: dict, region: str) -> tuple[bool, str]:
+    """Aggregate-only region result: ``(is_up, "pm2=pass gunicorn=... ready=...")``."""
+    states = report.get("regions", {}).get(region, {})
+    parts = {
+        name: states.get(name) if states.get(name) in _STATES else "fail"
+        for name in _REGION_CHECKS
+    }
+    message = " ".join(f"{name}={value}" for name, value in parts.items())
+    return all(value == "pass" for value in parts.values()), message
 
 
 def build_push_url(base_url: str, is_up: bool, message: str) -> str | None:
@@ -87,7 +109,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--push-timeout", type=float, default=DEFAULT_PUSH_TIMEOUT)
     args = parser.parse_args(argv)
 
-    if not os.environ.get(PUSH_URL_ENV, "").strip():
+    configured = {
+        name: os.environ[name].strip()
+        for name in (PUSH_URL_ENV, *map(region_push_env, acceptance.FORMAL_REGIONS))
+        if os.environ.get(name, "").strip()
+    }
+    if not configured:
         print(f"push monitor not configured: set {PUSH_URL_ENV}", file=sys.stderr)
         return EXIT_PUSH_FAILED
 
@@ -104,10 +131,21 @@ def main(argv: list[str] | None = None) -> int:
         exit_code, report = 1, {}
     print(acceptance.format_report(report, "text") if report else "acceptance error")
 
-    url = build_push_url(
-        os.environ[PUSH_URL_ENV], exit_code == 0, build_message(report)
-    )
-    if url is None or not push(url, args.push_timeout):
+    heartbeats = []
+    if PUSH_URL_ENV in configured:
+        heartbeats.append((PUSH_URL_ENV, exit_code == 0, build_message(report)))
+    for region in acceptance.FORMAL_REGIONS:
+        name = region_push_env(region)
+        if name in configured:
+            is_up, message = build_region_message(report, region)
+            heartbeats.append((name, is_up, message))
+
+    all_pushed = True
+    for name, is_up, message in heartbeats:
+        url = build_push_url(configured[name], is_up, message)
+        if url is None or not push(url, args.push_timeout):
+            all_pushed = False
+    if not all_pushed:
         print("push failed", file=sys.stderr)
         return EXIT_PUSH_FAILED
     return exit_code
