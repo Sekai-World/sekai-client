@@ -245,13 +245,17 @@ The repository contains a dedicated TW remote-provider PM2 template and
 accepted; the next-region rollout remains gated by the evidence requirements
 below.
 
-Phase 5 remains in progress. A repeatable, read-only acceptance path now exists:
-`deployment/phase5_acceptance.py` validates the formal shared-client PM2/Gunicorn
-topology (presence, online status, one worker, loopback bind, `--config
-gunicorn_conf.py`) and, optionally, the public `/health/live` and `/health/ready`
-endpoints, emitting only aggregate, redacted outcomes. Production acceptance
-evidence must be recorded by operators only after running that tool against the
-real environment; this roadmap does not claim Phase 5 complete.
+Phase 5 production acceptance has passed. A repeatable, read-only acceptance path
+exists: `deployment/phase5_acceptance.py` validates the formal shared-client
+PM2/Gunicorn topology (presence, online status, one worker, loopback bind,
+`--config gunicorn_conf.py`) and the public `/health/live` and `/health/ready`
+endpoints, emitting only aggregate, redacted outcomes, per region as well as
+overall. The full run passed (PM2, Gunicorn and health), health was verified over
+plain HTTP via the opt-in `--allow-http-health` flag from the deployment host, and
+the acceptance signal is wired into a push-style monitor with an overall and a
+per-region heartbeat that alerts on failure. Exact evidence stays in the private
+operator record; see the progress log in
+[remediation-roadmap.md](remediation-roadmap.md).
 
 - [x] Deploy the account service before enabling remote acquisition in clients.
 - [x] Canary one region and one consumer.
@@ -293,8 +297,8 @@ in [remediation-roadmap.md](remediation-roadmap.md):
   public-release hardening and ruleset activation complete this prerequisite.
 - Phase 3 desktop/mobile dashboard acceptance.
 - Phase 5 PM2/Gunicorn, canary, public endpoint, and monitoring acceptance
-  (now with a repeatable read-only acceptance tool; evidence recorded only
-  after operators run it in production).
+  (completed 2026-11-14 with a repeatable read-only acceptance tool; aggregate
+  evidence is in the remediation progress log).
 - Phase 6 end-to-end RPC deadlines, cancellation, idempotent retry policy, and
   queue metrics. This is a prerequisite for the remote provider.
 - Phase 7 event-tracker outbox and upstream response-schema validation.

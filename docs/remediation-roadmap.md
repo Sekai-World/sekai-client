@@ -22,7 +22,7 @@
 | 2 | 凭据、日志和内部 RPC 安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | PR 3 (#7 merged) |
 | 3 | Dashboard 安全与交互 | `[-]` 进行中（待桌面/移动端手工验收） | 0.5-1 天 | 阶段 1 | PR 4 |
 | 4 | 定时任务互斥与 Git 数据安全 | `[x]` 已完成 | 1-2 天 | 阶段 1 | [PR #9](https://github.com/Sekai-World/sekai-client/pull/9) merged |
-| 5 | 区域 bootstrap 与客户端状态机 | `[-]` 已实现生命周期/readiness 代码切片，生产验收待完成 | 2-3 天 | 阶段 1 | 代码已合入 main；无独立 PR |
+| 5 | 区域 bootstrap 与客户端状态机 | `[x]` 已完成（生命周期/readiness 代码、PM2/Gunicorn 与公共健康生产验收、监控验收均已通过） | 2-3 天 | 阶段 1 | 代码已合入 main；无独立 PR |
 | 6 | Deadline、重试与队列生命周期 | `[x]` 已完成 | 2-3 天 | 阶段 5 | PRs #21-#24 |
 | 7 | Event tracker outbox 与 API 响应校验 | `[-]` 进行中（排名 outbox 与接收端幂等已完成，API 响应校验未开始） | 2-4 天 | 阶段 1；建议在阶段 6 后 | PR #40；响应校验待拆分 |
 
@@ -537,9 +537,10 @@ and test-count records above are retained as execution history.
   acceptance ([#57](https://github.com/Sekai-World/sekai-client/issues/57)).
 - Phase 5 lifecycle and readiness code is present on `main`. The TW
   remote-provider canary and its first monitoring window are recorded below.
-  Public endpoint verification and deployment monitoring acceptance remain open
-  ([#57](https://github.com/Sekai-World/sekai-client/issues/57)); expansion remains
-  one region at a time ([#55](https://github.com/Sekai-World/sekai-client/issues/55)).
+  Public endpoint verification and deployment monitoring acceptance have passed
+  (see the progress log; [#57](https://github.com/Sekai-World/sekai-client/issues/57));
+  expansion remains one region at a time
+  ([#55](https://github.com/Sekai-World/sekai-client/issues/55)).
 - Phase 6 is complete. End-to-end RPC deadlines, late-task state protection,
   idempotency-aware retry policy with `Retry-After`/jitter backoff, and queue
   metrics landed through PRs #21-#24; the cooperative `check_update` cycle
@@ -597,3 +598,4 @@ and test-count records above are retained as execution history.
 | 2026-08-27 | 5 | Added a repeatable, read-only Phase 5 acceptance tool (`deployment/phase5_acceptance.py`) and runbook (`docs/phase5-production-acceptance.md`). The tool performs aggregate, redacted PM2/Gunicorn and public-health validation without mutating services; it does not contain or claim any production acceptance evidence. Phase 5 remains in progress. | Operators run the tool in production and record only aggregate acceptance evidence (no URLs, bodies, credentials, IDs, paths, exact timestamps, or detailed counters) before marking Phase 5 complete; continue one-region canary/rollout. |
 | 2026-08-28 | 7 | Removed the check-update Strapi ID publication/outbox path and its deployment configuration. Preserved event-tracker Strapi current-event reads and ranking delivery outbox. JP/EN version validation now requires a non-empty `appHash`, and valid hashes are not overwritten by empty upstream values. Verification: full `pytest` 777 passed; Ruff and `git diff --check` clean. | Deploy only after the normal review/rollback gate; no production changes were made in this worktree. |
 | 2026-09-14 | ops | Legacy production checkout retired ([#58](https://github.com/Sekai-World/sekai-client/issues/58) closed). The observation gate passed with margin: months of scheduled daily cycles on the current main line plus an extended multi-region verification window with all regions READY and no authenticated-request failures. A reference scan confirmed no live process configuration referenced the legacy tree; four stale process-definition files were repointed before removal. Retention decision recorded: the checkout's Git history and its untracked source files were archived to the private operator record; the remainder (working data clones superseded by the active checkout, empty failure-artifact shells from a resolved August incident, a stale crash dump, and one obsolete credential) was destroyed without archive. Aggregate evidence only; operational identifiers and locations are retained privately. | None. |
+| 2026-11-14 | 5 | Phase 5 production acceptance completed. The full read-only acceptance run (`deployment/phase5_acceptance.py`, no `--allow-not-run`) passed with exit code 0: PM2 pass (all four shared-client processes online), Gunicorn pass (launch settings valid for all four), public health pass (`/health/live` and `/health/ready`, every region ready). The public endpoint has no TLS, so health was verified over plain HTTP via the opt-in `--allow-http-health` flag, probed from the deployment host rather than an external vantage point. Monitoring acceptance passed: the acceptance signal is pushed on a schedule to a push-style monitor, with one overall heartbeat and one heartbeat per region (PM2, Gunicorn and readiness), failure and missed heartbeats alert, and the operator confirmed alert delivery. Aggregate evidence only; the full run output is kept in the private operator record. | Keep the scheduled push running; add restart-count and data-freshness checks if finer monitoring is needed. |
