@@ -189,7 +189,7 @@ def _run_real_push(monkeypatch, capsys, url):
 def _regions_report(**overrides):
     report = _report()
     report["regions"] = {
-        r: {"pm2": "pass", "gunicorn": "pass", "ready": "pass"}
+        r: {"pm2": "pass", "gunicorn": "pass", "ready": "pass", "stable": "pass"}
         for r in push_mod.acceptance.FORMAL_REGIONS
     }
     for region, checks in overrides.items():
@@ -202,22 +202,22 @@ def test_build_region_message_is_aggregate_only():
     report["regions"]["tw"]["leak"] = "secret-detail"
     assert push_mod.build_region_message(report, "tw") == (
         False,
-        "pm2=pass gunicorn=pass ready=fail",
+        "pm2=pass gunicorn=pass ready=fail stable=pass",
     )
     assert push_mod.build_region_message(report, "jp") == (
         True,
-        "pm2=pass gunicorn=pass ready=pass",
+        "pm2=pass gunicorn=pass ready=pass stable=pass",
     )
     assert push_mod.build_region_message({}, "kr") == (
         False,
-        "pm2=fail gunicorn=fail ready=fail",
+        "pm2=fail gunicorn=fail ready=fail stable=fail",
     )
     odd = _regions_report(jp={"pm2": "http://evil.example"})
     assert push_mod.build_region_message(odd, "jp")[1].startswith("pm2=fail ")
     not_run = _regions_report(en={"ready": "not_run"})
     assert push_mod.build_region_message(not_run, "en") == (
         False,
-        "pm2=pass gunicorn=pass ready=not_run",
+        "pm2=pass gunicorn=pass ready=not_run stable=pass",
     )
 
 
@@ -303,3 +303,29 @@ def test_acceptance_error_marks_every_configured_region_down(monkeypatch):
         assert push_mod.main([]) == 1
     assert len(sent) == 4
     assert all("status=down" in url for url in sent)
+
+
+def test_unstable_region_pushes_down_with_stable_state():
+    report = _regions_report(jp={"stable": "fail"})
+    assert push_mod.build_region_message(report, "jp") == (
+        False,
+        "pm2=pass gunicorn=pass ready=pass stable=fail",
+    )
+    assert push_mod.build_region_message(report, "en")[0] is True
+
+
+def test_min_uptime_option_is_passed_to_acceptance(monkeypatch):
+    monkeypatch.setenv(push_mod.PUSH_URL_ENV, TOKEN_URL)
+    with (
+        mock.patch.object(
+            push_mod.acceptance, "run_acceptance", return_value=(0, _report())
+        ) as run,
+        mock.patch.object(push_mod, "push", return_value=True),
+    ):
+        push_mod.main(["--min-uptime", "120"])
+        push_mod.main([])
+    assert run.call_args_list[0].kwargs["min_uptime"] == 120.0
+    assert (
+        run.call_args_list[1].kwargs["min_uptime"]
+        == push_mod.acceptance.DEFAULT_MIN_UPTIME
+    )

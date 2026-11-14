@@ -902,10 +902,23 @@ def test_health_regions_not_run_without_url():
     assert health["regions"] == dict.fromkeys(phase5.FORMAL_REGIONS, "not_run")
 
 
-def _pm2_entry(region, status="online", workers="1", bind="127.0.0.1"):
+_NOW_MS = 1_800_000_000_000.0
+
+
+def _pm2_entry(
+    region,
+    status="online",
+    workers="1",
+    bind="127.0.0.1",
+    uptime_s=3600,
+    started=None,
+):
+    if started is None:
+        started = _NOW_MS - uptime_s * 1000.0
     return {
         "name": f"sharedApiClient-{region}",
         "pm2_env": {
+            "pm_uptime": started,
             "status": status,
             "script": "gunicorn",
             "args": (
@@ -922,22 +935,23 @@ def test_process_regions_are_reported_individually():
         _pm2_entry("tw", workers="2"),
         # kr missing entirely
     ]
-    regions = phase5.validate_processes(entries)["regions"]
-    assert regions["jp"] == {"pm2": "pass", "gunicorn": "pass"}
-    assert regions["en"] == {"pm2": "fail", "gunicorn": "pass"}
-    assert regions["tw"] == {"pm2": "pass", "gunicorn": "fail"}
-    assert regions["kr"] == {"pm2": "fail", "gunicorn": "fail"}
+    regions = phase5.validate_processes(entries, now_ms=_NOW_MS)["regions"]
+    assert regions["jp"] == {"pm2": "pass", "gunicorn": "pass", "stable": "pass"}
+    assert regions["en"] == {"pm2": "fail", "gunicorn": "pass", "stable": "fail"}
+    assert regions["tw"] == {"pm2": "pass", "gunicorn": "fail", "stable": "pass"}
+    assert regions["kr"] == {"pm2": "fail", "gunicorn": "fail", "stable": "fail"}
 
 
 def test_process_regions_duplicate_entry_fails_that_region_only():
     entries = [_pm2_entry(r) for r in phase5.FORMAL_REGIONS] + [_pm2_entry("jp")]
-    regions = phase5.validate_processes(entries)["regions"]
-    assert regions["jp"] == {"pm2": "fail", "gunicorn": "fail"}
-    assert regions["en"] == {"pm2": "pass", "gunicorn": "pass"}
+    regions = phase5.validate_processes(entries, now_ms=_NOW_MS)["regions"]
+    assert regions["jp"] == {"pm2": "fail", "gunicorn": "fail", "stable": "fail"}
+    assert regions["en"] == {"pm2": "pass", "gunicorn": "pass", "stable": "pass"}
 
 
 def test_run_acceptance_report_has_per_region_results():
-    entries = [_pm2_entry(r) for r in phase5.FORMAL_REGIONS]
+    started = (phase5.time.time() - 3600) * 1000.0
+    entries = [_pm2_entry(r, started=started) for r in phase5.FORMAL_REGIONS]
     completed = mock.Mock(stdout=json.dumps(entries))
     with mock.patch.object(phase5.subprocess, "run", return_value=completed):
         code, report = phase5.run_acceptance(
@@ -949,11 +963,13 @@ def test_run_acceptance_report_has_per_region_results():
         "pm2": "pass",
         "gunicorn": "pass",
         "ready": "fail",
+        "stable": "pass",
     }
     assert report["regions"]["jp"] == {
         "pm2": "pass",
         "gunicorn": "pass",
         "ready": "pass",
+        "stable": "pass",
     }
     assert "secret-detail" not in json.dumps(report)
 
@@ -982,3 +998,65 @@ def test_http_get_returns_503_body_but_still_raises_for_other_errors():
             phase5.http_get(base + "/other", 5.0)
     finally:
         server.shutdown()
+
+
+# --- restart visibility (stable) ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "uptime_s,expected",
+    [(5, "fail"), (599, "fail"), (600, "pass"), (86400, "pass")],
+)
+def test_stable_depends_on_uptime_threshold(uptime_s, expected):
+    entries = [_pm2_entry(r, uptime_s=uptime_s) for r in phase5.FORMAL_REGIONS]
+    regions = phase5.validate_processes(entries, now_ms=_NOW_MS)["regions"]
+    assert all(r["stable"] == expected for r in regions.values())
+
+
+def test_stable_threshold_is_configurable():
+    entries = [_pm2_entry(r, uptime_s=120) for r in phase5.FORMAL_REGIONS]
+    regions = phase5.validate_processes(entries, now_ms=_NOW_MS, min_uptime=60)
+    assert regions["regions"]["jp"]["stable"] == "pass"
+    regions = phase5.validate_processes(entries, now_ms=_NOW_MS, min_uptime=300)
+    assert regions["regions"]["jp"]["stable"] == "fail"
+
+
+@pytest.mark.parametrize("started", [None, True, "1700000000000", [], _NOW_MS + 5000])
+def test_stable_fails_for_missing_invalid_or_future_start_time(started):
+    entries = [_pm2_entry(r) for r in phase5.FORMAL_REGIONS]
+    entries[0]["pm2_env"]["pm_uptime"] = started
+    regions = phase5.validate_processes(entries, now_ms=_NOW_MS)["regions"]
+    assert regions["jp"]["stable"] == "fail"
+    assert regions["en"]["stable"] == "pass"
+
+
+def test_unstable_region_does_not_change_overall_acceptance():
+    entries = [_pm2_entry(r, uptime_s=5) for r in phase5.FORMAL_REGIONS]
+    completed = mock.Mock(stdout=json.dumps(entries))
+    with mock.patch.object(phase5.subprocess, "run", return_value=completed):
+        code, report = phase5.run_acceptance(
+            health_base_url=_HEALTH_URL, get=_get_with_ready(200, "")
+        )
+    assert code == 0
+    assert report["status"] == "pass"
+    assert all(r["stable"] == "fail" for r in report["regions"].values())
+
+
+def test_run_acceptance_passes_min_uptime_through():
+    entries = [_pm2_entry(r, uptime_s=5) for r in phase5.FORMAL_REGIONS]
+    completed = mock.Mock(stdout=json.dumps(entries))
+    # started relative to the fixed fake clock, so patch the clock too
+    with (
+        mock.patch.object(phase5.subprocess, "run", return_value=completed),
+        mock.patch.object(phase5.time, "time", return_value=_NOW_MS / 1000.0),
+    ):
+        _, lenient = phase5.run_acceptance(
+            health_base_url=_HEALTH_URL,
+            get=_get_with_ready(200, ""),
+            min_uptime=1,
+        )
+        _, strict = phase5.run_acceptance(
+            health_base_url=_HEALTH_URL, get=_get_with_ready(200, "")
+        )
+    assert lenient["regions"]["jp"]["stable"] == "pass"
+    assert strict["regions"]["jp"]["stable"] == "fail"

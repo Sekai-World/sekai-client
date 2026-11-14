@@ -85,6 +85,15 @@ shared-client process (`sharedApiClient-jp`, `sharedApiClient-en`,
 - **Loopback bind**: the launch script binds to `127.0.0.1` (loopback only).
 - **Config flag**: the launch script uses `--config gunicorn_conf.py`.
 
+**Stability (restart visibility)**: the per-region report also records whether
+each shared client has been online for at least `--min-uptime` seconds (default
+600), using only PM2's reported start time. A crash loop or an unplanned restart
+therefore shows up as `stable: fail` for that region until it has stayed up for
+the threshold. This is reported per region and used by the per-region push
+monitors; it does not change the overall acceptance result, so a planned
+restart does not fail a full acceptance run. Pause the monitor (for example a
+maintenance window) during planned restarts to avoid alerts.
+
 No PM2 start/reload/stop/delete command is issued. The check is safe to run
 against production at any time.
 
@@ -152,9 +161,9 @@ not ready). Both must return success for the health section to pass.
     on any failure; the message holds only the three section states.
   - `PHASE5_PUSH_URL_JP`, `_EN`, `_TW`, `_KR`: one monitor per region. Up only
     when that region's PM2 process is online, its Gunicorn launch settings are
-    valid and the readiness endpoint reports it ready; the message holds only
-    those three states. A region monitor therefore says directly which region
-    is unhealthy and which check failed.
+    valid, the readiness endpoint reports it ready, and it is *stable* (see
+    below); the message holds only those four states. A region monitor
+    therefore says directly which region is unhealthy and which check failed.
 
   Set each monitor's heartbeat interval to a bit more than the schedule
   interval so a stopped scheduler or host also alerts. Monitors whose variable
