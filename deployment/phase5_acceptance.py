@@ -179,6 +179,37 @@ def _is_stable(entry: dict, now_ms: float, min_uptime: float) -> bool:
     return (now_ms - started) / 1000.0 >= min_uptime
 
 
+def _region_results(
+    selected: dict[str, dict],
+    per_region: dict[str, dict[str, str]],
+    duplicates: set[str],
+    now_ms: float,
+    min_uptime: float,
+) -> dict[str, dict[str, str]]:
+    """Per-region ``pm2``/``gunicorn``/``stable`` states for the formal regions.
+
+    A missing or duplicated process fails every check for its region.
+    """
+    regions = {}
+    for region in FORMAL_REGIONS:
+        name = f"sharedApiClient-{region}"
+        checks = per_region.get(name)
+        if checks is None or name in duplicates:
+            regions[region] = {"pm2": "fail", "gunicorn": "fail", "stable": "fail"}
+            continue
+        gunicorn_ok = all(
+            checks[key] == "pass" for key in ("workers", "bind", "config")
+        )
+        regions[region] = {
+            "pm2": checks["online"],
+            "gunicorn": "pass" if gunicorn_ok else "fail",
+            "stable": "pass"
+            if _is_stable(selected[name], now_ms, min_uptime)
+            else "fail",
+        }
+    return regions
+
+
 def validate_processes(
     entries: list[dict],
     now_ms: float | None = None,
@@ -231,25 +262,7 @@ def validate_processes(
         and not has_duplicates
     )
     gunicorn_status = "pass" if gunicorn_ok else "fail"
-    regions = {}
-    for region in FORMAL_REGIONS:
-        name = f"sharedApiClient-{region}"
-        checks = per_region.get(name)
-        usable = checks is not None and name not in duplicates
-        regions[region] = {
-            "pm2": "pass" if usable and checks["online"] == "pass" else "fail",
-            "gunicorn": (
-                "pass"
-                if usable
-                and all(checks[key] == "pass" for key in ("workers", "bind", "config"))
-                else "fail"
-            ),
-            "stable": (
-                "pass"
-                if usable and _is_stable(selected[name], now_ms, min_uptime)
-                else "fail"
-            ),
-        }
+    regions = _region_results(selected, per_region, duplicates, now_ms, min_uptime)
     return {
         "regions": regions,
         "pm2": {
