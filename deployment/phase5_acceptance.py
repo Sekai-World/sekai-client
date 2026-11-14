@@ -31,6 +31,7 @@ import re
 import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -41,6 +42,9 @@ EXPECTED_PROCESS_NAMES = {f"sharedApiClient-{r}" for r in FORMAL_REGIONS}
 
 DEFAULT_PM2_BINARY = "pm2"
 DEFAULT_HEALTH_TIMEOUT = 5.0
+# A shared client that has been up for less than this many seconds counts as
+# recently (re)started, so a crash loop or an unplanned restart is visible.
+DEFAULT_MIN_UPTIME = 600.0
 HEALTH_LIVE_PATH = "/health/live"
 HEALTH_READY_PATH = "/health/ready"
 
@@ -158,7 +162,59 @@ def validate_shared_client_process(name: str, entry: dict) -> dict[str, str]:
     return result
 
 
-def validate_processes(entries: list[dict]) -> dict:
+def _is_stable(entry: dict, now_ms: float, min_uptime: float) -> bool:
+    """True when PM2 reports the process online for at least ``min_uptime``.
+
+    Uses only PM2's start time, so no state is kept between runs. A missing or
+    non-numeric start time, or one in the future, is not stable.
+    """
+    pm2_env = entry.get("pm2_env")
+    if not isinstance(pm2_env, dict):
+        return False
+    started = pm2_env.get("pm_uptime")
+    if isinstance(started, bool) or not isinstance(started, (int, float)):
+        return False
+    if str(pm2_env.get("status", "")).lower() != "online":
+        return False
+    return (now_ms - started) / 1000.0 >= min_uptime
+
+
+def _region_results(
+    selected: dict[str, dict],
+    per_region: dict[str, dict[str, str]],
+    duplicates: set[str],
+    now_ms: float,
+    min_uptime: float,
+) -> dict[str, dict[str, str]]:
+    """Per-region ``pm2``/``gunicorn``/``stable`` states for the formal regions.
+
+    A missing or duplicated process fails every check for its region.
+    """
+    regions = {}
+    for region in FORMAL_REGIONS:
+        name = f"sharedApiClient-{region}"
+        checks = per_region.get(name)
+        if checks is None or name in duplicates:
+            regions[region] = {"pm2": "fail", "gunicorn": "fail", "stable": "fail"}
+            continue
+        gunicorn_ok = all(
+            checks[key] == "pass" for key in ("workers", "bind", "config")
+        )
+        regions[region] = {
+            "pm2": checks["online"],
+            "gunicorn": "pass" if gunicorn_ok else "fail",
+            "stable": "pass"
+            if _is_stable(selected[name], now_ms, min_uptime)
+            else "fail",
+        }
+    return regions
+
+
+def validate_processes(
+    entries: list[dict],
+    now_ms: float | None = None,
+    min_uptime: float = DEFAULT_MIN_UPTIME,
+) -> dict:
     """Aggregate PM2 and Gunicorn validation across formal shared clients.
 
     Duplicate expected process names are detected and cause validation to fail:
@@ -178,6 +234,8 @@ def validate_processes(entries: list[dict]) -> dict:
             duplicates.add(name)
         seen.add(name)
 
+    if now_ms is None:
+        now_ms = time.time() * 1000.0
     selected = select_shared_client_processes(entries)
     per_region = {
         name: validate_shared_client_process(name, entry)
@@ -204,20 +262,7 @@ def validate_processes(entries: list[dict]) -> dict:
         and not has_duplicates
     )
     gunicorn_status = "pass" if gunicorn_ok else "fail"
-    regions = {}
-    for region in FORMAL_REGIONS:
-        name = f"sharedApiClient-{region}"
-        checks = per_region.get(name)
-        usable = checks is not None and name not in duplicates
-        regions[region] = {
-            "pm2": "pass" if usable and checks["online"] == "pass" else "fail",
-            "gunicorn": (
-                "pass"
-                if usable
-                and all(checks[key] == "pass" for key in ("workers", "bind", "config"))
-                else "fail"
-            ),
-        }
+    regions = _region_results(selected, per_region, duplicates, now_ms, min_uptime)
     return {
         "regions": regions,
         "pm2": {
@@ -522,7 +567,8 @@ def summarize(sections: dict, allow_not_run: bool) -> tuple[str, int]:
 def _fail_process_sections() -> dict:
     return {
         "regions": {
-            region: {"pm2": "fail", "gunicorn": "fail"} for region in FORMAL_REGIONS
+            region: {"pm2": "fail", "gunicorn": "fail", "stable": "fail"}
+            for region in FORMAL_REGIONS
         },
         "pm2": {
             "status": "fail",
@@ -549,6 +595,7 @@ def run_acceptance(
     allow_not_run: bool = False,
     get: Callable[[str, float], tuple[int, str]] = http_get,
     allow_http_health: bool = False,
+    min_uptime: float = DEFAULT_MIN_UPTIME,
 ) -> tuple[int, dict]:
     """Run the full read-only acceptance check.
 
@@ -565,7 +612,7 @@ def run_acceptance(
             timeout=_PM2_TIMEOUT,
         )
         entries = parse_pm2_jlist(completed.stdout)
-        proc = validate_processes(entries)
+        proc = validate_processes(entries, min_uptime=min_uptime)
     except (subprocess.SubprocessError, OSError, PM2ParseError):
         proc = _fail_process_sections()
 
@@ -589,6 +636,7 @@ def run_acceptance(
             "pm2": proc["regions"][region]["pm2"],
             "gunicorn": proc["regions"][region]["gunicorn"],
             "ready": health["regions"][region],
+            "stable": proc["regions"][region]["stable"],
         }
         for region in FORMAL_REGIONS
     }
@@ -674,6 +722,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--min-uptime",
+        type=float,
+        default=DEFAULT_MIN_UPTIME,
+        help=(
+            "Seconds a shared client must have been online to count as stable "
+            "in the per-region report (restart visibility). Does not change "
+            "the overall pass/fail."
+        ),
+    )
+    parser.add_argument(
         "--format",
         choices=["text", "json"],
         default="text",
@@ -687,6 +745,7 @@ def main(argv: list[str] | None = None) -> int:
         health_timeout=args.health_timeout,
         allow_not_run=args.allow_not_run,
         allow_http_health=args.allow_http_health,
+        min_uptime=args.min_uptime,
     )
     print(format_report(report, args.format))
     return exit_code

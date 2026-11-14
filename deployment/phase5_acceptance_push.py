@@ -12,8 +12,9 @@ that is set receives its own heartbeat:
 - ``PHASE5_PUSH_URL``: overall acceptance. The message carries only the three
   aggregate section states (``pm2``, ``gunicorn``, ``health``).
 - ``PHASE5_PUSH_URL_JP`` / ``_EN`` / ``_TW`` / ``_KR``: one region. Up only when
-  that region's PM2 process, Gunicorn launch settings and readiness all pass;
-  the message carries only those three states.
+  that region's PM2 process, Gunicorn launch settings, readiness and stability
+  (online for at least ``--min-uptime`` seconds, default 600) all pass; the
+  message carries only those four states.
 
 Each push URL carries a secret token, so it is read only from the environment
 and is never printed, logged or put in an exception message.
@@ -36,7 +37,7 @@ PUSH_URL_ENV = "PHASE5_PUSH_URL"
 DEFAULT_PUSH_TIMEOUT = 10.0
 EXIT_PUSH_FAILED = 2
 _SECTIONS = ("pm2", "gunicorn", "health")
-_REGION_CHECKS = ("pm2", "gunicorn", "ready")
+_REGION_CHECKS = ("pm2", "gunicorn", "ready", "stable")
 _STATES = frozenset({"pass", "fail", "not_run"})
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -106,6 +107,9 @@ def main(argv: list[str] | None = None) -> int:
         "--health-timeout", type=float, default=acceptance.DEFAULT_HEALTH_TIMEOUT
     )
     parser.add_argument("--allow-http-health", action="store_true")
+    parser.add_argument(
+        "--min-uptime", type=float, default=acceptance.DEFAULT_MIN_UPTIME
+    )
     parser.add_argument("--push-timeout", type=float, default=DEFAULT_PUSH_TIMEOUT)
     args = parser.parse_args(argv)
 
@@ -125,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
             health_timeout=args.health_timeout,
             allow_not_run=False,
             allow_http_health=args.allow_http_health,
+            min_uptime=args.min_uptime,
         )
     except Exception:  # noqa: BLE001
         # Report as a failed run without any error detail.
